@@ -23,6 +23,18 @@ public static class AiRegistration
         // The client keeps its own time limits: first token, silence, ceiling.
         services.AddHttpClient(NvidiaChatClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<NvidiaChatClient>();
+
+        // Claude and Titan on Amazon Bedrock (Ai:Bedrock). Off by default, and then never called: the SDK clients are
+        // made on the first call, and their credentials are the machine's default AWS chain (the EC2 instance
+        // profile), never a key in the desk's settings.
+        services.AddHttpClient(BedrockClaudeClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddSingleton<BedrockClaudeClient>();
+        services.AddSingleton(sp => new AiChatRouter(sp.GetRequiredService<NvidiaChatClient>(), sp.GetRequiredService<BedrockClaudeClient>()));
+        services.AddSingleton<IBedrockRuntimeInvoker, AwsBedrockRuntimeInvoker>();
+        services.AddSingleton<BedrockEmbeddingClient>();
+        services.AddSingleton<AiEmbedder>();
+        services.AddScoped<AiReembedder>();
+
         services.AddSingleton<AiModelCatalog>();
         services.AddSingleton<AiRateLimiter>();
         services.AddSingleton<AiModelHealth>();

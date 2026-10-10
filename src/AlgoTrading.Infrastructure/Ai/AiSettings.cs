@@ -190,10 +190,105 @@ public sealed class AiSettings
     /// <summary>Rupees, after charges, by which a lesson must beat the looks without it over its test to be used.</summary>
     public decimal AiTraderLessonMinGain { get; set; } = 500m;
 
+    /// <summary>Claude on Amazon Bedrock, the second provider (<see cref="BedrockClaudeClient"/>); off until the owner turns it on.</summary>
+    public AiBedrockSettings Bedrock { get; set; } = new();
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
+
+    /// <summary>
+    /// Whether any provider can be asked: NVIDIA's key is there, or Bedrock is on (its credentials are the server's
+    /// AWS role, which the desk cannot see). What starts the agents, the probe and the Telegram Assistant.
+    /// </summary>
+    public bool ProviderConfigured => KeyConfigured || Bedrock.Enabled;
 
     /// <summary>Whether <paramref name="agentKey"/> reads memories.</summary>
     public bool HasMemory(string agentKey) =>
         MemoryEnabled && MemoryAgents.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Contains(agentKey, StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// The <c>Ai:Bedrock</c> section: Claude through Amazon Bedrock's Messages API, and Titan for embeddings. No key here
+/// or anywhere in the desk's files, and none is read from its settings: the SDKs sign each request with the default
+/// AWS credential chain, which on the server is the EC2 instance profile (IMDSv2). Off, nothing here calls AWS.
+/// </summary>
+public sealed class AiBedrockSettings
+{
+    /// <summary>
+    /// Off: a <c>bedrock:</c> model in a chain is skipped with its reason, and the chains are NVIDIA's. On: every
+    /// chain is Claude on Bedrock (<see cref="AiTierDef.BedrockChain"/>; an owner's chain keeps only its Bedrock
+    /// models), so no answer comes from NVIDIA (owner, 10 Oct 2026).
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The AWS region asked, for Claude and for Titan. N. Virginia: in Mumbai (ap-south-1) Bedrock's Messages API
+    /// answered "model does not exist" for these models (10 Oct 2026). The model ids carry no region or <c>global.</c>
+    /// prefix; the Global endpoint type routes across regions with no price premium.
+    /// </summary>
+    public string Region { get; set; } = "us-east-1";
+
+    /// <summary>
+    /// How hard Claude thinks, per tier (<c>output_config.effort</c>: low, medium, high, xhigh, max). A model's
+    /// health test asks at low.
+    /// </summary>
+    public Dictionary<string, string> EffortByTier { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["judge"] = "high",
+        ["analyst"] = "high",
+        ["extract"] = "low",
+    };
+
+    /// <summary>
+    /// The fewest tokens a Claude answer may use. Its thinking counts against the limit, and a caller's limit was set
+    /// for the answer alone (the Desk Assistant asks 4,096): Fable at high effort could spend it all thinking and say
+    /// nothing. The answer's length is still the prompt's to set.
+    /// </summary>
+    public int MinMaxTokens { get; set; } = 16_000;
+
+    /// <summary>The embedding model the re-embedding switches to: Amazon Titan Text Embeddings V2, on <c>bedrock-runtime</c> InvokeModel.</summary>
+    public string EmbeddingModel { get; set; } = "amazon.titan-embed-text-v2:0";
+
+    /// <summary>Titan V2's vector size: 1024 (its default), 512 or 256.</summary>
+    public int EmbeddingDimensions { get; set; } = 1024;
+
+    /// <summary>Embedding calls in flight at once: Titan takes one text per call.</summary>
+    public int EmbeddingConcurrency { get; set; } = 4;
+
+    /// <summary>
+    /// US dollars per million tokens, by Bedrock model id: Anthropic's list prices (Oct 2026), for an estimate of what
+    /// a call cost. Bedrock bills per AWS's own price page; Haiku 5.5's are for prompts up to 100k tokens.
+    /// </summary>
+    public Dictionary<string, AiModelPrice> Prices { get; set; } = new(StringComparer.Ordinal)
+    {
+        ["anthropic.claude-fable-5-1"] = new() { Input = 10m, Output = 50m, CacheRead = 0.25m, CacheWrite = 12.5m },
+        ["anthropic.claude-opus-5-5"] = new() { Input = 4m, Output = 20m, CacheRead = 0.20m, CacheWrite = 5m },
+        ["anthropic.claude-sonnet-5-5"] = new() { Input = 2m, Output = 10m, CacheRead = 0.10m, CacheWrite = 2.5m },
+        ["anthropic.claude-haiku-5-5"] = new() { Input = 0.10m, Output = 0.50m, CacheRead = 0.01m, CacheWrite = 0.125m },
+        ["anthropic.claude-haiku-4-5"] = new() { Input = 1m, Output = 5m, CacheRead = 0.10m, CacheWrite = 1.25m },
+    };
+}
+
+/// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>
+public sealed class AiModelPrice
+{
+    public const string Note = "list price; Bedrock bills per AWS's page";
+
+    public decimal Input { get; set; }
+
+    public decimal Output { get; set; }
+
+    public decimal CacheRead { get; set; }
+
+    public decimal CacheWrite { get; set; }
+
+    /// <summary>What <paramref name="usage"/> cost at this price: uncached input, cache reads and writes, and output.</summary>
+    public decimal Cost(AiUsage usage)
+    {
+        long read = usage.CacheReadTokens ?? 0;
+        long write = usage.CacheWriteTokens ?? 0;
+        long input = Math.Max(0, (usage.PromptTokens ?? 0) - read - write);
+        long output = usage.CompletionTokens ?? 0;
+        return (input * Input + read * CacheRead + write * CacheWrite + output * Output) / 1_000_000m;
+    }
 }

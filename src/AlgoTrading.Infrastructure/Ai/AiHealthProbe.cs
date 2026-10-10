@@ -83,7 +83,8 @@ public sealed class AiHealthProbe(
                     string model = a.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "";
                     string outcome = a.TryGetProperty("outcome", out var o) ? o.GetString() ?? "" : "";
                     double seconds = a.TryGetProperty("seconds", out var sec) && sec.ValueKind == JsonValueKind.Number ? sec.GetDouble() : 0;
-                    if (model.Length == 0 || outcome == "cancelled") continue;
+                    // A cancelled, skipped or refused attempt says nothing about the model's health.
+                    if (model.Length == 0 || outcome == "cancelled" || AiGateway.IsSkipped(outcome) || outcome.StartsWith("refused:", StringComparison.Ordinal)) continue;
                     bool ok = outcome == "ok";
                     health.Record(model, ok, seconds, !ok && seconds >= slow, outcome, DateTime.SpecifyKind(row.CreatedUtc, DateTimeKind.Utc));
                 }
@@ -101,7 +102,9 @@ public sealed class AiHealthProbe(
         var s = settings.CurrentValue;
         if (!s.HealthProbeEnabled || !s.KeyConfigured) return;
 
-        foreach (string model in health.DueForProbe(_time.GetUtcNow().UtcDateTime))
+        // Bedrock is billed per call: no probe ever asks a Claude model (owner's rule, 10 Oct 2026). A cooled one
+        // waits out its cooling and is back in its place with its next real answer.
+        foreach (string model in health.DueForProbe(_time.GetUtcNow().UtcDateTime).Where(m => !AiCatalog.IsBedrock(m)))
         {
             health.Probed(model, _time.GetUtcNow().UtcDateTime);
             await using var scope = scopes.CreateAsyncScope();

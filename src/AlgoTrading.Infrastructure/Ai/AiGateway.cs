@@ -118,6 +118,12 @@ public sealed record AiAskResult(
     /// <summary>The memories the answer was given (<see cref="AiMemoryBook"/>).</summary>
     public IReadOnlyList<long> MemoryIds { get; init; } = [];
 
+    /// <summary>
+    /// What the answer cost in US dollars at list price (<see cref="AiBedrockSettings.Prices"/>), summed over its
+    /// rounds; null when no round was answered by a priced model (NVIDIA's free tier).
+    /// </summary>
+    public decimal? CostUsd { get; init; }
+
     public int Fallbacks => AiGateway.CountFallbacks(Attempts.Select(a => a.Outcome));
 }
 
@@ -157,6 +163,13 @@ public sealed record AiAskResult(
 /// it read.
 /// </para>
 /// <para>
+/// A chain may name models of two providers (<see cref="AiChatRouter"/>):
+/// NVIDIA's, and Claude on Amazon Bedrock (<c>bedrock:</c> ids), and falls
+/// back across them. A model whose provider cannot be asked now (Bedrock off,
+/// no NVIDIA key) is skipped with its reason, as an attempt that took no time;
+/// a call with nothing left to ask is refused (503).
+/// </para>
+/// <para>
 /// The key is scrubbed from every stored text as a second layer: the client
 /// never puts it anywhere but the Authorization header.
 /// </para>
@@ -184,6 +197,9 @@ public sealed class AiGateway
     private const int MaxStoredToolResult = 20_000;
     private const int SummaryLength = 160;
 
+    /// <summary>How a skipped model's attempt outcome starts: it was not asked (its provider is off), so it is no failure.</summary>
+    public const string SkippedPrefix = "skipped:";
+
     /// <summary>How a tool's answer is written for the model: compact, rupee signs as they are.</summary>
     private static readonly JsonSerializerOptions ToolJson = new(JsonSerializerDefaults.Web)
     {
@@ -193,7 +209,6 @@ public sealed class AiGateway
 
     private readonly TradingDbContext _db;
     private readonly AiSettingsStore _store;
-    private readonly NvidiaChatClient _client;
     private readonly AiRateLimiter _limiter;
     private readonly AiToolbox _toolbox;
     private readonly AiModelHealth _health;
@@ -201,6 +216,7 @@ public sealed class AiGateway
     private readonly ILogger<AiGateway> _logger;
     private readonly TimeProvider _time;
     private readonly AiMemoryBook _memory;
+    private readonly AiChatRouter _router;
 
     public AiGateway(
         TradingDbContext db,
@@ -212,11 +228,11 @@ public sealed class AiGateway
         IOptionsMonitor<AiSettings> settings,
         ILogger<AiGateway> logger,
         TimeProvider? time = null,
-        AiMemoryBook? memory = null)
+        AiMemoryBook? memory = null,
+        AiChatRouter? router = null)
     {
         _db = db;
         _store = store;
-        _client = client;
         _limiter = limiter;
         _toolbox = toolbox;
         _health = health;
@@ -224,12 +240,13 @@ public sealed class AiGateway
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _memory = memory ?? new AiMemoryBook(db, client, settings, logger, _time);
+        _router = router ?? new AiChatRouter(client, new BedrockClaudeClient(settings));
     }
 
-    /// <summary>Failed attempts that handed over to another: every failure but a last one.</summary>
+    /// <summary>Failed attempts that handed over to another: every failure but a last one. A skipped model was not asked, so it is none.</summary>
     public static int CountFallbacks(IEnumerable<string> outcomes)
     {
-        var list = outcomes.ToList();
+        var list = outcomes.Where(o => !IsSkipped(o)).ToList();
         int fallbacks = 0;
         for (int i = 0; i < list.Count - 1; i++)
         {
@@ -238,6 +255,9 @@ public sealed class AiGateway
 
         return fallbacks;
     }
+
+    /// <summary>An attempt's outcome for a model that was skipped, not asked (<see cref="SkippedPrefix"/>).</summary>
+    public static bool IsSkipped(string outcome) => outcome.StartsWith(SkippedPrefix, StringComparison.Ordinal);
 
     public async Task<AiAskResult> AskAsync(AiAskInput input, IAiStreamSink sink, CancellationToken cancellationToken)
     {
@@ -267,11 +287,15 @@ public sealed class AiGateway
             chain = input.Tier is { Length: > 0 } tier ? state.Tier(tier).Chain : agentState.Chain;
         }
 
-        if (!_settings.CurrentValue.KeyConfigured)
+        // Nothing in the chain can be asked: NVIDIA without its key, Bedrock switched off.
+        var s = _settings.CurrentValue;
+        var blocked = chain.Select(m => (Model: m, Why: _router.Unavailable(m, s))).Where(x => x.Why is not null).ToList();
+        if (blocked.Count == chain.Count)
         {
-            return await RefuseAsync(input, chain,
-                "No NVIDIA_API_KEY on the server: add it to the server's .env; the desk writes it into the API's settings on the next deploy.",
-                503, 0);
+            string error = chain.Count > 0 && blocked.All(b => !AiCatalog.IsBedrock(b.Model))
+                ? "No NVIDIA_API_KEY on the server: add it to the server's .env; the desk writes it into the API's settings on the next deploy."
+                : "No model in the chain can be asked now: " + string.Join("; ", blocked.Select(b => $"{b.Model}: {b.Why}")) + ".";
+            return await RefuseAsync(input, chain, error, 503, 0);
         }
 
         var (lease, refusal) = _limiter.TryAcquire(input.RequestedBy);
@@ -303,7 +327,9 @@ public sealed class AiGateway
         var specs = tools.Select(t => new AiToolSpec(t.Name, t.Description, t.Parameters)).ToList();
         var caller = new AiToolCaller(agent.Key, input.Source, input.RequestedBy, input.UserId, input.ConversationId);
 
+        // The agent's own prompt is the same on every call; the memories and the time after it are not.
         string systemPrompt = input.SystemPrompt ?? (chat ? agent.ChatPrompt : agent.SystemPrompt);
+        int stableChars = systemPrompt.Length;
         var recalled = input.SystemPrompt is null && input.Chain is null
             ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, cancellationToken)
             : [];
@@ -326,6 +352,14 @@ public sealed class AiGateway
 
         var conversation = new List<AiMessage>(input.Messages);
         var attempts = new List<AiAttempt>();
+
+        // A model whose provider cannot be asked now is skipped once, with its reason, and the rest of the chain walked.
+        var skipped = chain.Select(m => (Model: m, Why: _router.Unavailable(m, s))).Where(x => x.Why is not null).ToList();
+        foreach (var (model, why) in skipped) attempts.Add(new AiAttempt(model, $"{SkippedPrefix} {why}", 0, null, 1));
+        var usable = chain.Where(m => skipped.All(x => x.Model != m)).ToList();
+        string tier = input.Tier is { Length: > 0 } asked ? asked : agent.Tier;
+        decimal? cost = null;
+
         var steps = new List<AiToolStep>();
         var seen = new Dictionary<string, AiToolStep>(StringComparer.Ordinal);
         var failed = new HashSet<string>(StringComparer.Ordinal);
@@ -347,10 +381,15 @@ public sealed class AiGateway
                 round++;
                 bool open = specs.Count > 0 && round <= s.MaxToolRounds && steps.Count < s.MaxToolCalls;
                 var request = new AiChatRequest(conversation, systemPrompt, input.MaxTokens, input.Temperature,
-                    specs.Count > 0 ? specs : null, ToolsClosed: specs.Count > 0 && !open);
+                    specs.Count > 0 ? specs : null, ToolsClosed: specs.Count > 0 && !open)
+                {
+                    // A health test is not a tier's work: Claude answers it at low effort.
+                    Tier = input.Chain is null ? tier : null,
+                    StableSystemChars = stableChars,
+                };
 
                 // A model queueing on the provider waits at the back of the chain for a while (AiModelHealth).
-                var remaining = chain.Where(m => !failed.Contains(m));
+                var remaining = usable.Where(m => !failed.Contains(m));
                 var live = input.Chain is null ? _health.Order(remaining, _time.GetUtcNow().UtcDateTime) : remaining.ToList();
                 AiAttemptEnd? end = null;
                 string model = string.Empty;
@@ -369,7 +408,8 @@ public sealed class AiGateway
 
                         try
                         {
-                            var got = await _client.StreamAsync(candidate, request, async piece =>
+                            var provider = _router.For(candidate) ?? throw new AiAttemptFailedException("no provider serves this model");
+                            var got = await provider.StreamAsync(candidate, request, async piece =>
                             {
                                 switch (piece)
                                 {
@@ -401,7 +441,11 @@ public sealed class AiGateway
                             string outcome = Redact(ex.Outcome);
                             double took = clock.Elapsed.TotalSeconds;
                             attempts.Add(new AiAttempt(candidate, outcome, Round(took), ex.HttpStatus, round));
-                            _health.Record(candidate, false, took, took >= s.SlowFailureSeconds, outcome, _time.GetUtcNow().UtcDateTime);
+                            // A safety refusal is about the question, not the model's health: it does not cool it.
+                            if (!outcome.StartsWith("refused:", StringComparison.Ordinal))
+                            {
+                                _health.Record(candidate, false, took, took >= s.SlowFailureSeconds, outcome, _time.GetUtcNow().UtcDateTime);
+                            }
                             // Information, not a warning: a model handing over is the chain working, and the
                             // attempt is on the call's row. As a warning, Sentinel's log agent opened an
                             // incident per fallback (30 Sep, #197-#201).
@@ -433,16 +477,21 @@ public sealed class AiGateway
                     Complete(row, AiCallOutcome.Failed, string.Empty, error, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
                     await SaveFinalAsync(row);
                     finished = true;
-                    return Result(row, attempts, usage, steps, round);
+                    return Result(row, attempts, usage, steps, round, cost);
                 }
 
                 usage = Add(usage, end.Usage);
+                if (end.Usage is not null && Price(model, s) is { } price) cost = (cost ?? 0) + price.Cost(end.Usage);
 
                 if (open && end.ToolCalls.Count > 0)
                 {
-                    // This round was working, not the answer: keep it as reasoning.
+                    // This round was working, not the answer: keep it as reasoning. The turn goes back to the model
+                    // that wrote it exactly as it came (Claude's thinking blocks), append-only.
                     Commit(working, round, reasoning, answer);
-                    conversation.Add(new AiMessage("assistant", answer.ToString().Trim(), end.ToolCalls));
+                    conversation.Add(new AiMessage("assistant", answer.ToString().Trim(), end.ToolCalls)
+                    {
+                        Replay = end.Replay is { Count: > 0 } blocks ? new AiReplay(model, blocks) : null,
+                    });
 
                     foreach (var call in end.ToolCalls)
                     {
@@ -458,7 +507,7 @@ public sealed class AiGateway
                 Complete(row, AiCallOutcome.Ok, model, string.Empty, answer, Working(working, reasoning), end.FinishReason, usage, attempts, steps, round, total);
                 await SaveFinalAsync(row);
                 finished = true;
-                return Result(row, attempts, usage, steps, round);
+                return Result(row, attempts, usage, steps, round, cost);
             }
         }
         catch (Exception ex) when ((ex is OperationCanceledException && cancellationToken.IsCancellationRequested) || ex is AiSinkFailedException)
@@ -477,7 +526,7 @@ public sealed class AiGateway
             Complete(row, AiCallOutcome.Cancelled, string.Empty, why, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
             await SaveFinalAsync(row);
             finished = true;
-            return Result(row, attempts, usage, steps, round);
+            return Result(row, attempts, usage, steps, round, cost);
         }
         finally
         {
@@ -503,15 +552,16 @@ public sealed class AiGateway
         if (result.Outcome == AiCallOutcome.Refused) return result.RefusalStatus == 429;
         if (result.Outcome != AiCallOutcome.Failed) return false;
 
-        var failed = result.Attempts.Where(a => a.Outcome != "ok").ToList();
+        var failed = result.Attempts.Where(a => a.Outcome != "ok" && !IsSkipped(a.Outcome)).ToList();
         return failed.Count > 0 && failed.All(a => IsCapacityRefusal(a.HttpStatus, a.Outcome));
     }
 
     /// <summary>The provider said it has no room right now, rather than that the request was wrong.</summary>
     public static bool IsCapacityRefusal(AiAttemptFailedException ex) => IsCapacityRefusal(ex.HttpStatus, ex.Outcome);
 
+    // 529 is Anthropic's "overloaded".
     private static bool IsCapacityRefusal(int? httpStatus, string outcome) =>
-        httpStatus is 429 or 502 or 503
+        httpStatus is 429 or 502 or 503 or 529
         || outcome.Contains("overloaded", StringComparison.OrdinalIgnoreCase)
         || outcome.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
         || outcome.Contains("capacity", StringComparison.OrdinalIgnoreCase);
@@ -680,13 +730,18 @@ public sealed class AiGateway
         }
     }
 
-    private static AiAskResult Result(AiCall row, List<AiAttempt> attempts, AiUsage? usage, List<AiToolStep> steps, int rounds) =>
+    private static AiAskResult Result(AiCall row, List<AiAttempt> attempts, AiUsage? usage, List<AiToolStep> steps, int rounds, decimal? cost) =>
         new(row.Id, row.Outcome, row.Model, row.Answer, row.Reasoning, row.Seconds, row.FinishReason, usage, attempts, row.Error)
         {
             Tools = steps,
             Rounds = rounds,
             MemoryIds = MemoryIds(row.MemoryIdsJson),
+            CostUsd = cost is decimal c ? Math.Round(c, 6) : null,
         };
+
+    /// <summary>A model's list price (<see cref="AiBedrockSettings.Prices"/>); null for one with none (NVIDIA's free tier).</summary>
+    public static AiModelPrice? Price(string model, AiSettings settings) =>
+        AiCatalog.IsBedrock(model) && settings.Bedrock.Prices.TryGetValue(AiCatalog.BedrockModelId(model), out var price) ? price : null;
 
     /// <summary>The memory ids a call row carries; none when the column cannot be read.</summary>
     public static IReadOnlyList<long> MemoryIds(string? json)
@@ -743,7 +798,11 @@ public sealed class AiGateway
     {
         if (a is null) return b;
         if (b is null) return a;
-        return new AiUsage(Sum(a.PromptTokens, b.PromptTokens), Sum(a.CompletionTokens, b.CompletionTokens), Sum(a.TotalTokens, b.TotalTokens));
+        return new AiUsage(Sum(a.PromptTokens, b.PromptTokens), Sum(a.CompletionTokens, b.CompletionTokens), Sum(a.TotalTokens, b.TotalTokens))
+        {
+            CacheReadTokens = Sum(a.CacheReadTokens, b.CacheReadTokens),
+            CacheWriteTokens = Sum(a.CacheWriteTokens, b.CacheWriteTokens),
+        };
 
         static int? Sum(int? x, int? y) => x is null && y is null ? null : (x ?? 0) + (y ?? 0);
     }

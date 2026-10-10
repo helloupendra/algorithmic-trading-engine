@@ -223,8 +223,25 @@ def build_api_settings(env: dict[str, str]) -> dict:
         "Ai": {
             "ApiKey": env.get("NVIDIA_API_KEY", ""),
             "BaseUrl": env.get("NVIDIA_API_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            **build_bedrock_settings(env),
         },
     }
+
+
+def build_bedrock_settings(env: dict[str, str]) -> dict:
+    """Claude and Titan on Amazon Bedrock: only the switch and the region.
+
+    No AWS credential is ever read from .env or written here: the API signs
+    with the machine's default AWS chain (the EC2 instance profile). Unset
+    values are left out, so the code's defaults (off, us-east-1) apply.
+    """
+    bedrock: dict = {}
+    if env.get("AI_BEDROCK_ENABLED", "").strip().lower() == "true":
+        bedrock["Enabled"] = True
+    region = env.get("AI_BEDROCK_REGION", "").strip()
+    if region:
+        bedrock["Region"] = region
+    return {"Bedrock": bedrock} if bedrock else {}
 
 
 def main() -> int:
