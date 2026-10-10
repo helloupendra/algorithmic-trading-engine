@@ -123,7 +123,7 @@ public sealed record LocalModel(string Id, string Kind, string Where, string Use
 /// fails if the two drift.
 /// </para>
 /// </remarks>
-public static class AiCatalog
+public static partial class AiCatalog
 {
     public const string ProviderKey = "nvidia";
     public const string ProviderName = "NVIDIA build (NIM API)";
@@ -469,16 +469,20 @@ public static class AiCatalog
             "Missing candles, wrong expiries, stale quotes, gaps in the recorders.",
             "Nightly, and at 08:00", "4", Built: false, "extract",
             "Coverage and quality reports the desk computes.", NoOrders),
-        new("validator", 10, "Validator / Skeptic",
-            "Finds the biggest flaw in a trade plan before it is used.",
-            "ACCEPT or REJECT with the flaw named, sampled three times on the Judge tier.",
-            "For each plan, at most 3 a day", "4", Built: false, "judge",
-            "The plan and the data it cites.", NoOrders),
-        new("risk-memo", 11, "Risk Memo",
-            "Explains the code's risk verdict on a plan, and may tighten it.",
-            "A short memo beside the risk check; the veto itself stays in code.",
-            "For each plan", "4", Built: false, "judge",
-            "The plan, the risk limits and the account's exposure.", "May tighten a plan, never loosen it. " + NoOrders),
+        new(Validator, 10, "Validator / Skeptic",
+            "Finds the biggest flaw in each AI Trader buy or strategy start before it is placed.",
+            "ACCEPT or REJECT with the flaw named and quoted from the brief, asked three times; two REJECTs block the placement, and no majority (a provider down, the agent off) blocks it too.",
+            "Before each AI Trader buy or strategy start the rules allowed, in live mode", "4", Built: true, "judge",
+            "The plan, the contract and its price, the rules' verdict, and the market brief the plan rests on.",
+            "Can only block a placement, never make or change one. " + NoOrders, ValidatorPrompt,
+            ChatPrompt: ValidatorChatPrompt, ChatTools: AiTraderCheckChat),
+        new(RiskMemo, 11, "Risk Memo",
+            "Writes a short risk memo beside the rules' verdict on each AI Trader plan the validator accepted, and may tighten it.",
+            "What the plan can lose at its stop against the day's loss budget and the open positions; fewer lots, a higher stop or a lower target, which code applies only when tighter.",
+            "After the validator accepts an AI Trader buy or strategy start, in live mode", "4", Built: true, "judge",
+            "The plan, the contract and its price, the rules' verdict, the owner's limits and the account's exposure.",
+            "May tighten a plan, never loosen it: code ignores anything looser. " + NoOrders, RiskMemoPrompt,
+            ChatPrompt: RiskMemoChatPrompt, ChatTools: AiTraderCheckChat),
         new("strategy-researcher", 12, "Strategy Researcher",
             "Reasons over backtest output.",
             "Overfitting checks and new ideas worth testing, never a live change.",
@@ -489,17 +493,18 @@ public static class AiCatalog
             "What applies to this desk, and what would have to change.",
             "Weekly", "4", Built: false, "extract",
             "Published circulars.", NoOrders),
-        new("execution-reporter", 14, "Execution Reporter",
-            "Compares each fill with its plan.",
-            "Slippage and timing in a short note per fill.",
-            "After each fill", "4", Built: false, "extract",
-            "Plans and fills.", NoOrders),
+        new(ExecutionReporter, 14, "Execution Reporter",
+            "Compares each AI Trader fill, entry and exit, with its plan.",
+            "Code computes the fill against the price the decision saw, the slippage in rupees and per cent, the time to fill and the stop and target as placed; the model adds a short note, its numbers checked against those.",
+            "Within a minute of each AI Trader fill (its own manual book only)", "4", Built: true, "extract",
+            "The AI Trader's fills, the decisions behind them and the positions they opened or closed.", NoOrders, ExecutionReporterPrompt,
+            ChatPrompt: ExecutionReporterChatPrompt, ChatTools: AiTraderCheckChat),
         new(AiTrader, 15, "AI Trader",
             "Trades its own ₹5 lakh paper account in index options: reads a market brief every ten minutes and proposes one action.",
             "Tests the system with a trader that reads everything the desk records. Every decision, including doing nothing, is kept with the brief it read and the rule that judged it.",
             "Every 10 minutes, 09:20–15:00 IST on trading days (and on a market replay's clock)", "5", Built: true, "judge",
             "A brief built by code: each index's price, trend and range; the option chain; India VIX; forecasts; the last hour's news; its own book; its tested lessons from earlier days.",
-            "Proposes only. Code checks every plan against the owner's limits and places paper orders in its own account, never another's; it starts in shadow mode, deciding without placing.",
+            "Proposes only. Code checks every plan against the owner's limits, the Validator must accept each buy or strategy start, and code places paper orders in its own ₹5 lakh account, never another's (live from 10 Oct; Ai:AiTraderExecute off is shadow mode, deciding without placing).",
             AiTraderPrompt, StartsOn: false, ChatPrompt: AiTraderChatPrompt, ChatTools: AiToolNames.AiTraderChat),
     ];
 

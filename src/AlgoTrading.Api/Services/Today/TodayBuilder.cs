@@ -31,7 +31,8 @@ public sealed class TodayBuilder(
     AiSettingsStore aiStore,
     IWebHostEnvironment environment,
     TimeProvider? time = null,
-    IOptionsMonitor<AiSettings>? aiSettings = null)
+    IOptionsMonitor<AiSettings>? aiSettings = null,
+    IAiTraderBooks? traderBooks = null)
 {
     /// <summary>The decisions the page shows, newest first.</summary>
     public const int DecisionsShown = 100;
@@ -118,7 +119,12 @@ public sealed class TodayBuilder(
         };
     }
 
-    /// <summary>The AI Trader today: on or off, shadow or placing, its looks and the last three decisions. Null until it has ever looked or been switched on.</summary>
+    /// <summary>
+    /// The AI Trader today: on or off, shadow or placing, its looks and the last three decisions (with what each placed),
+    /// its shadow book and, on a day it was live, its live book (its own manual book, net after charges), and how many of
+    /// its plans the Validator rejected or could not judge and the Risk Memo tightened. Null until it has ever looked or
+    /// been switched on.
+    /// </summary>
     private async Task<TodayAiTrader?> AiTraderAsync(DateOnly today, CancellationToken cancellationToken)
     {
         var state = await aiStore.LoadAsync(cancellationToken);
@@ -126,26 +132,42 @@ public sealed class TodayBuilder(
         var rows = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.Day == today && d.ReplaySessionId == null)
             .OrderByDescending(d => d.ClockUtc)
-            .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason, d.PlanJson })
+            .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason, d.PlanJson, d.Executed, d.ResultJson })
             .ToListAsync(cancellationToken);
         if (status != "on" && rows.Count == 0) return null;
         var shadow = await db.AiTraderShadowPositions.AsNoTracking()
             .Where(p => p.Day == today && p.ReplaySessionId == null).ToListAsync(cancellationToken);
 
+        // The switch, not the last look: just after shadow is switched to live, the last look is still a shadow one.
+        string mode = aiSettings is null ? rows.FirstOrDefault()?.Mode ?? AiTraderModes.Shadow
+            : aiSettings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow;
+        // Its own manual book, on a day it is or was live: in shadow mode nothing is placed there.
+        var live = traderBooks is not null && (mode == AiTraderModes.Live || rows.Any(r => r.Mode == AiTraderModes.Live))
+            ? await traderBooks.DayAsync(_time.GetUtcNow().UtcDateTime, cancellationToken)
+            : null;
+
         bool Acted(string action) => action is not ("" or "none");
         return new TodayAiTrader(
             status,
-            // The switch, not the last look: just after shadow is switched to live, the last look is still a shadow one.
-            aiSettings is null ? rows.FirstOrDefault()?.Mode ?? AiTraderModes.Shadow
-                : aiSettings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow,
+            mode,
             rows.Count,
             rows.Count(r => Acted(r.Action)),
             rows.Count(r => Acted(r.Action) && r.Allowed),
             rows.Count(r => !r.Allowed && r.Rule is not ("no-answer" or "unreadable")),
             rows.Count(r => r.Rule is "no-answer" or "unreadable"),
             rows.Take(3).Select(r => new TodayAiTraderDecision(Utc(r.ClockUtc)!.Value, r.Action, r.Underlying, r.Allowed, r.Rule,
-                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!, AiTraderController.OptionOf(r.PlanJson))).ToList(),
-            shadow.Count, shadow.Count(p => p.ExitUtc is null), AiTraderShadowBook.Net(shadow));
+                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!, AiTraderController.OptionOf(r.PlanJson))
+            {
+                Placed = r.Executed ? AiTraderResults.Placement(r.ResultJson) : null,
+            }).ToList(),
+            shadow.Count, shadow.Count(p => p.ExitUtc is null), AiTraderShadowBook.Net(shadow))
+        {
+            Live = live is null ? null : new TodayAiTraderLive(live.Positions.Count, live.Positions.Count(p => p.Open), live.Net, live.Charges),
+            ValidatorRejected = rows.Count(r => r.Rule == AiTraderValidator.RejectedRule),
+            ValidatorUnavailable = rows.Count(r => r.Rule == AiTraderValidator.UnavailableRule),
+            RiskMemoTightened = rows.Count(r => AiTraderResults.Tightened(r.ResultJson)),
+            Placed = rows.Count(r => r.Executed),
+        };
     }
 
     private TodayMarket Market(DateTime now, string exchange, string segment)
@@ -385,11 +407,34 @@ public sealed record TodayMarket(string Exchange, string State, DateTime? OpensU
 /// no usable answer, and its shadow book (positions opened, still open, net after charges).
 /// </summary>
 public sealed record TodayAiTrader(string Status, string Mode, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer,
-    IReadOnlyList<TodayAiTraderDecision> Latest, int ShadowPositions = 0, int ShadowOpen = 0, decimal ShadowNet = 0m);
+    IReadOnlyList<TodayAiTraderDecision> Latest, int ShadowPositions = 0, int ShadowOpen = 0, decimal ShadowNet = 0m)
+{
+    /// <summary>Its live book today (its own manual book), on a day it is or was live; null otherwise.</summary>
+    public TodayAiTraderLive? Live { get; init; }
+
+    /// <summary>Plans the Validator rejected (two of three REJECTs): not placed.</summary>
+    public int ValidatorRejected { get; init; }
+
+    /// <summary>Plans the Validator gave no verdict on (a provider down, the agent off): not placed, the desk fails closed.</summary>
+    public int ValidatorUnavailable { get; init; }
+
+    /// <summary>Plans the Risk Memo tightened (fewer lots, a higher stop, a lower target).</summary>
+    public int RiskMemoTightened { get; init; }
+
+    /// <summary>Decisions that placed something in its own account: a buy, an exit, a strategy started or stopped.</summary>
+    public int Placed { get; init; }
+}
+
+/// <summary>Its live book today: positions opened or closed today (or still open), those still open, and the day's net after charges.</summary>
+public sealed record TodayAiTraderLive(int Positions, int Open, decimal Net, decimal Charges);
 
 /// <summary>One of the AI Trader's latest decisions. <c>Option</c> is the CE or PE its plan named ("Buy NIFTY CE"), else null.</summary>
 public sealed record TodayAiTraderDecision(DateTime AtUtc, string Action, string Underlying, bool Allowed, string Rule, string Reason,
-    string? Option);
+    string? Option)
+{
+    /// <summary>What it placed in its own account, and where to see it; null when it placed nothing.</summary>
+    public AiTraderPlacementView? Placed { get; init; }
+}
 
 public sealed record TodayAttention(string Level, string Kind, string Title, string? Detail, string? Link, DateTime? AtUtc);
 

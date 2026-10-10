@@ -10,7 +10,6 @@ using AlgoTrading.Domain.Constants;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -59,11 +58,10 @@ public class ManualOrdersController : ControllerBase
     public const string BookStrategyName = "Manual";
 
     private readonly TradingDbContext _dbContext;
-    private readonly IPaperTradingService _paperTrading;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly ILogger<ManualOrdersController> _logger;
-    private readonly IDeskEventPublisher? _deskEvents;
+    private readonly ManualOrderService _orders;
 
     /// <param name="deskEvents">Tells the console what changed; null where nobody is watching (tests).</param>
     public ManualOrdersController(
@@ -75,11 +73,11 @@ public class ManualOrdersController : ControllerBase
         IDeskEventPublisher? deskEvents = null)
     {
         _dbContext = dbContext;
-        _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
         _upsertWatchlistItem = upsertWatchlistItem;
         _logger = logger;
-        _deskEvents = deskEvents;
+        // Placing is shared with the AI Trader, which books its paper buys in its own manual book the same way.
+        _orders = new ManualOrderService(dbContext, paperTrading, lotSizeResolver, logger, deskEvents);
     }
 
     // ----------------------------------------------------------- instrument --
@@ -270,7 +268,7 @@ public class ManualOrdersController : ControllerBase
         decimal? TargetPrice = null,
         bool CarryForward = false);
 
-    /// <summary>Books one paper order into the caller's manual book.</summary>
+    /// <summary>Books one paper order into the caller's manual book (<see cref="ManualOrderService"/>).</summary>
     [HttpPost]
     public async Task<IActionResult> Place(
         [FromBody] PlaceManualOrderRequest? request,
@@ -279,230 +277,39 @@ public class ManualOrdersController : ControllerBase
         if (request is null || string.IsNullOrWhiteSpace(request.Symbol))
             return BadRequest(new { message = "symbol is required." });
 
-        string symbol = request.Symbol.Trim();
-        string side = (request.Side ?? string.Empty).Trim().ToUpperInvariant();
+        var outcome = await _orders.PlaceAsync(new ManualOrderCommand(
+            User.GetRequiredUserId(),
+            User.GetUserName() ?? "unknown",
+            request.Symbol,
+            request.Side,
+            request.Quantity,
+            request.LimitPrice,
+            request.StopLossPrice,
+            request.TargetPrice,
+            request.CarryForward), cancellationToken);
 
-        if (side != "BUY" && side != "SELL")
-            return BadRequest(new { message = "side must be BUY or SELL." });
-
-        if (request.Quantity < 1)
-            return BadRequest(new { message = "quantity must be at least 1." });
-
-        var instrument = await _dbContext.Instruments
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Symbol == symbol && x.IsEnabled, cancellationToken);
-
-        if (instrument is null)
-            return BadRequest(new { message = $"{symbol} is not in the instrument master." });
-
-        if (instrument.ExpiryDate is { } contractExpiry
-            && contractExpiry < DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5.5)))
-        {
-            return BadRequest(new
-            {
-                message = $"{symbol} expired on {contractExpiry:dd MMM yyyy} and can no longer be traded.",
-                expiryDate = contractExpiry
-            });
-        }
-
-        var quote = await _dbContext.LiveQuotesLatest
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
-
-        // The fill price, and why it is that price.
-        decimal? price;
-        string priceBasis;
-        if (request.LimitPrice is { } limit)
-        {
-            if (limit <= 0)
-                return BadRequest(new { message = "limitPrice must be greater than zero." });
-
-            // A price off the tick grid is not a price the exchange would take,
-            // and booking it here would flatter every fill that followed.
-            if (instrument.TickSize is { } tick && tick > 0)
-            {
-                decimal steps = limit / tick;
-                if (Math.Abs(steps - Math.Round(steps)) > 0.0001m)
-                {
-                    return BadRequest(new
-                    {
-                        message = $"limitPrice {limit} is not a multiple of this instrument's tick size ({tick}).",
-                        tickSize = tick
-                    });
-                }
-            }
-
-            price = limit;
-            priceBasis = "limit";
-        }
-        else
-        {
-            price = side == "BUY"
-                ? quote?.AskPrice ?? quote?.LastTradedPrice
-                : quote?.BidPrice ?? quote?.LastTradedPrice;
-
-            priceBasis = side == "BUY"
-                ? (quote?.AskPrice is not null ? "ask" : "last trade")
-                : (quote?.BidPrice is not null ? "bid" : "last trade");
-        }
-
-        if (price is not > 0)
-        {
-            // Inventing a price here would defeat the same refusal the strategy
-            // path makes for an unpriced opening group.
-            return BadRequest(new
-            {
-                message = $"No live price for {symbol}. Add it to the watchlist and wait for a tick, or give a limitPrice.",
-            });
-        }
-
-        // The stop and target belong to THIS order, so they are checked against
-        // the side: a long is stopped below and takes profit above, a short the
-        // other way round. Levels on the wrong side would close the position on
-        // the guard's very next sweep, seconds after it opened.
-        bool isBuy = side == "BUY";
-        foreach (var (level, name, mustBeBelow) in new[]
-                 {
-                     (request.StopLossPrice, "stopLossPrice", isBuy),
-                     (request.TargetPrice, "targetPrice", !isBuy)
-                 })
-        {
-            if (level is not { } value) continue;
-
-            if (value <= 0)
-                return BadRequest(new { message = $"{name} must be greater than zero." });
-
-            if (mustBeBelow && value >= price)
-                return BadRequest(new { message = $"{name} {value} must be BELOW the {price} fill for a {side}." });
-
-            if (!mustBeBelow && value <= price)
-                return BadRequest(new { message = $"{name} {value} must be ABOVE the {price} fill for a {side}." });
-        }
-
-        var lot = await _lotSizeResolver.ResolveAsync(symbol, cancellationToken);
-        long userId = User.GetRequiredUserId();
-        string userName = User.GetUserName() ?? "unknown";
-
-        var book = await ManualBook.FindOrCreateAsync(_dbContext, userId, _logger, cancellationToken);
-
-        var groupId = $"MANUAL-{Guid.NewGuid():N}"[..20];
-        var metadata = JsonSerializer.Serialize(new
-        {
-            manual = true,
-            by = userName,
-            priceBasis,
-            segment = instrument.Segment,
-            instrumentType = instrument.InstrumentType,
-            lotSize = lot.LotSize,
-            tickSize = instrument.TickSize,
-            bid = quote?.BidPrice,
-            ask = quote?.AskPrice,
-            ltp = quote?.LastTradedPrice
-        });
-
-        var signal = new CreateSimulationSignalRequest
-        {
-            SimulationRunId = book.Id,
-            StrategyName = BookStrategyName,
-            SignalType = "OPEN_GROUP",
-            TimestampUtc = DateTime.UtcNow,
-            Symbol = symbol,
-            Price = price,
-            GroupId = groupId,
-            MetadataJson = metadata,
-            // Quantity is LOTS to the engine, which multiplies by the lot size.
-            // For a share the resolver gives 1, so this is the share count.
-            Legs = new List<SimulationSignalLegRequest>
-            {
-                new() { Symbol = symbol, Side = side, Quantity = request.Quantity, Price = price }
-            },
-            // The ticket has decided the price — the limit, or the bid or ask
-            // it just showed the person — and the reply below quotes it.
-            LegPricesAreFinal = true
-        };
-
-        var result = await _paperTrading.CreateSignalAsync(signal, cancellationToken);
-
-        // Written after the fill, because the position does not exist until the
-        // signal is booked. The guard reads the levels off the position on its
-        // next sweep, ahead of any rule the run carries; the close's intraday
-        // square-off reads the carry tick.
-        if (request.StopLossPrice is not null || request.TargetPrice is not null || request.CarryForward)
-        {
-            var booked = await _dbContext.PaperPositions
-                .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
-                .ToListAsync(cancellationToken);
-
-            foreach (var position in booked)
-            {
-                if (request.StopLossPrice is not null || request.TargetPrice is not null)
-                {
-                    position.StopLossPrice = request.StopLossPrice;
-                    position.TargetPrice = request.TargetPrice;
-                    position.UpdatedUtc = DateTime.UtcNow;
-                }
-
-                // Either one asking to carry is enough. Each ticket order opens a
-                // group of its own today, so this only ever meets the position it
-                // just opened; should an order ever add to a held position, an
-                // unticked add must not quietly turn a carried position intraday.
-                position.CarryForward = position.CarryForward || request.CarryForward;
-            }
-
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            // The fill's own events went out when the signal was booked, a
-            // moment before these levels and the tick were written; a page that
-            // fetched on those could show the position without them. This one
-            // says the position is now complete.
-            var now = DateTime.UtcNow;
-            if (request.StopLossPrice is not null || request.TargetPrice is not null)
-            {
-                _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Position, book.Id, userId, symbol, now,
-                    $"Own levels set: stop-loss {Level(request.StopLossPrice)}, target {Level(request.TargetPrice)}"));
-            }
-            if (request.CarryForward)
-            {
-                _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Carry, book.Id, userId, symbol, now,
-                    "Carry forward ticked: held overnight"));
-            }
-        }
-
-        int units = request.Quantity * Math.Max(1, lot.LotSize);
-        string unitWord = IsDerivative(instrument.InstrumentType) ? "lot" : "share";
-
-        _logger.LogInformation(
-            "Manual {Side} {Quantity} {Unit}(s) of {Symbol} at {Price} ({Basis}) by {By} into book {RunId}, {Product}.",
-            side, request.Quantity, unitWord, symbol, price, priceBasis, userName, book.Id,
-            request.CarryForward ? "carry forward" : "intraday");
+        if (outcome.Fill is not { } fill) return BadRequest(outcome.Refusal);
 
         return Ok(new
         {
-            message = $"{side} {request.Quantity} {unitWord}{(request.Quantity == 1 ? "" : "s")} "
-                      + $"({units} qty) of {symbol} at {price} — filled on the {priceBasis}. "
-                      + (request.CarryForward
-                          ? "Carried forward: held overnight until you close it."
-                          : $"Intraday: squared off at the {(symbol.StartsWith("MCX:", StringComparison.OrdinalIgnoreCase) ? "MCX close" : "close (15:30 IST)")}."),
-            runId = book.Id,
-            groupId,
-            symbol,
-            side,
-            quantity = request.Quantity,
-            lotSize = lot.LotSize,
-            filledQuantity = units,
-            price,
-            priceBasis,
-            stopLossPrice = request.StopLossPrice,
-            targetPrice = request.TargetPrice,
-            carryForward = request.CarryForward,
-            signalId = result.Id
+            message = fill.Message,
+            runId = fill.RunId,
+            groupId = fill.GroupId,
+            symbol = fill.Symbol,
+            side = fill.Side,
+            quantity = fill.Quantity,
+            lotSize = fill.LotSize,
+            filledQuantity = fill.FilledQuantity,
+            price = (decimal?)fill.Price,
+            priceBasis = fill.PriceBasis,
+            stopLossPrice = fill.StopLossPrice,
+            targetPrice = fill.TargetPrice,
+            carryForward = fill.CarryForward,
+            signalId = fill.SignalId
         });
     }
 
     // -------------------------------------------------------------- helpers --
-
-    private static string Level(decimal? price) =>
-        price is { } value ? value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "none";
 
     private static bool IsDerivative(string? instrumentType) =>
         instrumentType is "CE" or "PE" or "FUT";
