@@ -23,7 +23,9 @@ Two words need care:
 |---|---|---|---|
 | 00:00–06:00 | `market-close.sh` for the day before, only if 23:58 was missed | weekdays | `market_close_due`, `scripts/lib/desk-common.sh` |
 | 00:15 | Sentinel's end-of-day checkup (a message only when something is wrong) | every day | `sentinel/checkup/slots.py` |
+| 20 minutes after the archive is due (00:10, or 00:35 the US winter) | AI Data Curator's night pass: code checks the trading day's recorded data, the model triages what it found ([AI](ai.md#data-curator)). Waits for the archive's marker, at most two hours. | after trading days | `DataCuratorAgent.cs` |
 | 06:00 | Nightly archive to Google Drive | every day | server crontab, `scripts/archive-to-drive.sh` |
+| 08:00–09:00 | AI Data Curator's morning pass: the trading day before, and today's expiries | trading days | `Ai:DataCuratorMorningIst`, `DataCuratorAgent.cs` |
 | until 08:40 | Deploys build and restart (no live run needed) | weekdays | `deploy_allowed`, `desk-common.sh` |
 | from 08:00 | Dhan automatic sign-in: first try at the later of 08:00 and 2 minutes after the last token ends; never while a token is live | weekdays | `DhanAutoSignIn.cs` |
 | 08:10 | Telegram alert if there is still no Dhan token (moves later with the token's end, never past 08:40) | trading days | `DhanAutoSignIn.cs` |
@@ -31,10 +33,11 @@ Two words need care:
 | 08:50 | Forecasts issued | trading days | `ForecastScheduler.cs` |
 | 08:55 | Sentinel's before-the-open checkup | trading days | `slots.py` |
 | 15:45 | AI Trade Reviewer may start on stopped runs (off until switched on) | when runs stopped | `Ai:ReviewAfterIst`, `TradeReviewerAgent.cs` |
-| from 15:45 | The AI's one Telegram digest: the AI Trader's day and the run reviews. After the NSE close and 15:45; while reviews are still owed it waits, at most until 17:45. Once a day. A day it missed (the API down from the close to midnight) is sent on the API's next minute, titled "(sent late)"; only the latest missed day, older ones as one line. | trading days; other days only if the AI Trader looked | `Ai:ReviewDigestToTelegram`, `AiDailyDigest.cs` |
+| from 15:45 | The AI's one Telegram digest: the AI Trader's day, the run reviews, and a line for each of the Data Curator, the Compliance Triage and the Strategy Researcher that wrote since the last digest. After the NSE close and 15:45; while reviews are still owed it waits, at most until 17:45. Once a day. A day it missed (the API down from the close to midnight) is sent on the API's next minute, titled "(sent late)"; only the latest missed day, older ones as one line. | trading days; other days only if the AI Trader looked or one of those three wrote | `Ai:ReviewDigestToTelegram`, `AiDailyDigest.cs` |
 | 15:50 | Forecasts scored | trading days | `ForecastScheduler.cs` |
 | 16:00 | Sentinel's after-the-close checkup | trading days | `slots.py` |
 | 16:40 | AI Assistant check (the daily golden test) | trading days | `Ai:AssistantCheckAfterIst`, `AssistantCheckAgent.cs` |
+| from 20:30 | SEBI, NSE and BSE circulars recorded with the first pages of their text, once a day ([market intelligence](market_intelligence.md#sebi-nse-and-bse-circulars)) | every day | `MarketIntelligenceSchedule.CircularsDue` |
 | 23:30 / 23:55 | MCX closes; crude runs end with it | trading days | the strategy's own session |
 | 23:50, or 00:15 the next morning | Nightly candle archive: the day's live 1-minute bars into 1/5/15-minute candles, and the broker's own index candles. Due at `Archive:RunAtIst` (23:50) or 20 minutes after the day's last exchange close, whichever is later; the closes come from the session service. So 23:50 while MCX closes at 23:30, and 00:15 the next morning while it closes at 23:55 (the US on standard time, November to March). A day missed (API down) is caught up on the API's next minute, up to 7 days back. A day whose archive fails is tried again after 5 minutes, 15, then hourly, not every minute. | every day | `ArchiveSchedule.cs`, `NightlyArchiveService.cs`, `MarketSessionService.cs` |
 | right after the archive | India VIX check: the last 20 trading days' 1/5/15-minute VIX bars, every missing one asked of the history vendors; a day still unusable is an error and one System message ([data module](data_module.md#india-vix)). Runs when a day just archived was an NSE trading day, so also after a catch-up. | trading days | `NightlyArchiveService.cs`, `VixBackfill.cs` |
@@ -45,6 +48,10 @@ Always running: the desk checks the API's health every 30 seconds and GitHub eve
 refreshes every 6 hours.
 
 Sundays at 18:00 Sentinel sends the weekly review. At weekends deploys go out at once.
+
+Saturdays from 10:00 the AI Compliance Triage reads the week's circulars (`Ai:ComplianceDay`, `Ai:ComplianceAfterIst`);
+Sundays from 11:00 the AI Strategy Researcher writes its weekly note (`Ai:ResearchDay`, `Ai:ResearchAfterIst`), never
+inside a session. The digest goes after 15:45 on those days when either wrote.
 
 ## When a deploy goes out
 
