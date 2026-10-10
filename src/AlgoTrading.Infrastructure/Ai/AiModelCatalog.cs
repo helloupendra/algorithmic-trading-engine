@@ -7,11 +7,12 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// <param name="Error">Why the provider could not be read this time, else null.</param>
 public sealed record AiModelList(IReadOnlyList<ProviderModel> Models, string Source, DateTime? FetchedUtc, string? Error)
 {
-    /// <summary>Every id a chain may name: the provider's list, or the default chains when it is out of reach.</summary>
+    /// <summary>
+    /// Every id a chain may name: NVIDIA's list, or the default chains when it is out of reach, and the Claude models
+    /// on Bedrock (<see cref="AiCatalog.BedrockModels"/>: Bedrock's Messages API lists none).
+    /// </summary>
     public IReadOnlySet<string> KnownIds() =>
-        Models.Count > 0
-            ? Models.Select(m => m.Id).Concat(AiCatalog.DefaultModels).ToHashSet(StringComparer.Ordinal)
-            : AiCatalog.DefaultModels;
+        Models.Select(m => m.Id).Concat(AiCatalog.DefaultModels).Concat(AiCatalog.BedrockModelIds).ToHashSet(StringComparer.Ordinal);
 }
 
 /// <summary>

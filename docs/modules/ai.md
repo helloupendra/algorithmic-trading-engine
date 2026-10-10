@@ -37,6 +37,8 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   `appsettings.Local.json` on each deploy (`scripts/_gen_local_settings.py`), and it is sent only in the provider's
   `Authorization` header. The browser learns `keyConfigured: true` and nothing more. Every stored text is scrubbed
   of it as a second layer.
+- **Amazon Bedrock has no key at all.** The second provider, off by default, signs with the server's own AWS role;
+  no AWS credential is in the repo, the settings or `.env` ([Providers](#providers-nvidia-and-amazon-bedrock)).
 - **Text a model reads is data, not instructions.** This matters from Phase 3, when agents read news and filings.
 
 ## Tiers and chains
@@ -86,6 +88,9 @@ The owner can change a tier's chain, or give one agent its own chain, from the M
 stored in `system_settings` under `ai.`. The defaults are in `AiCatalog` and match `core/llm.py`'s `DEFAULT_CHAINS`,
 which Python scripts use directly. `AiSettingsTests` fails if the two drift.
 
+These are the chains while Amazon Bedrock is off. With it on, every tier is Claude
+([Providers](#providers-nvidia-and-amazon-bedrock)).
+
 ### Latency on the free tier (measured 30 Sep, ~16:30 IST)
 
 | Model | "Reply OK", streamed |
@@ -115,12 +120,135 @@ the queue can cost the full first-token limit before it hands over. So since 30 
 tier's first fallback**; `core/llm.py` keeps the same chains. The Models tab's **Test** button measures latency at any
 time, and each test is kept in the call log.
 
+## Providers: NVIDIA and Amazon Bedrock
+
+A model's id names who serves it:
+
+| Id | Provider | Asked through |
+| --- | --- | --- |
+| `vendor/model`, such as `nvidia/nemotron-3-super-120b-a12b` | NVIDIA build (NIM API) | `NvidiaChatClient`: the OpenAI-style `/chat/completions`, streamed, with `NVIDIA_API_KEY` |
+| `bedrock:` and a Bedrock model id, such as `bedrock:anthropic.claude-opus-5-5` | Amazon Bedrock | `BedrockClaudeClient`: Anthropic's SDK (`Anthropic.Bedrock`), the Messages API at `bedrock-mantle.{region}.api.aws/anthropic/v1/messages`, streamed, signed with the server's AWS role |
+
+`AiChatRouter` picks the client for each model, so one chain can name both and fall back from one to the other. A
+model whose provider cannot be asked now is **skipped**: it is an attempt with its reason, for example `skipped:
+Amazon Bedrock is off (Ai:Bedrock:Enabled is false)`, that took no time. A skip is not a fallback, and it does not
+touch the model's health. A call left with nothing to ask is refused (503).
+
+The Claude models a chain may name (Bedrock's Messages API has no model list, so the desk keeps its own, in
+`AiCatalog.BedrockModels`): Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5, Opus 4.8, Sonnet 5 and Haiku 4.5, each as
+`bedrock:anthropic.claude-…`.
+
+### Settings
+
+`Ai:Bedrock`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | `false` | Off: nothing calls AWS, and the chains are NVIDIA's. On: every chain is Claude (below). |
+| `Region` | `us-east-1` | Where Claude and Titan are asked. Mumbai's Messages API answered "model does not exist" for these models on 10 Oct. The model ids carry no region prefix; the Global endpoint type routes across regions at no premium. |
+| `EffortByTier` | judge `high`, analyst `high`, extract `low` | Claude's `output_config.effort`. A model's test from the Models tab asks at `low`. |
+| `MinMaxTokens` | 16,000 | The fewest tokens a Claude answer may use: its thinking counts against the limit, and a caller's limit was set for the answer alone |
+| `EmbeddingModel` | `amazon.titan-embed-text-v2:0` | What the re-embedding switches search and memory to ([Embeddings](#embeddings-titan)) |
+| `EmbeddingDimensions` | 1024 | Titan's vector size: 1024, 512 or 256 |
+| `Prices` | Anthropic's list prices | US dollars per million tokens, for the cost of an answer; Bedrock bills per AWS's own price page |
+
+On the server they come from `.env`, written into `appsettings.Local.json` on each deploy like the NVIDIA key:
+`AI_BEDROCK_ENABLED=true` and, to move it, `AI_BEDROCK_REGION`. Nothing else about AWS goes in `.env`.
+
+### While Bedrock is on, every chain is Claude
+
+Owner, 10 Oct 2026: every answer comes from Bedrock, the most capable model first, cost no issue.
+
+| Tier | Chain | Effort |
+| --- | --- | --- |
+| Judge | Claude Fable 5.1 → Claude Opus 5.5 | high |
+| Analyst | Claude Opus 5.5 → Claude Sonnet 5.5 | high |
+| Extract | Claude Sonnet 5.5 → Claude Haiku 5.5 | low |
+
+- A tier the owner never changed walks this chain (`AiTierDef.BedrockChain`).
+- A chain the owner set, for a tier or an agent, keeps only its Bedrock models. One with none walks the tier's
+  Bedrock chain.
+- The stored chains are not touched, so switching Bedrock off brings the NVIDIA chains back as they were.
+- While Bedrock is on, the Models and Agents tabs refuse an NVIDIA model in a chain.
+- To give a tier other Claude models, set its chain to Bedrock ids on the Models tab, or
+  `PUT tiers/judge { "chain": ["bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5"] }`.
+  An empty chain goes back to the default.
+
+### What Claude is sent
+
+- **Thinking.** Adaptive, summarized so the console can show it, steered by the tier's effort. Haiku 4.5 gets neither
+  thinking nor effort. Fable 5.1 and Opus 5.5 cannot turn thinking off; the desk never asks them to.
+- **No temperature.** The current models refuse sampling settings, so the 0.2 the AI Trader asks for is not sent.
+- **Tools.** `tool_choice: auto`, or `none` once the tools close. A forced choice is refused by these models.
+- **Prompt cache.** Explicit breakpoints on the agent's own system prompt and on the tool definitions, so an agent's
+  repeated calls read them from the cache. The memories and the time after the prompt are not cached.
+- **Tool loops are append-only.** An assistant turn goes back to the model that wrote it exactly as it came, its
+  thinking blocks and their signatures unchanged. Thinking blocks are bound to their model, so another model, after a
+  fallback, gets the turn's words and tool calls only.
+- **The answer.** The finish reason is put in the desk's words: `end_turn` is `stop`, `max_tokens` is `length`,
+  `tool_use` is `tool_calls`. The usage counts the cache reads and writes. The answer's cost at list price is
+  `costUsd` on the stream's `done` event and on `POST ask`; it is null when NVIDIA answered.
+
+### When Bedrock says no
+
+| Bedrock says | The attempt | Then |
+| --- | --- | --- |
+| 429, throttling | `http 429: throttled by Bedrock` | Capacity: asked once more after `Ai:CapacityRetrySeconds`, then the next model |
+| 503, model not ready, service unavailable, 529 overloaded | `http 503: …` | Capacity, as above |
+| 403 or 404 | `http 403: Bedrock model access is not enabled for anthropic.claude-… in us-east-1` | The next model |
+| 401, or 403 for the signature | `Bedrock refused the server's AWS credentials` | The next model |
+| A `refusal` stop | `refused: the model's safeguards declined (category: …)` | The next model. Bedrock has no server-side fallback, so this is it. A refusal does not cool the model. |
+
+An AWS account number in the provider's words is masked. Neither credentials nor request bodies are logged.
+
+### Nothing calls Bedrock by itself
+
+Every Claude call is billed, so:
+
+- **The health probe never asks a Claude model.** A cooled one waits out its cooling and is back in its place with its
+  next real answer.
+- **No test or CI job reaches AWS.** The tests stream from a scripted endpoint through Anthropic's own SDK client with
+  signing switched off, and a scripted Titan (`AiBedrockTests`).
+- **Off is off.** With `Enabled` false the SDK clients are never even made.
+
+### Embeddings: Titan
+
+Search and memory compare vectors, and two models' vectors cannot be compared, so one embedding model is active at a
+time (`AiEmbedder`):
+
+- It is NVIDIA's Nemotron Embed until the re-embedding has run. While Bedrock is off it is NVIDIA's again.
+- **The re-embedding** (`POST embeddings/reembed`, admin, Bedrock on) embeds every memory and every doc passage with
+  Titan Text Embeddings V2 on `bedrock-runtime` InvokeModel, one text a call, four at a time. It saves the vectors,
+  their model and the switch (`system_settings` row `ai.embedding.model`) in one transaction, and only once all of them
+  are made. A failure part-way changes nothing.
+- It runs in the background and answers 202. It is one row on the Calls tab (agent `reembed`).
+- Readers use only the active model's vectors. A passage or memory with another model's vector is embedded again when
+  next needed: the doc indexer on its next run, a memory when it is next ranked.
+- `GET embeddings` shows the active model, the target, and how many vectors each model holds.
+
+### Not on Bedrock
+
+Bedrock does not offer, so the desk does not use there: structured outputs; server-side tools (web search and fetch,
+code execution); Message Batches; the Models API; server-side `fallbacks`; top-level automatic `cache_control` (the desk
+sets explicit breakpoints). Tool use, thinking, prompt caching with explicit breakpoints and streaming work.
+
+### What the owner does in AWS
+
+1. **Model access.** In the Bedrock console, in `us-east-1`, enable access to Claude Fable 5.1, Opus 5.5, Sonnet 5.5
+   and Haiku 5.5, and to Titan Text Embeddings V2.
+2. **The instance role.** The role of the EC2 instance profile allows `bedrock-mantle:CreateInference` (Claude through
+   the Messages API) and `bedrock:InvokeModel` on Titan Text Embeddings V2, and nothing else. No access key is made.
+3. **A budget alarm.** An AWS Budgets monthly cost budget with an e-mail alert, so a runaway loop is seen the same day.
+4. Then `AI_BEDROCK_ENABLED=true` in the server's `.env` and a deploy. Test each Claude model once from the Models tab,
+   then run the re-embedding.
+
 ## A call
 
 `AiGateway` is the one door every call goes through. In order:
 
 1. **The agent's switch.** A planned agent, or one switched off, is refused (409).
-2. **The key.** Without one the call is refused (503), with where the key goes.
+2. **The providers.** A model whose provider cannot be asked (no NVIDIA key; Bedrock off) is skipped. With nothing
+   left in the chain the call is refused (503), with the reason: where the key goes, or that Bedrock is off.
 3. **The desk's own rate limit** (`AiRateLimiter`, in memory). A call is refused (429, with `Retry-After`) when it would
    exceed any of these:
    - 30 questions per user in ten minutes;
@@ -272,8 +400,10 @@ All under `api/Ai`, admin only.
 | `GET agents` | Every agent (built or planned) with its chain, switch, last call and today's use; whether the owner can talk with it (`chat`) and what it reads then (`chatTools`); the desk's rule-based parts |
 | `PUT agents/{key}` | `{ enabled, chain, resetChain, reason }`: 409 for a planned agent |
 | `PUT tiers/{tier}` | `{ chain, reason }`: an empty chain goes back to the default |
-| `GET models?refresh=` | The provider's catalog (cached 10 min), in-use models first, each one's last test and today's attempts; local models (FinBERT) |
+| `GET models?refresh=` | NVIDIA's catalog (cached 10 min) and the Claude models on Bedrock, in-use models first; each one's provider, whether it can be asked now, its list price (Bedrock), last test and today's attempts; local models (FinBERT) |
 | `POST models/test` | `{ model }`: one tiny question to one model, logged as agent `model-test` |
+| `GET embeddings` | The embedding model in use, the re-embedding's target, and the vectors each model holds |
+| `POST embeddings/reembed` | Embeds every memory and doc passage with Titan, then switches to it; 202, Bedrock on only ([Embeddings](#embeddings-titan)) |
 | `GET calls?agent=&outcome=&model=&take=&beforeId=` | The log, newest first, paged by id |
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |

@@ -64,21 +64,26 @@ public sealed class AiDocIndexer(
     public async Task<(int Embedded, int Removed)> IndexAsync(string root, CancellationToken cancellationToken)
     {
         var s = settings.CurrentValue;
-        if (!s.DocSearchEnabled || !s.KeyConfigured || !Directory.Exists(root)) return (0, 0);
+        if (!s.DocSearchEnabled || !Directory.Exists(root)) return (0, 0);
+
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var embedder = index.Embedder;
+
+        // The active embedding model: NVIDIA's until the re-embedding switched to Bedrock's (AiEmbedder). A passage
+        // another model embedded is embedded again.
+        string model = await embedder.ActiveModelAsync(db, cancellationToken);
+        if (!embedder.CanEmbed(model)) return (0, 0);
 
         var passages = Directory.EnumerateFiles(root, "*.md", SearchOption.AllDirectories)
             .OrderBy(f => f, StringComparer.Ordinal)
             .SelectMany(f => AiDocChunker.Chunk(Path.GetRelativePath(root, f).Replace('\\', '/'), File.ReadAllText(f)))
             .ToList();
 
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
-        var client = scope.ServiceProvider.GetRequiredService<NvidiaChatClient>();
-
         var existing = await db.AiDocChunks.Select(c => new { c.Id, c.Path, c.Ordinal, c.Hash, c.Model }).ToListAsync(cancellationToken);
         string Key(string path, int ordinal, string hash) => $"{path}\n{ordinal}\n{hash}";
         var wanted = passages.ToDictionary(p => Key(p.Path, p.Ordinal, p.Hash));
-        var kept = existing.Where(e => e.Model == AiCatalog.EmbeddingModel && wanted.ContainsKey(Key(e.Path, e.Ordinal, e.Hash)))
+        var kept = existing.Where(e => e.Model == model && wanted.ContainsKey(Key(e.Path, e.Ordinal, e.Hash)))
             .Select(e => Key(e.Path, e.Ordinal, e.Hash)).ToHashSet();
         var removedIds = existing.Where(e => !kept.Contains(Key(e.Path, e.Ordinal, e.Hash))).Select(e => e.Id).ToList();
         var toEmbed = passages.Where(p => !kept.Contains(Key(p.Path, p.Ordinal, p.Hash))).ToList();
@@ -97,13 +102,13 @@ public sealed class AiDocIndexer(
         {
             try
             {
-                var (vectors, used) = await client.EmbedAsync(AiCatalog.EmbeddingModel, batch.Select(p => $"{p.Heading}\n\n{p.Text}").ToList(),
+                var (vectors, used) = await embedder.EmbedAsync(model, batch.Select(p => $"{p.Heading}\n\n{p.Text}").ToList(),
                     "passage", cancellationToken);
                 var now = _time.GetUtcNow().UtcDateTime;
                 db.AiDocChunks.AddRange(batch.Select((p, i) => new AiDocChunk
                 {
                     Path = p.Path, Heading = Cut(p.Heading, 400), Ordinal = p.Ordinal, Text = p.Text, Hash = p.Hash,
-                    Embedding = vectors[i], Model = AiCatalog.EmbeddingModel, IndexedUtc = now,
+                    Embedding = vectors[i], Model = model, IndexedUtc = now,
                 }));
                 await db.SaveChangesAsync(cancellationToken);
                 embedded += batch.Length;
@@ -127,8 +132,8 @@ public sealed class AiDocIndexer(
             Tier = "embed",
             Source = "index",
             RequestedBy = AiCatalog.DocIndex,
-            ChainJson = JsonSerializer.Serialize(new[] { AiCatalog.EmbeddingModel }),
-            Model = embedded > 0 ? AiCatalog.EmbeddingModel : string.Empty,
+            ChainJson = JsonSerializer.Serialize(new[] { model }),
+            Model = embedded > 0 ? model : string.Empty,
             Outcome = error is null ? AiCallOutcome.Ok : AiCallOutcome.Failed,
             Error = error ?? string.Empty,
             Seconds = Math.Round(clock.Elapsed.TotalSeconds, 2),
@@ -136,7 +141,7 @@ public sealed class AiDocIndexer(
             PromptTokens = tokens,
             Summary = summary,
             Answer = summary,
-            AttemptsJson = JsonSerializer.Serialize(new[] { new { model = AiCatalog.EmbeddingModel, outcome = error is null ? "ok" : error, seconds = Math.Round(clock.Elapsed.TotalSeconds, 2), httpStatus = (int?)null, round = 1 } }),
+            AttemptsJson = JsonSerializer.Serialize(new[] { new { model, outcome = error is null ? "ok" : error, seconds = Math.Round(clock.Elapsed.TotalSeconds, 2), httpStatus = (int?)null, round = 1 } }),
         });
         await db.SaveChangesAsync(CancellationToken.None);
         logger.LogInformation("Docs search index: {Summary}{Error}", summary, error is null ? string.Empty : $" ({error})");
