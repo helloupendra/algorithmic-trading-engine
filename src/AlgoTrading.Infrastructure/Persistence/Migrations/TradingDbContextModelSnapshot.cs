@@ -730,7 +730,7 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_ai_reports_Status", "\"Status\" IN ('ok', 'invalid', 'failed')");
 
-                            t.HasCheckConstraint("CK_ai_reports_SubjectType", "\"SubjectType\" IN ('run', 'news', 'filing', 'incident', 'check', 'exam')");
+                            t.HasCheckConstraint("CK_ai_reports_SubjectType", "\"SubjectType\" IN ('run', 'news', 'filing', 'incident', 'check', 'exam', 'decision', 'order')");
                         });
                 });
 
