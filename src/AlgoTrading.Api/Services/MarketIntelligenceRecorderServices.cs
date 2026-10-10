@@ -284,3 +284,60 @@ public sealed class GlobalDailyRecorderService : MarketIntelligenceLoop
 
     private bool IsTradingDay(DateOnly date) => _sessions.GetSessionInfo(IstTime.MiddayUtc(date), "NSE", "CM").IsTradingDay;
 }
+
+/// <summary>
+/// SEBI's, NSE's and BSE's circulars once a day from 20:30 IST (see <see cref="RegulatoryCircularsRecorder"/>), for the
+/// Compliance Triage's Saturday read. A run missed (the API down at 20:30) is made at the next chance outside the
+/// session; the last run's time is kept in system settings, so a restart neither repeats the day's run nor skips it.
+/// </summary>
+public sealed class RegulatoryCircularsRecorderService : MarketIntelligenceLoop
+{
+    /// <summary>The system setting holding when the last run started (UTC, round-trip format).</summary>
+    public const string LastRunKey = "marketintel.circulars.lastRunUtc";
+
+    private static readonly TimeSpan Every = TimeSpan.FromMinutes(10);
+
+    private readonly IMarketSessionService _sessions;
+
+    public RegulatoryCircularsRecorderService(IServiceScopeFactory scopes, ILogger<RegulatoryCircularsRecorderService> logger, IOptions<MarketIntelligenceOptions> options,
+        IMarketSessionService sessions)
+        : base(scopes, logger, options.Value.CircularsEnabled, nameof(MarketIntelligenceOptions.CircularsEnabled))
+    {
+        _sessions = sessions;
+    }
+
+    protected override async Task LoopAsync(CancellationToken ct)
+    {
+        await SleepAsync(TimeSpan.FromMinutes(3), ct);
+        while (!ct.IsCancellationRequested)
+        {
+            await InScopeAsync("circulars run", async sp =>
+            {
+                var db = sp.GetRequiredService<TradingDbContext>();
+                var now = DateTime.UtcNow;
+                var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == LastRunKey, ct);
+                DateTime? last = row is not null && DateTime.TryParse(row.Value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed)
+                    ? parsed
+                    : null;
+                if (!MarketIntelligenceSchedule.CircularsDue(now, last, IsTradingDay)) return;
+
+                // Marked before it runs: a source that fails must not make the loop fetch again every ten minutes.
+                if (row is null)
+                {
+                    row = new AlgoTrading.Domain.Entities.SystemSetting { Key = LastRunKey, CreatedUtc = now, UpdatedBy = nameof(RegulatoryCircularsRecorderService) };
+                    db.SystemSettings.Add(row);
+                }
+
+                row.Value = now.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+                row.UpdatedUtc = now;
+                await db.SaveChangesAsync(ct);
+                await sp.GetRequiredService<RegulatoryCircularsRecorder>().RecordAsync(ct);
+            }, ct);
+
+            await SleepAsync(Every, ct);
+        }
+    }
+
+    private bool IsTradingDay(DateOnly date) => _sessions.GetSessionInfo(IstTime.MiddayUtc(date), "NSE", "CM").IsTradingDay;
+}

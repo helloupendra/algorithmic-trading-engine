@@ -72,7 +72,12 @@ public static class AiReportSubject
     public const string Filing = "filing";
     public const string Incident = "incident";
 
-    /// <summary>The Desk Assistant's daily check; the subject id is the IST day.</summary>
+    /// <summary>
+    /// A report about no one row of the desk: the Desk Assistant's daily check (the subject id is the IST day), the AI
+    /// Trader's reflections and lesson tests, the Data Curator's passes (<c>night:</c>/<c>morning:</c> and the day), the
+    /// Compliance Triage's circulars (<c>circular:</c> and its id) and the Strategy Researcher's weeks (<c>week:</c> and
+    /// the Sunday). The agent tells them apart.
+    /// </summary>
     public const string Check = "check";
 
     /// <summary>The Desk Assistant's exam; the subject id is the exam's id.</summary>
