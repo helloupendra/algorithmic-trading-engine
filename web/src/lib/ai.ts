@@ -676,9 +676,11 @@ export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incid
   'assistant-exam': { subject: null, writes: 'on Sundays from 10:30 IST, the Desk Assistant\'s score on a fixed bank of questions about finished days' },
   'ai-trader': {
     subject: null,
-    writes: 'every 10 minutes 09:20–15:00 IST on trading days, a decision with the brief it read (shadow: nothing is placed)',
+    writes:
+      'every 10 minutes 09:20–15:00 IST on trading days, a decision with the brief it read and, live, what it placed in its own account (shadow: nothing is placed)',
     decisions: true,
   },
+  'execution-reporter': { subject: null, writes: "within a minute of each AI Trader fill, entry or exit, a note comparing the fill with the price its decision saw" },
 }
 
 /** The utilities that call models without being agents, by the key their calls and reports carry. */
@@ -957,6 +959,10 @@ export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'sub
   }
   if (r.agentKey === 'ai-trader-lesson-check') return `AI Trader lesson test · ${r.subjectId}`
   switch (r.subjectType) {
+    case 'decision':
+      return `AI Trader decision #${r.subjectId}`
+    case 'order':
+      return `AI Trader order #${r.subjectId}`
     case 'check':
       return `Assistant check · ${shortDate(r.subjectId)}`
     case 'exam':
@@ -2459,6 +2465,27 @@ export const CHAT_AGENTS: readonly ChatAgentMeta[] = [
     lead: "Question the Incident Explainer about Sentinel's incidents and its explanations of them.",
     starters: ['Explain the latest incident', 'Which incidents are open, and how urgent are they?', 'What did you explain this week?'],
     placeholder: 'Ask the Incident Explainer about an incident…',
+  },
+  {
+    key: 'validator',
+    label: 'Validator',
+    lead: "Question the Validator about its verdicts on the AI Trader's buys and strategy starts: the flaw it named, the words it quoted, and why a plan was or was not placed.",
+    starters: ['Which plans did you reject today, and why?', 'Why was the last buy not placed?', 'How often do your three answers disagree?'],
+    placeholder: 'Ask the Validator about a verdict…',
+  },
+  {
+    key: 'risk-memo',
+    label: 'Risk Memo',
+    lead: "Question the Risk Memo about its memos on the AI Trader's plans: what each risked, and what it tightened or had ignored.",
+    starters: ['What did you tighten today?', 'Which of your changes were ignored, and why?', 'What did the last buy risk at its stop?'],
+    placeholder: 'Ask the Risk Memo about a memo…',
+  },
+  {
+    key: 'execution-reporter',
+    label: 'Execution Reporter',
+    lead: "Question the Execution Reporter about the AI Trader's fills: slippage against the price each decision saw, and time to fill.",
+    starters: ['How much did slippage cost today?', 'Which fill was furthest from its plan?', 'Did any stop fill well past its level?'],
+    placeholder: 'Ask the Execution Reporter about a fill…',
   },
 ]
 
