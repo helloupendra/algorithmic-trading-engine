@@ -10,22 +10,22 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// The chain when the owner has not changed it and Amazon Bedrock is on (<see cref="AiBedrockSettings.Enabled"/>):
 /// Claude only. Empty for the embedding tier, whose model the re-embedding switches (<see cref="AiEmbedder"/>).
 /// </param>
-/// <param name="OpenFallbacks">
-/// Open models on Bedrock that follow <paramref name="DefaultChain"/> while Claude is off and they are on
-/// (<see cref="AiBedrockOpenSettings.Enabled"/>): they catch the NVIDIA models' failures.
+/// <param name="OpenChain">
+/// Open models on Bedrock that come before <paramref name="DefaultChain"/> while Claude is off and they are on
+/// (<see cref="AiBedrockOpenSettings.Enabled"/>): they answer first, and NVIDIA's models catch their failures.
 /// </param>
 public sealed record AiTierDef(
     string Key, string Label, string Purpose, IReadOnlyList<string> DefaultChain, bool Chat = true, IReadOnlyList<string>? BedrockChain = null,
-    IReadOnlyList<string>? OpenFallbacks = null)
+    IReadOnlyList<string>? OpenChain = null)
 {
     /// <summary>
-    /// The chain an untouched tier walks: Claude's while Claude on Bedrock is on; else NVIDIA's, followed by the open
-    /// models on Bedrock while those are on.
+    /// The chain an untouched tier walks: Claude's while Claude on Bedrock is on; else the open models on Bedrock
+    /// while those are on, followed by NVIDIA's.
     /// </summary>
     public IReadOnlyList<string> DefaultFor(bool bedrock, bool bedrockOpen = false)
     {
         if (bedrock && BedrockChain is { Count: > 0 } claude) return claude;
-        return bedrockOpen && OpenFallbacks is { Count: > 0 } open ? [.. DefaultChain, .. open] : DefaultChain;
+        return bedrockOpen && OpenChain is { Count: > 0 } open ? [.. open, .. DefaultChain] : DefaultChain;
     }
 }
 
@@ -344,21 +344,22 @@ public static partial class AiCatalog
         // With Amazon Bedrock on, every tier is Claude, the most capable model first (owner, 10 Oct: "the best
         // model, any region, cost no issue"); its second model is the fallback for a refusal or a busy hour.
         //
-        // While Claude is off, two open models on Bedrock follow NVIDIA's chain (owner, 10 Oct): in the three days to
-        // 10 Oct, 12% of calls failed on every NVIDIA model of their chain. NVIDIA's stay first, being the newer
-        // versions (Kimi K3, GLM-5.3); the Bedrock ones answered in 1 to 2 s and catch the failures.
+        // While Claude is off, two open models on Bedrock come first and NVIDIA's chain follows (owner, 10 Oct: "every
+        // answer from AWS Bedrock"). In the three days to 10 Oct, 12% of calls failed on every NVIDIA model of their
+        // chain and answers took 37 s on average; the Bedrock ones answered in 1 to 2 s. NVIDIA's (the newer Kimi K3
+        // and GLM-5.3 among them) catch Bedrock's failures.
         new("judge", "Judge", "The hardest reasoning, few calls a day.",
             ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
             BedrockChain: ["bedrock:anthropic.claude-fable-5-1", "bedrock:anthropic.claude-opus-5-5"],
-            OpenFallbacks: ["bedrock-oss:moonshotai.kimi-k2.5", "bedrock-oss:zai.glm-5"]),
+            OpenChain: ["bedrock-oss:moonshotai.kimi-k2.5", "bedrock-oss:zai.glm-5"]),
         new("analyst", "Analyst", "Reading data the code computed and writing a view.",
             ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"],
             BedrockChain: ["bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5"],
-            OpenFallbacks: ["bedrock-oss:deepseek.v3.2", "bedrock-oss:qwen.qwen3-235b-a22b-2507"]),
+            OpenChain: ["bedrock-oss:deepseek.v3.2", "bedrock-oss:qwen.qwen3-235b-a22b-2507"]),
         new("extract", "Extract", "High volume: classifying, pulling numbers out of text, strict JSON.",
             ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"],
             BedrockChain: ["bedrock:anthropic.claude-sonnet-5-5", "bedrock:anthropic.claude-haiku-5-5"],
-            OpenFallbacks: ["bedrock-oss:openai.gpt-oss-120b", "bedrock-oss:mistral.mistral-large-3-675b-instruct"]),
+            OpenChain: ["bedrock-oss:openai.gpt-oss-120b", "bedrock-oss:mistral.mistral-large-3-675b-instruct"]),
         new("embed", "Embed", "Search across docs, news and research (vectors, not answers).",
             ["nvidia/nemotron-3-embed-1b"], Chat: false),
     ];

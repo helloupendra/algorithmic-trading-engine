@@ -97,7 +97,7 @@ stored in `system_settings` under `ai.`. The defaults are in `AiCatalog` and mat
 which Python scripts use directly. `AiSettingsTests` fails if the two drift.
 
 These are NVIDIA's chains. While Claude on Bedrock is off and the open models there are on (the default), each chat
-tier walks its NVIDIA chain and then two open models on Bedrock ([Open models on Bedrock](#open-models-on-bedrock)).
+tier walks two open models on Bedrock first and then its NVIDIA chain ([Open models on Bedrock](#open-models-on-bedrock)).
 With Claude on, every tier is Claude ([Providers](#providers-nvidia-and-amazon-bedrock)).
 
 ### Latency on the free tier (measured 30 Sep, ~16:30 IST)
@@ -234,14 +234,14 @@ Every Bedrock call is billed, so:
 
 The third provider (owner, 10 Oct 2026): in the three days to 10 Oct, 12% of calls failed on every NVIDIA model of
 their chain, and answers took 37 s on average. These answered from the server in about 1 to 2 s on 10 Oct, through the
-OpenAI-compatible endpoint in `us-east-1`, so each tier keeps NVIDIA's chain (the newer versions: Kimi K3, GLM-5.3)
-and ends in two of them:
+OpenAI-compatible endpoint in `us-east-1`. From 11 Oct each tier starts with two of them (owner: "every answer from
+AWS Bedrock"), and NVIDIA's chain, the newer Kimi K3 and GLM-5.3 among it, catches their failures:
 
 | Tier | Chain while Claude is off |
 | --- | --- |
-| Judge | NVIDIA's three → `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:zai.glm-5` |
-| Analyst | NVIDIA's three → `bedrock-oss:deepseek.v3.2` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` |
-| Extract | NVIDIA's three → `bedrock-oss:openai.gpt-oss-120b` → `bedrock-oss:mistral.mistral-large-3-675b-instruct` |
+| Judge | `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:zai.glm-5` → NVIDIA's three |
+| Analyst | `bedrock-oss:deepseek.v3.2` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` → NVIDIA's three |
+| Extract | `bedrock-oss:openai.gpt-oss-120b` → `bedrock-oss:mistral.mistral-large-3-675b-instruct` → NVIDIA's three |
 
 - The models a chain may name (`AiCatalog.BedrockOpenModels`): those six, `nvidia.nemotron-super-3-120b` and
   `minimax.minimax-m2.5`. Claude, OpenAI's GPT-5 and later models and Grok did not answer there for this account.
