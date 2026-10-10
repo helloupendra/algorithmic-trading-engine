@@ -203,6 +203,7 @@ function RunNow({ agentKey }: { agentKey: string }) {
   const run = useRunAgent()
   const [subject, setSubject] = useState('')
   const kind = SCHEDULED_AGENTS[agentKey]?.subject ?? null
+  const kindWord = kind === 'run' ? 'Run' : kind === 'incident' ? 'Incident' : 'Filing'
   const bad = subject.trim() !== '' && !/^\d+$/.test(subject.trim())
   const go = () => {
     if (bad) return
@@ -215,8 +216,8 @@ function RunNow({ agentKey }: { agentKey: string }) {
           <input
             className="field__input field__input--sm ai-runnow__id"
             inputMode="numeric"
-            placeholder={kind === 'run' ? 'Run id (optional)' : 'Incident id (optional)'}
-            aria-label={kind === 'run' ? 'Run id' : 'Incident id'}
+            placeholder={`${kindWord} id (optional)`}
+            aria-label={`${kindWord} id`}
             aria-invalid={bad || undefined}
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
@@ -229,19 +230,20 @@ function RunNow({ agentKey }: { agentKey: string }) {
           {run.isPending ? 'Starting…' : 'Run now'}
         </button>
         <span className="faint ai-runnow__hint">
-          {kind === 'run'
-            ? 'Blank reviews the runs that are due.'
-            : kind === 'incident'
-              ? 'Blank explains the incidents that are due.'
-              : agentKey === 'assistant-check'
-                ? 'Asks the questions now; it takes a few minutes.'
-                : agentKey === 'assistant-exam'
-                  ? 'Starts the exam, or carries on the open one; two questions a minute, a few hours in all.'
-                  : agentKey === AI_TRADER_KEY
-                    ? 'One look now, outside its schedule; the rules judge it as at this hour.'
-                    : agentKey === AI_TRADER_REFLECT_KEY
-                      ? 'One step now: the next finished day reflected on, or the next past look of a lesson under test. Not 09:00–15:45 IST on a trading day.'
-                      : 'Reads its next batch of unread items.'}
+          {SCHEDULED_AGENTS[agentKey]?.hint ??
+            (kind === 'run'
+              ? 'Blank reviews the runs that are due.'
+              : kind === 'incident'
+                ? 'Blank explains the incidents that are due.'
+                : agentKey === 'assistant-check'
+                  ? 'Asks the questions now; it takes a few minutes.'
+                  : agentKey === 'assistant-exam'
+                    ? 'Starts the exam, or carries on the open one; two questions a minute, a few hours in all.'
+                    : agentKey === AI_TRADER_KEY
+                      ? 'One look now, outside its schedule; the rules judge it as at this hour.'
+                      : agentKey === AI_TRADER_REFLECT_KEY
+                        ? 'One step now: the next finished day reflected on, or the next past look of a lesson under test. Not 09:00–15:45 IST on a trading day.'
+                        : 'Reads its next batch of unread items.')}
         </span>
       </div>
       {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
@@ -252,7 +254,7 @@ function RunNow({ agentKey }: { agentKey: string }) {
       )}
       {run.isSuccess && agentKey !== AI_TRADER_KEY && (
         <p className="small-note ai-flush ai-runnow__said">
-          Started{run.data?.subjectId ? ` on ${kind === 'incident' ? 'incident' : 'run'} #${run.data.subjectId}` : ''}. The report appears on
+          Started{run.data?.subjectId ? ` on ${kindWord.toLowerCase()} #${run.data.subjectId}` : ''}. The report appears on
           the <Link to={`/ai/reports?agent=${encodeURIComponent(agentKey)}`}>Reports tab</Link>{' '}
           {agentKey === 'assistant-exam' ? 'when the last question is answered (a few hours).' : 'when the model answers (usually 1–3 minutes).'}
         </p>
