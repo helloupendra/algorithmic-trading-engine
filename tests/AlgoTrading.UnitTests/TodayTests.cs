@@ -77,6 +77,31 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task The_desk_analysts_are_in_today_s_ai_section_on_and_with_their_reports_counted()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            db.AiReports.Add(new AiReport { AgentKey = AiCatalog.TechnicalAnalyst, SubjectType = AiReportSubject.Check, SubjectId = "2026-10-01 08:20",
+                SessionDate = Day, Status = AiReportStatus.Ok, Title = "Technical 08:20: NIFTY bullish B", CreatedUtc = Now, UpdatedUtc = Now });
+            db.AiReports.Add(new AiReport { AgentKey = AiCatalog.TechnicalAnalyst, SubjectType = AiReportSubject.Check, SubjectId = "2026-10-01 10:00",
+                SessionDate = Day, Status = AiReportStatus.Invalid, Title = "Technical 10:00: NIFTY bullish A", CreatedUtc = Now, UpdatedUtc = Now });
+            db.AiReports.Add(new AiReport { AgentKey = AiCatalog.MacroAnalyst, SubjectType = AiReportSubject.Check, SubjectId = "2026-10-01 08:45",
+                SessionDate = Day, Status = AiReportStatus.Failed, Title = "Macro 08:45: no report", CreatedUtc = Now, UpdatedUtc = Now });
+            db.SaveChanges();
+        }
+
+        var today = await Build(desk).BuildAsync(CancellationToken.None);
+
+        var technical = today.Agents.Single(a => a.Key == AiCatalog.TechnicalAnalyst);
+        Assert.True(technical.On);
+        Assert.Equal(new TodayReportCounts(1, 1, 0), technical.ReportsToday);
+        Assert.Equal("Technical 08:20: NIFTY bullish B", Assert.Single(technical.Highlights).Text);
+        Assert.Equal(new TodayReportCounts(0, 0, 1), today.Agents.Single(a => a.Key == AiCatalog.MacroAnalyst).ReportsToday);
+        Assert.All(new[] { AiCatalog.OptionsAnalyst, AiCatalog.FundamentalAnalyst }, key => Assert.True(today.Agents.Single(a => a.Key == key).On));
+    }
+
+    [Fact]
     public async Task The_latest_finished_exam_shows_both_sets()
     {
         using var desk = new RunnerDesk();

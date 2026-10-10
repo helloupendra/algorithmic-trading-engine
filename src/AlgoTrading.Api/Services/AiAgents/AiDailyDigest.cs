@@ -12,9 +12,10 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Api.Services.AiAgents;
 
 /// <summary>
-/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day and the run reviews
-/// written since the last digest. The owner reads the desk on Today and wants one message a day from the AI,
-/// never one per item.
+/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day, the run reviews
+/// written since the last digest, and one short section for each desk analyst that ran that day
+/// (<see cref="DeskAnalysts.DigestSectionsAsync"/>). The owner reads the desk on Today and wants one message a day
+/// from the AI, never one per item.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -116,7 +117,9 @@ public sealed class AiDailyDigest(
         if (owed > 0 && nowUtc < due + ReviewWait) return false;
 
         var reviews = await ReviewsSinceAsync(last ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
+        var analysts = await DeskAnalysts.DigestSectionsAsync(db, day, last ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
         var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed) }
+            .Concat(analysts)
             .Where(x => x is not null)
             .ToList();
         if (sections.Count == 0)
@@ -180,15 +183,18 @@ public sealed class AiDailyDigest(
         // On, but no look and no position that day: the API was down, most likely, and there is nothing to tell late.
         if (trader is { Looks.Count: 0, Book.Count: 0 }) trader = null;
         var reviews = await ReviewsSinceAsync(lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
+        var analysts = await DeskAnalysts.DigestSectionsAsync(db, day, lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
 
-        if (trader is null && reviews.Count == 0 && earlier.Count == 0)
+        if (trader is null && reviews.Count == 0 && analysts.Count == 0 && earlier.Count == 0)
         {
             await MarkAsync(EmptyKey, day, null, nowUtc, cancellationToken);
             return false;
         }
 
         int owed = await ReviewsOwedAsync(state, s, nowUtc, cancellationToken);
-        var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed), MissedLine(earlier) }
+        var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed) }
+            .Concat(analysts)
+            .Append(MissedLine(earlier))
             .Where(x => x is not null)
             .ToList();
 

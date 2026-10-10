@@ -527,7 +527,8 @@ public class AiController : ControllerBase
             : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
         if (def is null) return NotFound(new { error = $"No agent {key}." });
         if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam
-            or AiCatalog.AiTrader or AiCatalog.AiTraderReflect))
+            or AiCatalog.AiTrader or AiCatalog.AiTraderReflect
+            or AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst or AiCatalog.FundamentalAnalyst))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }
@@ -546,9 +547,20 @@ public class AiController : ControllerBase
         if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
 
         string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();
+        if (subject is not null && key is AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst)
+        {
+            // A slot analyst writes about the moment it runs: there is nothing else to name.
+            return BadRequest(new { error = $"{def.Name} writes about the moment it runs: give no subjectId." });
+        }
+
         if (subject is not null && !long.TryParse(subject, out _))
         {
-            return BadRequest(new { error = key == AiCatalog.AiTraderReflect ? "subjectId is a replay's id." : "subjectId is a run or incident id." });
+            return BadRequest(new { error = key switch
+            {
+                AiCatalog.AiTraderReflect => "subjectId is a replay's id.",
+                AiCatalog.FundamentalAnalyst => "subjectId is a filing's id.",
+                _ => "subjectId is a run or incident id.",
+            } });
         }
 
         var scopes = _scopes;

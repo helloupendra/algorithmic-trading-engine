@@ -97,6 +97,12 @@ public sealed class AiSettings
     /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
     public int NewsLookbackHours { get; set; } = 24;
 
+    /// <summary>Minutes between the Fundamental Analyst's polls for new results filings.</summary>
+    public int FundamentalEveryMinutes { get; set; } = 10;
+
+    /// <summary>Results filings in one Fundamental Analyst call: a filing's text is longer than a headline's.</summary>
+    public int FundamentalBatchSize { get; set; } = 3;
+
     /// <summary>Whether the Desk Assistant's daily check runs (it asks only while the Assistant is on).</summary>
     public bool AssistantCheckEnabled { get; set; } = true;
 
@@ -153,8 +159,10 @@ public sealed class AiSettings
     /// Trader from 2 Oct, for its lessons; it reads them bounded by the day it decides on, never through the
     /// gateway's recall (<c>AiTraderMemory</c>).
     /// </summary>
+    /// <remarks>The four desk analysts from 10 Oct, when they were built: a correction on their reports is their memory too.</remarks>
     public string MemoryAgents { get; set; } =
-        $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}";
+        $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}," +
+        $"{AiCatalog.TechnicalAnalyst},{AiCatalog.OptionsAnalyst},{AiCatalog.MacroAnalyst},{AiCatalog.FundamentalAnalyst}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;

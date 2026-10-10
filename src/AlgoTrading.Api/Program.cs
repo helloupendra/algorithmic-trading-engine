@@ -195,6 +195,8 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.NewsEventTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentExplanationsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AnalystReportsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AnalystReportTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
@@ -237,6 +239,12 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituatio
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsStatus>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
+// The desk analysts (Phase 4): facts computed by code, every number in the answer checked against them. After the AI
+// Trader, so its look never waits on an analyst's call in the same minute (it reads their reports already written).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.MacroAnalystAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.TechnicalAnalystAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.OptionsAnalystAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.FundamentalAnalystAgent>();
 // The AI's one Telegram digest a day (the AI Trader's day and the run reviews); last, so a tick's other work is in it.
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AiDailyDigest>();
 // The AI Trader's lessons: a reflection on each finished day, each lesson tested on past looks; after the digest, so nothing waits behind it.
