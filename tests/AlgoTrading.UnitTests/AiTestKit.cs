@@ -76,6 +76,16 @@ internal static class AiTestKit
 
         public required AiModelHealth Health { get; init; }
 
+        /// <summary>A scripted Bedrock Messages endpoint: nothing here reaches AWS.</summary>
+        public required FakeClaude Claude { get; init; }
+
+        public required BedrockClaudeClient ClaudeClient { get; init; }
+
+        /// <summary>A scripted bedrock-runtime for Titan embeddings.</summary>
+        public required FakeRuntime Runtime { get; init; }
+
+        public required AiEmbedder Embedder { get; init; }
+
         public AiController Controller(string user = "upendra")
         {
             var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Toolbox, Health, Options);
@@ -102,6 +112,10 @@ internal static class AiTestKit
         var limiter = new AiRateLimiter(monitor);
         var toolbox = new AiToolbox(tools);
         var health = new AiModelHealth();
+        var claude = new FakeClaude();
+        var claudeClient = ClaudeClient(monitor, claude);
+        var runtime = new FakeRuntime();
+        var embedder = new AiEmbedder(client, monitor, new BedrockEmbeddingClient(monitor, runtime));
         return new Services
         {
             Db = db,
@@ -112,9 +126,262 @@ internal static class AiTestKit
             Client = client,
             Toolbox = toolbox,
             Health = health,
+            Claude = claude,
+            ClaudeClient = claudeClient,
+            Runtime = runtime,
+            Embedder = embedder,
             Catalog = new AiModelCatalog(client, monitor),
-            Gateway = new AiGateway(db, store, client, limiter, toolbox, health, monitor, NullLogger<AiGateway>.Instance),
+            Gateway = new AiGateway(db, store, client, limiter, toolbox, health, monitor, NullLogger<AiGateway>.Instance,
+                router: new AiChatRouter(client, claudeClient)),
         };
+    }
+
+    public const string Fable = "bedrock:anthropic.claude-fable-5-1";
+    public const string Opus = "bedrock:anthropic.claude-opus-5-5";
+    public const string Sonnet = "bedrock:anthropic.claude-sonnet-5-5";
+    public const string Haiku45 = "bedrock:anthropic.claude-haiku-4-5";
+
+    /// <summary>
+    /// Anthropic's own SDK client for Bedrock, pointed at <paramref name="fake"/>: no AWS signing, no credentials, no
+    /// network. What the desk's client parses is what the real endpoint would stream.
+    /// </summary>
+    public static BedrockClaudeClient ClaudeClient(IOptionsMonitor<AiSettings> monitor, FakeClaude fake) =>
+        new(monitor, createClient: b => new Anthropic.Bedrock.AnthropicBedrockMantleClient(new Anthropic.Bedrock.MantleAwsClientOptions
+        {
+            AwsRegion = b.Region,
+            SkipAuth = true,
+            BaseUrl = "https://bedrock.test/anthropic",
+            ClientOptions = new Anthropic.Core.ClientOptions
+            {
+                HttpClient = new HttpClient(fake, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan },
+                MaxRetries = 0,
+            },
+        }));
+
+    /// <summary>One streamed Messages API event: its SSE event name and its data.</summary>
+    public sealed record ClaudeEvent(string Name, JsonObject Data);
+
+    /// <summary>What one Claude model does when asked: streams these events, or answers a status.</summary>
+    public abstract record ClaudeScript
+    {
+        public static ClaudeScript Stream(params ClaudeEvent[] events) => new ClaudeStream(events);
+
+        public static ClaudeScript Status(int code, string body) => new ClaudeStatus(code, body);
+    }
+
+    public sealed record ClaudeStream(ClaudeEvent[] Events) : ClaudeScript;
+
+    public sealed record ClaudeStatus(int Code, string Body) : ClaudeScript;
+
+    /// <summary>A whole answer: an optional summarized thinking block (with its signature), then the text.</summary>
+    public static ClaudeScript ClaudeAnswer(string text, string? thinking = "Weighing it.", string stop = "end_turn",
+        int input = 100, int cacheRead = 0, int cacheWrite = 0, int output = 40)
+    {
+        var events = new List<ClaudeEvent> { MessageStart(input, cacheRead, cacheWrite) };
+        int index = 0;
+        if (thinking is not null) events.AddRange(ThinkingBlock(index++, thinking, "sig-" + index));
+        if (text.Length > 0) events.AddRange(TextBlock(index, text));
+        events.Add(MessageDelta(stop, output));
+        events.Add(new ClaudeEvent("message_stop", new JsonObject { ["type"] = "message_stop" }));
+        return ClaudeScript.Stream(events.ToArray());
+    }
+
+    public static ClaudeEvent MessageStart(int input = 100, int cacheRead = 0, int cacheWrite = 0) => new("message_start", new JsonObject
+    {
+        ["type"] = "message_start",
+        ["message"] = new JsonObject
+        {
+            ["id"] = "msg_test",
+            ["type"] = "message",
+            ["role"] = "assistant",
+            ["model"] = "anthropic.claude-opus-5-5",
+            ["content"] = new JsonArray(),
+            ["stop_reason"] = null,
+            ["stop_sequence"] = null,
+            ["usage"] = new JsonObject
+            {
+                ["input_tokens"] = input,
+                ["cache_creation_input_tokens"] = cacheWrite,
+                ["cache_read_input_tokens"] = cacheRead,
+                ["output_tokens"] = 1,
+            },
+        },
+    });
+
+    public static ClaudeEvent[] ThinkingBlock(int index, string thinking, string signature) =>
+    [
+        new("content_block_start", new JsonObject
+        {
+            ["type"] = "content_block_start", ["index"] = index,
+            ["content_block"] = new JsonObject { ["type"] = "thinking", ["thinking"] = "", ["signature"] = "" },
+        }),
+        new("content_block_delta", new JsonObject
+        {
+            ["type"] = "content_block_delta", ["index"] = index,
+            ["delta"] = new JsonObject { ["type"] = "thinking_delta", ["thinking"] = thinking },
+        }),
+        new("content_block_delta", new JsonObject
+        {
+            ["type"] = "content_block_delta", ["index"] = index,
+            ["delta"] = new JsonObject { ["type"] = "signature_delta", ["signature"] = signature },
+        }),
+        new("content_block_stop", new JsonObject { ["type"] = "content_block_stop", ["index"] = index }),
+    ];
+
+    /// <summary>A text block streamed in two pieces.</summary>
+    public static ClaudeEvent[] TextBlock(int index, string text)
+    {
+        int half = text.Length / 2;
+        return
+        [
+            new("content_block_start", new JsonObject
+            {
+                ["type"] = "content_block_start", ["index"] = index,
+                ["content_block"] = new JsonObject { ["type"] = "text", ["text"] = "" },
+            }),
+            new("content_block_delta", new JsonObject
+            {
+                ["type"] = "content_block_delta", ["index"] = index,
+                ["delta"] = new JsonObject { ["type"] = "text_delta", ["text"] = text[..half] },
+            }),
+            new("content_block_delta", new JsonObject
+            {
+                ["type"] = "content_block_delta", ["index"] = index,
+                ["delta"] = new JsonObject { ["type"] = "text_delta", ["text"] = text[half..] },
+            }),
+            new("content_block_stop", new JsonObject { ["type"] = "content_block_stop", ["index"] = index }),
+        ];
+    }
+
+    /// <summary>A tool_use block whose arguments' JSON arrives in two pieces.</summary>
+    public static ClaudeEvent[] ToolUseBlock(int index, string id, string name, string arguments)
+    {
+        int half = arguments.Length / 2;
+        return
+        [
+            new("content_block_start", new JsonObject
+            {
+                ["type"] = "content_block_start", ["index"] = index,
+                ["content_block"] = new JsonObject { ["type"] = "tool_use", ["id"] = id, ["name"] = name, ["input"] = new JsonObject() },
+            }),
+            new("content_block_delta", new JsonObject
+            {
+                ["type"] = "content_block_delta", ["index"] = index,
+                ["delta"] = new JsonObject { ["type"] = "input_json_delta", ["partial_json"] = arguments[..half] },
+            }),
+            new("content_block_delta", new JsonObject
+            {
+                ["type"] = "content_block_delta", ["index"] = index,
+                ["delta"] = new JsonObject { ["type"] = "input_json_delta", ["partial_json"] = arguments[half..] },
+            }),
+            new("content_block_stop", new JsonObject { ["type"] = "content_block_stop", ["index"] = index }),
+        ];
+    }
+
+    public static ClaudeEvent MessageDelta(string stop, int output = 40, JsonObject? stopDetails = null)
+    {
+        var delta = new JsonObject { ["stop_reason"] = stop, ["stop_sequence"] = null };
+        if (stopDetails is not null) delta["stop_details"] = stopDetails;
+        return new ClaudeEvent("message_delta", new JsonObject
+        {
+            ["type"] = "message_delta",
+            ["delta"] = delta,
+            ["usage"] = new JsonObject { ["output_tokens"] = output },
+        });
+    }
+
+    public static ClaudeEvent MessageStop() => new("message_stop", new JsonObject { ["type"] = "message_stop" });
+
+    /// <summary>
+    /// A scripted Bedrock Messages API: each model answers from its own queue, in order; one with nothing left answers
+    /// 500, so an unexpected call shows. Every request body is kept, to pin what went over the wire.
+    /// </summary>
+    public sealed class FakeClaude : HttpMessageHandler
+    {
+        private readonly Dictionary<string, Queue<ClaudeScript>> _scripts = new(StringComparer.Ordinal);
+
+        public List<(string Path, JsonObject Body)> Requests { get; } = [];
+
+        /// <summary>Queues answers for <paramref name="model"/>, as Bedrock names it (no <c>bedrock:</c>).</summary>
+        public FakeClaude On(string model, params ClaudeScript[] scripts)
+        {
+            model = AiCatalog.BedrockModelId(model);
+            if (!_scripts.TryGetValue(model, out var queue)) _scripts[model] = queue = new Queue<ClaudeScript>();
+            foreach (var s in scripts) queue.Enqueue(s);
+            return this;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string text = await request.Content!.ReadAsStringAsync(cancellationToken);
+            var body = JsonNode.Parse(text)!.AsObject();
+            Requests.Add((request.RequestUri!.AbsolutePath, body));
+            string model = body["model"]!.GetValue<string>();
+
+            if (!_scripts.TryGetValue(model, out var queue) || queue.Count == 0)
+            {
+                return Json(500, """{"type":"error","error":{"type":"api_error","message":"no script"}}""");
+            }
+
+            switch (queue.Dequeue())
+            {
+                case ClaudeStatus s:
+                    return Json(s.Code, s.Body);
+                case ClaudeStream s:
+                    string sse = string.Concat(s.Events.Select(e => $"event: {e.Name}\ndata: {e.Data.ToJsonString()}\n\n"));
+                    var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8) };
+                    response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+                    return response;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+
+        private static HttpResponseMessage Json(int code, string body) =>
+            new((HttpStatusCode)code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+    }
+
+    /// <summary>
+    /// A scripted bedrock-runtime for Titan: a 32-number word vector per text, so its vectors are told apart from the
+    /// NVIDIA fake's 64. Every request body is kept.
+    /// </summary>
+    public sealed class FakeRuntime : IBedrockRuntimeInvoker
+    {
+        public List<(string Region, string Model, JsonObject Body)> Requests { get; } = [];
+
+        /// <summary>Answer every call from this one on with this failure.</summary>
+        public AiAttemptFailedException? FailWith { get; set; }
+
+        /// <summary>Fail from this call on (1 = the first); 0 never.</summary>
+        public int FailFrom { get; set; }
+
+        public Task<string> InvokeAsync(string region, string modelId, string body, CancellationToken cancellationToken)
+        {
+            var json = JsonNode.Parse(body)!.AsObject();
+            int n;
+            lock (Requests)
+            {
+                Requests.Add((region, modelId, json));
+                n = Requests.Count;
+            }
+
+            if (FailWith is not null && (FailFrom == 0 || n >= FailFrom)) throw FailWith;
+
+            string text = json["inputText"]!.GetValue<string>();
+            var v = new float[32];
+            foreach (var word in text.ToLowerInvariant().Split((char[])[' ', '\n', '.', ',', '?', '›'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                v[(int)((uint)word.GetHashCode(StringComparison.Ordinal) % 32)] += 1;
+            }
+
+            var answer = new JsonObject
+            {
+                ["embedding"] = new JsonArray(v.Select(x => (JsonNode)x).ToArray()),
+                ["inputTextTokenCount"] = 7,
+                ["embeddingsByType"] = new JsonObject(),
+            };
+            return Task.FromResult(answer.ToJsonString());
+        }
     }
 
     /// <summary>A model round that asks for tools: one tool_calls chunk per call, then finish_reason tool_calls.</summary>

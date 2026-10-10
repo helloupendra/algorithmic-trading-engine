@@ -40,8 +40,12 @@ public sealed class AiMemoryBook(
     NvidiaChatClient client,
     IOptionsMonitor<AiSettings> settings,
     ILogger? logger = null,
-    TimeProvider? time = null)
+    TimeProvider? time = null,
+    AiEmbedder? embedder = null)
 {
+    /// <summary>The active embedding model's door (<see cref="AiEmbedder"/>); NVIDIA's alone when none is given.</summary>
+    private readonly AiEmbedder _embedder = embedder ?? new AiEmbedder(client, settings);
+
     /// <summary>The longest memory text; a longer one is refused, not cut.</summary>
     public const int MaxText = 600;
 
@@ -158,20 +162,21 @@ public sealed class AiMemoryBook(
     /// </summary>
     public async Task EmbedAsync(AiMemory memory, CancellationToken cancellationToken)
     {
-        if (!settings.CurrentValue.KeyConfigured) return;
+        string model = await _embedder.ActiveModelAsync(db, cancellationToken);
+        if (!_embedder.CanEmbed(model)) return;
         var clock = Stopwatch.StartNew();
         try
         {
-            var (vectors, tokens) = await client.EmbedAsync(AiCatalog.EmbeddingModel, [EmbedText(memory)], "passage", cancellationToken);
+            var (vectors, tokens) = await _embedder.EmbedAsync(model, [EmbedText(memory)], "passage", cancellationToken);
             memory.Embedding = vectors[0];
-            memory.EmbeddingModel = AiCatalog.EmbeddingModel;
-            Audit(memory.AgentKey, $"Embedded memory M{(memory.Id > 0 ? memory.Id : 0)} for {memory.AgentKey}.", null, tokens, clock);
+            memory.EmbeddingModel = model;
+            Audit(memory.AgentKey, model, $"Embedded memory M{(memory.Id > 0 ? memory.Id : 0)} for {memory.AgentKey}.", null, tokens, clock);
         }
         catch (AiAttemptFailedException ex)
         {
             memory.Embedding = [];
             memory.EmbeddingModel = string.Empty;
-            Audit(memory.AgentKey, $"Could not embed a memory for {memory.AgentKey}.", ex.Outcome, null, clock);
+            Audit(memory.AgentKey, model, $"Could not embed a memory for {memory.AgentKey}.", ex.Outcome, null, clock);
             _logger.LogInformation("Agent memory: a memory could not be embedded ({Error}); it is embedded when it is first ranked", ex.Outcome);
         }
     }
@@ -179,26 +184,29 @@ public sealed class AiMemoryBook(
     private async Task<IReadOnlyList<(AiMemory Memory, double? Score)>> RankAsync(
         string agentKey, List<AiMemory> ordered, string question, AiSettings s, CancellationToken cancellationToken)
     {
-        if (!s.KeyConfigured || string.IsNullOrWhiteSpace(question)) return ordered.Select(m => (m, (double?)null)).ToList();
+        if (string.IsNullOrWhiteSpace(question)) return ordered.Select(m => (m, (double?)null)).ToList();
+        string model = await _embedder.ActiveModelAsync(db, cancellationToken);
+        if (!_embedder.CanEmbed(model)) return ordered.Select(m => (m, (double?)null)).ToList();
 
+        // Only the active model's vectors are compared: another model's is made again first.
         var clock = Stopwatch.StartNew();
-        var missing = ordered.Where(m => m.Embedding.Length == 0 || m.EmbeddingModel != AiCatalog.EmbeddingModel).ToList();
+        var missing = ordered.Where(m => m.Embedding.Length == 0 || m.EmbeddingModel != model).ToList();
         int? tokens = 0;
         try
         {
             if (missing.Count > 0)
             {
-                var (vectors, used) = await client.EmbedAsync(AiCatalog.EmbeddingModel, missing.Select(EmbedText).ToList(), "passage", cancellationToken);
+                var (vectors, used) = await _embedder.EmbedAsync(model, missing.Select(EmbedText).ToList(), "passage", cancellationToken);
                 for (int i = 0; i < missing.Count; i++)
                 {
                     missing[i].Embedding = vectors[i];
-                    missing[i].EmbeddingModel = AiCatalog.EmbeddingModel;
+                    missing[i].EmbeddingModel = model;
                 }
 
                 tokens += used ?? 0;
             }
 
-            var (query, queryTokens) = await client.EmbedAsync(AiCatalog.EmbeddingModel, [Cut(question, 2000)], "query", cancellationToken);
+            var (query, queryTokens) = await _embedder.EmbedAsync(model, [Cut(question, 2000)], "query", cancellationToken);
             tokens += queryTokens ?? 0;
             var q = AiDocIndex.Unit(query[0]);
 
@@ -208,19 +216,19 @@ public sealed class AiMemoryBook(
                 .OrderByDescending(x => x.Score)
                 .Select(x => (x.Memory, (double?)x.Score))
                 .ToList();
-            Audit(agentKey, $"Ranked {ordered.Count} memories for a {agentKey} question; {ranked.Count} close enough" +
+            Audit(agentKey, model, $"Ranked {ordered.Count} memories for a {agentKey} question; {ranked.Count} close enough" +
                 (missing.Count > 0 ? $"; embedded {missing.Count}." : "."), null, tokens, clock);
             return ranked;
         }
         catch (AiAttemptFailedException ex)
         {
-            Audit(agentKey, $"Could not rank {ordered.Count} memories for a {agentKey} question; sent the newest.", ex.Outcome, null, clock);
+            Audit(agentKey, model, $"Could not rank {ordered.Count} memories for a {agentKey} question; sent the newest.", ex.Outcome, null, clock);
             _logger.LogInformation("Agent memory: ranking failed ({Error}); the newest memories are sent", ex.Outcome);
             return ordered.Select(m => (m, (double?)null)).ToList();
         }
     }
 
-    private void Audit(string agentKey, string summary, string? error, int? tokens, Stopwatch clock)
+    private void Audit(string agentKey, string model, string summary, string? error, int? tokens, Stopwatch clock)
     {
         var now = _time.GetUtcNow().UtcDateTime;
         double seconds = Math.Round(clock.Elapsed.TotalSeconds, 2);
@@ -232,8 +240,8 @@ public sealed class AiMemoryBook(
             Tier = "embed",
             Source = "memory",
             RequestedBy = agentKey,
-            ChainJson = JsonSerializer.Serialize(new[] { AiCatalog.EmbeddingModel }),
-            Model = error is null ? AiCatalog.EmbeddingModel : string.Empty,
+            ChainJson = JsonSerializer.Serialize(new[] { model }),
+            Model = error is null ? model : string.Empty,
             Outcome = error is null ? AiCallOutcome.Ok : AiCallOutcome.Failed,
             Error = error ?? string.Empty,
             Seconds = seconds,
@@ -241,7 +249,7 @@ public sealed class AiMemoryBook(
             PromptTokens = tokens,
             Summary = Cut(summary, 200),
             Answer = summary,
-            AttemptsJson = JsonSerializer.Serialize(new[] { new { model = AiCatalog.EmbeddingModel, outcome = error ?? "ok", seconds, httpStatus = (int?)null, round = 1 } }),
+            AttemptsJson = JsonSerializer.Serialize(new[] { new { model, outcome = error ?? "ok", seconds, httpStatus = (int?)null, round = 1 } }),
         });
     }
 

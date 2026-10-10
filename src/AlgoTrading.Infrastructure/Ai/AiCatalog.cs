@@ -6,7 +6,25 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// <param name="Purpose">One line: what the tier is for.</param>
 /// <param name="DefaultChain">The chain when the owner has not changed it, first model first.</param>
 /// <param name="Chat">False for the embedding tier, which cannot answer a question.</param>
-public sealed record AiTierDef(string Key, string Label, string Purpose, IReadOnlyList<string> DefaultChain, bool Chat = true);
+/// <param name="BedrockChain">
+/// The chain when the owner has not changed it and Amazon Bedrock is on (<see cref="AiBedrockSettings.Enabled"/>):
+/// Claude only. Empty for the embedding tier, whose model the re-embedding switches (<see cref="AiEmbedder"/>).
+/// </param>
+public sealed record AiTierDef(
+    string Key, string Label, string Purpose, IReadOnlyList<string> DefaultChain, bool Chat = true, IReadOnlyList<string>? BedrockChain = null)
+{
+    /// <summary>The chain an untouched tier walks: Bedrock's while Bedrock is on, else NVIDIA's.</summary>
+    public IReadOnlyList<string> DefaultFor(bool bedrock) => bedrock && BedrockChain is { Count: > 0 } b ? b : DefaultChain;
+}
+
+/// <summary>A Claude model the desk can ask on Amazon Bedrock.</summary>
+/// <param name="Id">As a chain names it: <c>bedrock:</c> and Bedrock's model id.</param>
+/// <param name="Name">What the console calls it.</param>
+/// <param name="AdaptiveThinking">
+/// Thinks adaptively, steered by <c>output_config.effort</c>. False for Haiku 4.5, which takes neither (a thinking
+/// budget only, which the desk does not send).
+/// </param>
+public sealed record BedrockModelDef(string Id, string Name, bool AdaptiveThinking = true);
 
 /// <summary>One agent the desk has or plans, as the AI workspace lists it.</summary>
 /// <param name="Key">Stable id, stored on every call it makes.</param>
@@ -137,6 +155,39 @@ public static class AiCatalog
     public const string ProviderLimitNote =
         "NVIDIA does not publish the free tier's limit; about 40 requests a minute.";
 
+    /// <summary>A chain's model id that starts with this is Claude (or Titan) on Amazon Bedrock; any other is NVIDIA's.</summary>
+    public const string BedrockPrefix = "bedrock:";
+
+    public const string BedrockProviderName = "Amazon Bedrock";
+
+    /// <summary>Bedrock's Messages API for Claude, in <paramref name="region"/>.</summary>
+    public static string BedrockEndpoint(string region) => $"https://bedrock-mantle.{region}.api.aws/anthropic/v1/messages";
+
+    /// <summary>
+    /// The Claude models a chain may name on Bedrock (Anthropic's ids, Oct 2026). Each must be enabled under Bedrock →
+    /// Model access in the region before it answers.
+    /// </summary>
+    public static readonly IReadOnlyList<BedrockModelDef> BedrockModels =
+    [
+        new("bedrock:anthropic.claude-fable-5-1", "Claude Fable 5.1"),
+        new("bedrock:anthropic.claude-opus-5-5", "Claude Opus 5.5"),
+        new("bedrock:anthropic.claude-sonnet-5-5", "Claude Sonnet 5.5"),
+        new("bedrock:anthropic.claude-haiku-5-5", "Claude Haiku 5.5"),
+        new("bedrock:anthropic.claude-opus-4-8", "Claude Opus 4.8"),
+        new("bedrock:anthropic.claude-sonnet-5", "Claude Sonnet 5"),
+        new("bedrock:anthropic.claude-haiku-4-5", "Claude Haiku 4.5", AdaptiveThinking: false),
+    ];
+
+    public static bool IsBedrock(string model) => model.StartsWith(BedrockPrefix, StringComparison.Ordinal);
+
+    /// <summary>The id Bedrock knows a model by: the chain's id without <see cref="BedrockPrefix"/>.</summary>
+    public static string BedrockModelId(string model) => IsBedrock(model) ? model[BedrockPrefix.Length..] : model;
+
+    public static BedrockModelDef? BedrockModel(string model) => BedrockModels.FirstOrDefault(m => m.Id == model);
+
+    /// <summary>Who serves <paramref name="model"/>, as the console names it.</summary>
+    public static string ProviderOf(string model) => IsBedrock(model) ? BedrockProviderName : ProviderName;
+
     /// <summary>The console's chat. The one agent built in Phase 1.</summary>
     public const string DeskAssistant = "desk-assistant";
 
@@ -155,8 +206,14 @@ public static class AiCatalog
     /// <summary>The agents' memory: its embedding calls (a memory's text, a question when the memories outgrow the prompt) are named after it.</summary>
     public const string Memory = "memory";
 
-    /// <summary>The model that embeds the docs and the queries: the embed tier's one model.</summary>
+    /// <summary>
+    /// The model that embeds the docs, the memories and the queries until the owner re-embeds them with Bedrock's
+    /// (<see cref="AiEmbedder"/>): the embed tier's one model.
+    /// </summary>
     public const string EmbeddingModel = "nvidia/nemotron-3-embed-1b";
+
+    /// <summary>The one-off job that embeds every memory and doc passage again with Bedrock's model, then switches to it: named on its call.</summary>
+    public const string Reembed = "reembed";
 
     /// <summary>The scheduled agents of Phase 3.</summary>
     public const string TradeReviewer = "trade-reviewer";
@@ -185,12 +242,18 @@ public static class AiCatalog
         // free tier NVIDIA's own models answered in about a second all evening
         // while Kimi K3, GLM-5.3 and DeepSeek V4.1 Flash often sent nothing,
         // not even headers, for 100 s (docs/modules/ai.md, latency).
+        //
+        // With Amazon Bedrock on, every tier is Claude, the most capable model first (owner, 10 Oct: "the best
+        // model, any region, cost no issue"); its second model is the fallback for a refusal or a busy hour.
         new("judge", "Judge", "The hardest reasoning, few calls a day.",
-            ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"]),
+            ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
+            BedrockChain: ["bedrock:anthropic.claude-fable-5-1", "bedrock:anthropic.claude-opus-5-5"]),
         new("analyst", "Analyst", "Reading data the code computed and writing a view.",
-            ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"]),
+            ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"],
+            BedrockChain: ["bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5"]),
         new("extract", "Extract", "High volume: classifying, pulling numbers out of text, strict JSON.",
-            ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"]),
+            ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"],
+            BedrockChain: ["bedrock:anthropic.claude-sonnet-5-5", "bedrock:anthropic.claude-haiku-5-5"]),
         new("embed", "Embed", "Search across docs, news and research (vectors, not answers).",
             ["nvidia/nemotron-3-embed-1b"], Chat: false),
     ];
@@ -568,8 +631,15 @@ public static class AiCatalog
         "After a reflection, one past look a minute, outside 09:00–15:45 IST on trading days", "5",
         Built: true, "judge", "Past looks' briefs, the recorded chain and ticks.", NoOrders);
 
+    /// <summary>The re-embedding's pseudo-agent: named on its one call.</summary>
+    public static readonly AiAgentDef ReembedAgent = new(
+        Reembed, 0, "Re-embedding", "Embeds every memory and doc passage again with Bedrock's Titan, then switches the desk to it.",
+        "Moves search and memory off NVIDIA in one step: nothing changes unless every vector is made.", "Once, when the owner asks", "2",
+        Built: true, "embed", "The memories' and the docs' own text.", NoOrders);
+
     public static AiAgentDef? Agent(string? key) =>
         string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase) ? ModelTestAgent
+        : string.Equals(key, Reembed, StringComparison.OrdinalIgnoreCase) ? ReembedAgent
         : string.Equals(key, AssistantCheck, StringComparison.OrdinalIgnoreCase) ? AssistantCheckAgent
         : string.Equals(key, AssistantExam, StringComparison.OrdinalIgnoreCase) ? AssistantExamAgent
         : string.Equals(key, DocIndex, StringComparison.OrdinalIgnoreCase) ? DocIndexAgent
@@ -584,6 +654,10 @@ public static class AiCatalog
     /// <summary>Every model a default chain names, for validating a chain when the provider's list is out of reach.</summary>
     public static IReadOnlySet<string> DefaultModels { get; } =
         Tiers.SelectMany(t => t.DefaultChain).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>Every Bedrock model a chain may name: the desk's own list, since Bedrock's Messages API has no model list.</summary>
+    public static IReadOnlySet<string> BedrockModelIds { get; } =
+        BedrockModels.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>True for a model that makes vectors rather than answers: it cannot sit in a chat chain.</summary>
     public static bool IsEmbeddingModel(string id) =>

@@ -12,7 +12,14 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// An assistant message may carry the tools the model asked for; a tool
 /// message answers one of them by its id.
 /// </summary>
-public sealed record AiMessage(string Role, string Content, IReadOnlyList<AiToolCall>? ToolCalls = null, string? ToolCallId = null);
+public sealed record AiMessage(string Role, string Content, IReadOnlyList<AiToolCall>? ToolCalls = null, string? ToolCallId = null)
+{
+    /// <summary>
+    /// An assistant turn exactly as the model wrote it, thinking included, so the same model reads it back unchanged
+    /// in the next round of a tool loop (<see cref="BedrockClaudeClient"/>); null for a provider that needs nothing.
+    /// </summary>
+    public AiReplay? Replay { get; init; }
+}
 
 /// <summary>A tool a model asked to run: its id (echoed on the answer), its name and its arguments as the JSON text the model wrote.</summary>
 public sealed record AiToolCall(string Id, string Name, string Arguments);
@@ -33,10 +40,28 @@ public sealed record AiChatRequest(
     int MaxTokens,
     double Temperature,
     IReadOnlyList<AiToolSpec>? Tools = null,
-    bool ToolsClosed = false);
+    bool ToolsClosed = false)
+{
+    /// <summary>The tier the call walks (judge, analyst, extract); null for a model's health test. Sets Claude's effort.</summary>
+    public string? Tier { get; init; }
+
+    /// <summary>
+    /// How much of <see cref="SystemPrompt"/>, from the start, is the same on every call of its agent: the agent's own
+    /// prompt, before the memories and the time. A provider that caches prompts caches up to here; 0 for all of it.
+    /// </summary>
+    public int StableSystemChars { get; init; }
+}
 
 /// <summary>Tokens a call used, as the provider counted them.</summary>
-public sealed record AiUsage(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
+/// <param name="PromptTokens">Every token read, cached or not.</param>
+public sealed record AiUsage(int? PromptTokens, int? CompletionTokens, int? TotalTokens)
+{
+    /// <summary>Of <see cref="PromptTokens"/>, those read from the provider's prompt cache (Claude); null when it does not say.</summary>
+    public int? CacheReadTokens { get; init; }
+
+    /// <summary>Of <see cref="PromptTokens"/>, those written to the prompt cache.</summary>
+    public int? CacheWriteTokens { get; init; }
+}
 
 /// <summary>A piece of a streamed answer.</summary>
 public abstract record AiStreamPiece
@@ -52,6 +77,9 @@ public abstract record AiStreamPiece
 public sealed record AiAttemptEnd(string FinishReason, AiUsage? Usage, IReadOnlyList<AiToolCall> ToolCalls)
 {
     public AiAttemptEnd(string finishReason, AiUsage? usage) : this(finishReason, usage, []) { }
+
+    /// <summary>The answer's blocks in order, thinking included, for the same model to read back (<see cref="AiMessage.Replay"/>).</summary>
+    public IReadOnlyList<AiReplayBlock>? Replay { get; init; }
 }
 
 /// <summary>A model that did not answer, and the reason the next one is tried.</summary>
@@ -98,7 +126,7 @@ public sealed record ProviderModel(string Id, string OwnedBy);
 /// log line or exception carries it.
 /// </para>
 /// </remarks>
-public sealed class NvidiaChatClient
+public sealed class NvidiaChatClient : IAiChatProvider
 {
     public const string HttpClientName = "ai-provider";
 
@@ -112,6 +140,16 @@ public sealed class NvidiaChatClient
     }
 
     public string ChatEndpoint => $"{BaseUrl}/chat/completions";
+
+    /// <summary>The settings it reads, for a helper built on it without its own (<see cref="AiEmbedder"/>).</summary>
+    internal IOptionsMonitor<AiSettings> Settings => _settings;
+
+    public string Name => AiCatalog.ProviderName;
+
+    /// <summary>Every model a chain names that is not Bedrock's.</summary>
+    public bool Serves(string model) => !AiCatalog.IsBedrock(model);
+
+    public string? Unavailable(AiSettings settings) => settings.KeyConfigured ? null : "no NVIDIA_API_KEY on the server";
 
     private string BaseUrl => (_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/');
 
