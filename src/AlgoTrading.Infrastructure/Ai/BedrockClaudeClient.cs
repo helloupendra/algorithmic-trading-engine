@@ -47,7 +47,6 @@ public sealed class BedrockClaudeClient : IAiChatProvider
 {
     public const string HttpClientName = "ai-bedrock";
 
-    private static readonly Regex AccountNumber = new(@"\b\d{12}\b", RegexOptions.CultureInvariant);
     private static readonly Regex UnsafeIdChars = new("[^A-Za-z0-9_-]", RegexOptions.CultureInvariant);
 
     private readonly IOptionsMonitor<AiSettings> _settings;
@@ -441,56 +440,22 @@ public sealed class BedrockClaudeClient : IAiChatProvider
     };
 
     /// <summary>
-    /// What an HTTP refusal from Bedrock means, for the attempts table. Throttling, a busy model and a model not ready
-    /// yet are capacity (429/503), so the gateway asks once more; a model whose access is not enabled says so.
-    /// Public so a test can pin each case.
+    /// What an HTTP refusal from Bedrock means, for the attempts table (<see cref="BedrockRefusals.Describe"/>, shared
+    /// with the open models). Public so a test can pin each case.
     /// </summary>
-    public static AiAttemptFailedException Failed(string model, string region, int status, string? body)
-    {
-        string detail = Detail(body);
-        string id = AiCatalog.BedrockModelId(model);
-        bool credentials = detail.Contains("security token", StringComparison.OrdinalIgnoreCase)
-                           || detail.Contains("signature", StringComparison.OrdinalIgnoreCase)
-                           || detail.Contains("credential", StringComparison.OrdinalIgnoreCase);
-
-        if (status == 401 || (status == 403 && credentials))
-        {
-            return new AiAttemptFailedException($"http {status}: Bedrock refused the server's AWS credentials{Tail(detail)}", status);
-        }
-
-        if (status is 403 or 404
-            || detail.Contains("access", StringComparison.OrdinalIgnoreCase) && detail.Contains("model", StringComparison.OrdinalIgnoreCase)
-               && status == 400)
-        {
-            return new AiAttemptFailedException(
-                $"http {status}: Bedrock model access is not enabled for {id} in {region}{Tail(detail)}", status);
-        }
-
-        bool notReady = detail.Contains("ModelNotReady", StringComparison.OrdinalIgnoreCase)
-                        || detail.Contains("not ready", StringComparison.OrdinalIgnoreCase);
-        bool throttled = status == 429 || detail.Contains("throttl", StringComparison.OrdinalIgnoreCase);
-        if (throttled) return new AiAttemptFailedException($"http {status}: throttled by Bedrock{Tail(detail)}", 429);
-        if (notReady) return new AiAttemptFailedException($"http {status}: model not ready on Bedrock, temporarily{Tail(detail)}", 503);
-        if (status is 502 or 503 or 529 || detail.Contains("ServiceUnavailable", StringComparison.OrdinalIgnoreCase))
-        {
-            return new AiAttemptFailedException($"http {status}: Bedrock is overloaded{Tail(detail)}", status == 529 ? 503 : status);
-        }
-
-        return new AiAttemptFailedException(detail.Length > 0 ? $"http {status}: {detail}" : $"http {status}", status);
-    }
+    public static AiAttemptFailedException Failed(string model, string region, int status, string? body) =>
+        BedrockRefusals.Describe(AiCatalog.BedrockModelId(model), region, status, Detail(body));
 
     private static AiAttemptFailedException StreamError(AnthropicSseException ex)
     {
-        string detail = OneLine(Mask(ex.Message));
+        string detail = OneLine(BedrockRefusals.Mask(ex.Message));
         return ex.ErrorType switch
         {
-            ErrorType.OverloadedError => new AiAttemptFailedException($"provider error: overloaded{Tail(detail)}", 503),
-            ErrorType.RateLimitError => new AiAttemptFailedException($"provider error: throttled{Tail(detail)}", 429),
+            ErrorType.OverloadedError => new AiAttemptFailedException($"provider error: overloaded{BedrockRefusals.Tail(detail)}", 503),
+            ErrorType.RateLimitError => new AiAttemptFailedException($"provider error: throttled{BedrockRefusals.Tail(detail)}", 429),
             _ => new AiAttemptFailedException($"provider error: {detail}"),
         };
     }
-
-    private static string Tail(string detail) => detail.Length > 0 ? $": {detail}" : string.Empty;
 
     /// <summary>The provider's own words for a refusal, short, on one line, the AWS account number masked.</summary>
     private static string Detail(string? body)
@@ -508,10 +473,8 @@ public sealed class BedrockClaudeClient : IAiChatProvider
             // Not JSON: keep the text.
         }
 
-        return OneLine(Mask(text));
+        return OneLine(BedrockRefusals.Mask(text));
     }
-
-    private static string Mask(string text) => AccountNumber.Replace(text, "[account]");
 
     private static string OneLine(string text)
     {

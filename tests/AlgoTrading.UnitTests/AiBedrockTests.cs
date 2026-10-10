@@ -314,6 +314,10 @@ public class AiBedrockTests
         "Bedrock model access is not enabled for anthropic.claude-opus-5-5 in us-east-1")]
     [InlineData(403, """{"message":"The security token included in the request is invalid."}""", 403, false,
         "Bedrock refused the server's AWS credentials")]
+    [InlineData(401, """{"message":"Model not available for this account."}""", 401, false,
+        "Bedrock model access is not enabled for anthropic.claude-opus-5-5 in us-east-1")]
+    [InlineData(403, """{"message":"User: the desk's role is not authorized to perform: bedrock-mantle:CreateInference"}""", 403, false,
+        "the server's AWS role is not allowed to call Bedrock (an IAM permission is missing)")]
     [InlineData(400, """{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}""", 400, false,
         "http 400: max_tokens: too large")]
     public void Each_bedrock_refusal_says_what_it_means(int status, string body, int expectedStatus, bool capacity, string says)
