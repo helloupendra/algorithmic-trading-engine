@@ -29,7 +29,15 @@ public static class AiRegistration
         // profile), never a key in the desk's settings.
         services.AddHttpClient(BedrockClaudeClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<BedrockClaudeClient>();
-        services.AddSingleton(sp => new AiChatRouter(sp.GetRequiredService<NvidiaChatClient>(), sp.GetRequiredService<BedrockClaudeClient>()));
+
+        // The open models on Bedrock (Ai:BedrockOpen), OpenAI-compatible. On by default, yet nothing calls AWS, or even
+        // looks for credentials, until a chain reaches one of them: each request is then signed with SigV4 by the
+        // machine's default AWS chain.
+        services.AddHttpClient(BedrockOpenChatClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddSingleton<IBedrockRequestSigner>(_ => new AwsSigV4BedrockSigner());
+        services.AddSingleton<BedrockOpenChatClient>();
+        services.AddSingleton(sp => new AiChatRouter(
+            sp.GetRequiredService<NvidiaChatClient>(), sp.GetRequiredService<BedrockClaudeClient>(), sp.GetRequiredService<BedrockOpenChatClient>()));
         services.AddSingleton<IBedrockRuntimeInvoker, AwsBedrockRuntimeInvoker>();
         services.AddSingleton<BedrockEmbeddingClient>();
         services.AddSingleton<AiEmbedder>();

@@ -3,8 +3,8 @@ using System.Text.RegularExpressions;
 namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>
-/// What a refusal from Bedrock means, for its chat clients (<see cref="BedrockClaudeClient"/>), so the attempts table
-/// reads the same whichever was asked.
+/// What a refusal from Bedrock means, for both of its chat clients (<see cref="BedrockClaudeClient"/>,
+/// <see cref="BedrockOpenChatClient"/>), so the attempts table reads the same whichever was asked.
 /// </summary>
 internal static class BedrockRefusals
 {

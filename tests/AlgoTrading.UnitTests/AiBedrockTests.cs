@@ -633,13 +633,16 @@ public class AiBedrockTests
     }
 
     [Fact]
-    public void Bedrock_is_off_by_default_in_us_east_1()
+    public void Claude_on_bedrock_is_off_by_default_in_us_east_1_and_the_open_models_are_on()
     {
         var s = new AiSettings();
 
         Assert.False(s.Bedrock.Enabled);
+        Assert.True(s.BedrockOpen.Enabled);
         Assert.Equal("us-east-1", s.Bedrock.Region);
-        Assert.False(s.ProviderConfigured);
+        // Without NVIDIA's key the open models are still a provider; with them off too there is none.
+        Assert.True(s.ProviderConfigured);
+        Assert.False(new AiSettings { BedrockOpen = { Enabled = false } }.ProviderConfigured);
         Assert.Equal("https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages", AiCatalog.BedrockEndpoint(s.Bedrock.Region));
     }
 

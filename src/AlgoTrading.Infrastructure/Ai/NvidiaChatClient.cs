@@ -127,8 +127,8 @@ public sealed class NvidiaChatClient : OpenAiCompatibleChatClient
 
     public override string Name => AiCatalog.ProviderName;
 
-    /// <summary>Every model a chain names that is not Bedrock's.</summary>
-    public override bool Serves(string model) => !AiCatalog.IsBedrock(model);
+    /// <summary>Every model a chain names that is not on Bedrock.</summary>
+    public override bool Serves(string model) => !AiCatalog.OnBedrock(model);
 
     public override string? Unavailable(AiSettings settings) => settings.KeyConfigured ? null : "no NVIDIA_API_KEY on the server";
 

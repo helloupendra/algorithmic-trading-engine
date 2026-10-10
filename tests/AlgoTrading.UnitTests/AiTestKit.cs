@@ -57,6 +57,8 @@ internal static class AiTestKit
             // Off unless a test is about it: a pause per refusal would slow every fallback test.
             CapacityRetrySeconds = 0,
         };
+        // Off unless a test is about it (on in production): every default chain would end in two Bedrock models.
+        s.BedrockOpen.Enabled = false;
         tweak?.Invoke(s);
         return s;
     }
@@ -102,6 +104,14 @@ internal static class AiTestKit
 
         public required AiEmbedder Embedder { get; init; }
 
+        /// <summary>A scripted Bedrock OpenAI-compatible endpoint for the open models, keyed by Bedrock's model id: nothing here reaches AWS.</summary>
+        public required FakeProvider Open { get; init; }
+
+        /// <summary>Signs with nothing: records each request it was asked to sign.</summary>
+        public required FakeSigner Signer { get; init; }
+
+        public required BedrockOpenChatClient OpenClient { get; init; }
+
         public AiController Controller(string user = "upendra")
         {
             var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Toolbox, Health, Options);
@@ -132,6 +142,9 @@ internal static class AiTestKit
         var claudeClient = ClaudeClient(monitor, claude);
         var runtime = new FakeRuntime();
         var embedder = new AiEmbedder(client, monitor, new BedrockEmbeddingClient(monitor, runtime));
+        var open = new FakeProvider();
+        var signer = new FakeSigner();
+        var openClient = new BedrockOpenChatClient(new Factory(open), monitor, signer);
         return new Services
         {
             Db = db,
@@ -146,10 +159,32 @@ internal static class AiTestKit
             ClaudeClient = claudeClient,
             Runtime = runtime,
             Embedder = embedder,
+            Open = open,
+            Signer = signer,
+            OpenClient = openClient,
             Catalog = new AiModelCatalog(client, monitor),
             Gateway = new AiGateway(db, store, client, limiter, toolbox, health, monitor, NullLogger<AiGateway>.Instance,
-                router: new AiChatRouter(client, claudeClient)),
+                router: new AiChatRouter(client, claudeClient, openClient)),
         };
+    }
+
+    /// <summary>
+    /// A signer that adds a stand-in signature and keeps each request it signed, with the body it was given: what the
+    /// client would hand AWSSDK.Core's signer. <see cref="FailWith"/> makes it fail as a machine with no credentials would.
+    /// </summary>
+    public sealed class FakeSigner : IBedrockRequestSigner
+    {
+        public List<(string Uri, string Region, string Body)> Signed { get; } = [];
+
+        public AiAttemptFailedException? FailWith { get; set; }
+
+        public Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken)
+        {
+            if (FailWith is not null) throw FailWith;
+            Signed.Add((message.RequestUri!.ToString(), region, Encoding.UTF8.GetString(body)));
+            message.Headers.TryAddWithoutValidation("Authorization", $"AWS4-HMAC-SHA256 Credential=TEST/{Signed.Count}");
+            return Task.CompletedTask;
+        }
     }
 
     public const string Fable = "bedrock:anthropic.claude-fable-5-1";
@@ -514,7 +549,7 @@ internal static class AiTestKit
 
     public sealed record ThrowScript : Script;
 
-    public sealed record Seen(string Model, string Body, string? Authorization, string Path);
+    public sealed record Seen(string Model, string Body, string? Authorization, string Path, string? Host = null);
 
     public sealed class FakeProvider : HttpMessageHandler
     {
@@ -558,7 +593,7 @@ internal static class AiTestKit
 
             string body = await request.Content!.ReadAsStringAsync(cancellationToken);
             string model = JsonNode.Parse(body)!["model"]!.GetValue<string>();
-            Requests.Add(new Seen(model, body, request.Headers.Authorization?.ToString(), path));
+            Requests.Add(new Seen(model, body, request.Headers.Authorization?.ToString(), path, request.RequestUri.Host));
 
             if (path.EndsWith("/embeddings", StringComparison.Ordinal))
             {

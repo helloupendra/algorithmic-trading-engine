@@ -8,11 +8,13 @@ namespace AlgoTrading.Infrastructure.Ai;
 public sealed record AiModelList(IReadOnlyList<ProviderModel> Models, string Source, DateTime? FetchedUtc, string? Error)
 {
     /// <summary>
-    /// Every id a chain may name: NVIDIA's list, or the default chains when it is out of reach, and the Claude models
-    /// on Bedrock (<see cref="AiCatalog.BedrockModels"/>: Bedrock's Messages API lists none).
+    /// Every id a chain may name: NVIDIA's list, or the default chains when it is out of reach, and the Claude and open
+    /// models on Bedrock (<see cref="AiCatalog.BedrockModels"/>, <see cref="AiCatalog.BedrockOpenModels"/>: the desk keeps
+    /// its own list of each).
     /// </summary>
     public IReadOnlySet<string> KnownIds() =>
-        Models.Select(m => m.Id).Concat(AiCatalog.DefaultModels).Concat(AiCatalog.BedrockModelIds).ToHashSet(StringComparer.Ordinal);
+        Models.Select(m => m.Id).Concat(AiCatalog.DefaultModels).Concat(AiCatalog.BedrockModelIds).Concat(AiCatalog.BedrockOpenModelIds)
+            .ToHashSet(StringComparer.Ordinal);
 }
 
 /// <summary>

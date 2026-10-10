@@ -44,8 +44,9 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   `appsettings.Local.json` on each deploy (`scripts/_gen_local_settings.py`), and it is sent only in the provider's
   `Authorization` header. The browser learns `keyConfigured: true` and nothing more. Every stored text is scrubbed
   of it as a second layer.
-- **Amazon Bedrock has no key at all.** The second provider, off by default, signs with the server's own AWS role;
-  no AWS credential is in the repo, the settings or `.env` ([Providers](#providers-nvidia-and-amazon-bedrock)).
+- **Amazon Bedrock has no key at all.** Claude there (off by default) and the open models there (on by default) sign
+  with the server's own AWS role; no AWS credential is in the repo, the settings or `.env`
+  ([Providers](#providers-nvidia-and-amazon-bedrock)).
 - **Text a model reads is data, not instructions.** This matters from Phase 3, when agents read news and filings.
 
 ## Tiers and chains
@@ -95,8 +96,9 @@ The owner can change a tier's chain, or give one agent its own chain, from the M
 stored in `system_settings` under `ai.`. The defaults are in `AiCatalog` and match `core/llm.py`'s `DEFAULT_CHAINS`,
 which Python scripts use directly. `AiSettingsTests` fails if the two drift.
 
-These are the chains while Amazon Bedrock is off. With it on, every tier is Claude
-([Providers](#providers-nvidia-and-amazon-bedrock)).
+These are NVIDIA's chains. While Claude on Bedrock is off and the open models there are on (the default), each chat
+tier walks its NVIDIA chain and then two open models on Bedrock ([Open models on Bedrock](#open-models-on-bedrock)).
+With Claude on, every tier is Claude ([Providers](#providers-nvidia-and-amazon-bedrock)).
 
 ### Latency on the free tier (measured 30 Sep, ~16:30 IST)
 
@@ -135,8 +137,13 @@ A model's id names who serves it:
 | --- | --- | --- |
 | `vendor/model`, such as `nvidia/nemotron-3-super-120b-a12b` | NVIDIA build (NIM API) | `NvidiaChatClient`: the OpenAI-style `/chat/completions`, streamed, with `NVIDIA_API_KEY` |
 | `bedrock:` and a Bedrock model id, such as `bedrock:anthropic.claude-opus-5-5` | Amazon Bedrock | `BedrockClaudeClient`: Anthropic's SDK (`Anthropic.Bedrock`), the Messages API at `bedrock-mantle.{region}.api.aws/anthropic/v1/messages`, streamed, signed with the server's AWS role |
+| `bedrock-oss:` and a Bedrock model id, such as `bedrock-oss:moonshotai.kimi-k2.5` | Amazon Bedrock (open models) | `BedrockOpenChatClient`: the OpenAI-compatible `/chat/completions` at `bedrock-mantle.{region}.api.aws/v1/chat/completions`, streamed, each request signed with SigV4 |
 
-`AiChatRouter` picks the client for each model, so one chain can name both and fall back from one to the other. A
+`NvidiaChatClient` and `BedrockOpenChatClient` share one OpenAI-compatible client (`OpenAiCompatibleChatClient`): the
+request, the stream, the tool calls and the usage are read the same way; only the endpoint, the authorization and the
+meaning of a refusal differ.
+
+`AiChatRouter` picks the client for each model, so one chain can name all three and fall back from one to another. A
 model whose provider cannot be asked now is **skipped**: it is an attempt with its reason, for example `skipped:
 Amazon Bedrock is off (Ai:Bedrock:Enabled is false)`, that took no time. A skip is not a fallback, and it does not
 touch the model's health. A call left with nothing to ask is refused (503).
@@ -152,7 +159,7 @@ The Claude models a chain may name (Bedrock's Messages API has no model list, so
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `Enabled` | `false` | Off: nothing calls AWS, and the chains are NVIDIA's. On: every chain is Claude (below). |
-| `Region` | `us-east-1` | Where Claude and Titan are asked. Mumbai's Messages API answered "model does not exist" for these models on 10 Oct. The model ids carry no region prefix; the Global endpoint type routes across regions at no premium. |
+| `Region` | `us-east-1` | Where Claude, Titan and the open models are asked. Mumbai's Messages API answered "model does not exist" for these models on 10 Oct. The model ids carry no region prefix; the Global endpoint type routes across regions at no premium. |
 | `EffortByTier` | judge `high`, analyst `high`, extract `low` | Claude's `output_config.effort`. A model's test from the Models tab asks at `low`. |
 | `MinMaxTokens` | 16,000 | The fewest tokens a Claude answer may use: its thinking counts against the limit, and a caller's limit was set for the answer alone |
 | `EmbeddingModel` | `amazon.titan-embed-text-v2:0` | What the re-embedding switches search and memory to ([Embeddings](#embeddings-titan)) |
@@ -202,21 +209,55 @@ Owner, 10 Oct 2026: every answer comes from Bedrock, the most capable model firs
 | --- | --- | --- |
 | 429, throttling | `http 429: throttled by Bedrock` | Capacity: asked once more after `Ai:CapacityRetrySeconds`, then the next model |
 | 503, model not ready, service unavailable, 529 overloaded | `http 503: …` | Capacity, as above |
-| 403 or 404 | `http 403: Bedrock model access is not enabled for anthropic.claude-… in us-east-1` | The next model |
+| 403 or 404, or 401 "not available" | `http 403: Bedrock model access is not enabled for anthropic.claude-… in us-east-1` | The next model |
+| 401 or 403 "not authorized to perform" (IAM) | `the server's AWS role is not allowed to call Bedrock (an IAM permission is missing)` | The next model |
 | 401, or 403 for the signature | `Bedrock refused the server's AWS credentials` | The next model |
 | A `refusal` stop | `refused: the model's safeguards declined (category: …)` | The next model. Bedrock has no server-side fallback, so this is it. A refusal does not cool the model. |
 
-An AWS account number in the provider's words is masked. Neither credentials nor request bodies are logged.
+An AWS account number in the provider's words is masked. Neither credentials nor request bodies are logged. The open
+models' refusals read the same way (`BedrockRefusals`, shared by both clients).
 
 ### Nothing calls Bedrock by itself
 
-Every Claude call is billed, so:
+Every Bedrock call is billed, so:
 
-- **The health probe never asks a Claude model.** A cooled one waits out its cooling and is back in its place with its
-  next real answer.
+- **The health probe never asks a model on Bedrock**, Claude or open. A cooled one waits out its cooling and is back in
+  its place with its next real answer.
 - **No test or CI job reaches AWS.** The tests stream from a scripted endpoint through Anthropic's own SDK client with
-  signing switched off, and a scripted Titan (`AiBedrockTests`).
-- **Off is off.** With `Enabled` false the SDK clients are never even made.
+  signing switched off, and a scripted Titan (`AiBedrockTests`); the open models from a scripted OpenAI-compatible
+  endpoint with a stand-in signer, and the real signer only with made-up credentials and nothing sent
+  (`AiBedrockOpenTests`). The test settings switch the open models off unless a test is about them.
+- **Off is off.** With `Enabled` false the SDK clients are never even made. The open models' signer looks for
+  credentials only when a chain reaches one of them, never at start.
+
+### Open models on Bedrock
+
+The third provider (owner, 10 Oct 2026): in the three days to 10 Oct, 12% of calls failed on every NVIDIA model of
+their chain, and answers took 37 s on average. These answered from the server in about 1 to 2 s on 10 Oct, through the
+OpenAI-compatible endpoint in `us-east-1`, so each tier keeps NVIDIA's chain (the newer versions: Kimi K3, GLM-5.3)
+and ends in two of them:
+
+| Tier | Chain while Claude is off |
+| --- | --- |
+| Judge | NVIDIA's three → `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:zai.glm-5` |
+| Analyst | NVIDIA's three → `bedrock-oss:deepseek.v3.2` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` |
+| Extract | NVIDIA's three → `bedrock-oss:openai.gpt-oss-120b` → `bedrock-oss:mistral.mistral-large-3-675b-instruct` |
+
+- The models a chain may name (`AiCatalog.BedrockOpenModels`): those six, `nvidia.nemotron-super-3-120b` and
+  `minimax.minimax-m2.5`. Claude, OpenAI's GPT-5 and later models and Grok did not answer there for this account.
+- `Ai:BedrockOpen:Enabled` (default `true`; `.env` `AI_BEDROCK_OPEN_ENABLED=false` turns it off): off, a `bedrock-oss:`
+  model is skipped with its reason and the chains are NVIDIA's alone. The region is `Ai:Bedrock:Region`.
+- With Claude on, nothing changes: every chain is Claude, and the Models and Agents tabs refuse an open model too.
+- An owner's chain may name `bedrock-oss:` models; it is walked as set.
+- **Signing.** Each request's exact body is signed with SigV4 (service `bedrock-mantle`, the region above) by
+  AWSSDK.Core's `AWSSigV4Signer`, with the default AWS credential chain: on the server, the EC2 instance profile. The
+  credentials are asked for on every request, so a rotated role key is used at once. A machine with none fails the
+  attempt as `unreachable (AWS: could not sign the request: …)` and the chain moves on.
+- **Prices** (`Ai:BedrockOpen:Prices`): AWS's Standard on-demand prices in US East (N. Virginia), as its Bedrock
+  pricing page gave them on 10 Oct, in US dollars per million tokens: Kimi K2.5 0.60 / 3.00, GLM-5 1.00 / 3.20,
+  DeepSeek V3.2 0.62 / 1.85, gpt-oss-120b 0.15 / 0.60, Mistral Large 3 0.50 / 1.50, Nemotron 3 Super 0.15 / 0.65,
+  MiniMax M2.5 0.30 / 1.20. The page gave no N. Virginia price for Qwen3 235B A22B 2507, so its cost is unknown, not
+  guessed.
 
 ### Embeddings: Titan
 
@@ -245,6 +286,7 @@ sets explicit breakpoints). Tool use, thinking, prompt caching with explicit bre
    and Haiku 5.5, and to Titan Text Embeddings V2.
 2. **The instance role.** The role of the EC2 instance profile allows `bedrock-mantle:CreateInference` (Claude through
    the Messages API) and `bedrock:InvokeModel` on Titan Text Embeddings V2, and nothing else. No access key is made.
+   The open models answered with the role as it was on 10 Oct: nothing more to enable for them.
 3. **A budget alarm.** An AWS Budgets monthly cost budget with an e-mail alert, so a runaway loop is seen the same day.
 4. Then `AI_BEDROCK_ENABLED=true` in the server's `.env` and a deploy. Test each Claude model once from the Models tab,
    then run the re-embedding.

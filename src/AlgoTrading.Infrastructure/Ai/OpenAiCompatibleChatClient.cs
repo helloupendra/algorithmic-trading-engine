@@ -9,8 +9,9 @@ namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>
 /// A provider whose models answer on an OpenAI-compatible <c>/chat/completions</c>, always streamed: NVIDIA's NIM API
-/// (<see cref="NvidiaChatClient"/>). The request, the stream, the tool calls and the usage are read here once; a
-/// provider says only where it is, how a request is authorized, and what its refusals mean.
+/// (<see cref="NvidiaChatClient"/>) and the open models on Amazon Bedrock (<see cref="BedrockOpenChatClient"/>). The
+/// request, the stream, the tool calls and the usage are read here once; a provider says only where it is, how a
+/// request is authorized, and what its refusals mean.
 /// </summary>
 /// <remarks>
 /// <para>
