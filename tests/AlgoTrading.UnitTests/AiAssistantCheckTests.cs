@@ -41,6 +41,17 @@ public class AiAssistantCheckTests
     }
 
     [Theory]
+    [InlineData("Zero runs made a profit after charges on 11 Sep 2026.", true)]
+    [InlineData("None of the runs made a profit after charges.", true)]
+    [InlineData("One run made a profit after charges.", false)]
+    public void A_count_of_nothing_written_out_is_read_as_zero(string answer, bool pass)
+    {
+        var q = new Question("How many runs made a profit after charges on 11 Sep 2026?", "number", "0", 0, 0);
+
+        Assert.Equal(pass, AssistantCheckAgent.Grade(q, answer));
+    }
+
+    [Theory]
     [InlineData("The worst run is #339 (Fulcrum).", true)]
     [InlineData("Run 339 lost the most.", true)]
     [InlineData("Run 339.", true)]

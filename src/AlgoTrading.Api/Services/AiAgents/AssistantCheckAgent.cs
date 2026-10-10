@@ -465,6 +465,10 @@ public sealed class AssistantCheckAgent(
             found.Add(value);
         }
 
+        // A count of nothing is often written out: "Zero runs made a profit", "none did" (exam, 11 Oct 2026: a right
+        // answer marked wrong). Only these two words; "one" or "a run" is too common in prose to read as a count.
+        foreach (Match _ in Regex.Matches(t, @"\b(?:zero|none)\b", RegexOptions.IgnoreCase)) found.Add(0);
+
         return found;
     }
 
