@@ -37,7 +37,7 @@ public class AiControllerTests
         Assert.Equal(Judge1, assistant.LastCall.Model);
         Assert.Equal(1, assistant.Today.Calls);
         Assert.Equal(30, assistant.Today.TotalTokens);
-        Assert.Equal(10, list.Agents.Count(a => a.Status == "planned"));
+        Assert.Equal(7, list.Agents.Count(a => a.Status == "planned"));
         Assert.Null(list.Agents.Single(a => a.Key == "news-analyst").LastCall);
         Assert.NotEmpty(list.RuleBased);
     }
@@ -98,7 +98,7 @@ public class AiControllerTests
         Assert.Equal("provider", models.Source);
         Assert.Equal(Judge1, models.Models[0].Id);
         Assert.Equal(new[] { "judge" }, models.Models[0].Tiers);
-        Assert.Equal(new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.AiTrader }, models.Models[0].Agents);
+        Assert.Equal(new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.StrategyResearcher, AiCatalog.AiTrader }, models.Models[0].Agents);
         Assert.Equal("First model of the Judge tier.", models.Models[0].Note);
         var super = models.Models.Single(m => m.Id == Judge2);
         Assert.Equal("Fallback 1 of the Judge tier; fallback 1 of the Analyst tier; fallback 1 of the Extract tier.", super.Note);
@@ -237,7 +237,8 @@ public class AiControllerTests
         Assert.Equal(6, overview.Today.AvgSeconds);
         Assert.Equal(10, overview.Today.P95Seconds);
         Assert.True(overview.Provider.KeyConfigured);
-        Assert.Equal(new AiAgentCounts(15, 5, 1, 4, 10), overview.Agents);
+        // Built: the Assistant, three Phase 3 agents, three Phase 4 agents (on by default) and the AI Trader.
+        Assert.Equal(new AiAgentCounts(15, 8, 4, 4, 7), overview.Agents);
         Assert.Equal(4, overview.Tiers.Count);
     }
 

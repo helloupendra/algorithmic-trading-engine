@@ -123,6 +123,24 @@ public static class MarketIntelligenceSchedule
         return lastTakenSlot is null || lastTakenSlot < latest ? latest : null;
     }
 
+    /// <summary>The circulars recorder's time of day: the exchanges' circulars of the day are out, and nothing trades.</summary>
+    public static readonly TimeSpan CircularsAt = new(20, 30, 0);
+
+    /// <summary>A run missed for this long (the API was down at 20:30) is made as soon as it may be.</summary>
+    public static readonly TimeSpan CircularsCatchUpAfter = TimeSpan.FromHours(26);
+
+    /// <summary>
+    /// Whether the circulars recorder's daily run is owed: from 20:30 IST once per IST day, or at once outside the
+    /// quiet window when the last run is more than <see cref="CircularsCatchUpAfter"/> old or there never was one.
+    /// </summary>
+    public static bool CircularsDue(DateTime nowUtc, DateTime? lastRunUtc, Func<DateOnly, bool> isTradingDay)
+    {
+        if (InQuietWindow(nowUtc, isTradingDay)) return false;
+        if (lastRunUtc is not DateTime last) return true;
+        var todaysRun = IstTime.FromIst(IstTime.DateOf(nowUtc).ToDateTime(TimeOnly.MinValue) + CircularsAt);
+        return (nowUtc >= todaysRun && last < todaysRun) || nowUtc - last > CircularsCatchUpAfter;
+    }
+
     /// <summary>Whether the day's overseas update is owed: after 07:00 IST, once per IST date.</summary>
     public static bool GlobalDailyDue(DateTime nowUtc, DateOnly? lastRunIstDate) =>
         IstTimeOfDay(nowUtc) >= GlobalDailyFrom && (lastRunIstDate is null || lastRunIstDate < IstTime.DateOf(nowUtc));

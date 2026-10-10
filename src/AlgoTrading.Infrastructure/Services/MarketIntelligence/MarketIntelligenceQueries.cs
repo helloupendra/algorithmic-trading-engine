@@ -179,6 +179,8 @@ public sealed class MarketIntelligenceQueries
         response.Recorders.Add(Recorder(MarketIntelligenceNames.GlobalDaily, _options.GlobalDailyEnabled, "once a day after 07:00 IST", global, now));
         response.Recorders.Add(Recorder(MarketIntelligenceNames.Breadth, _options.BreadthEnabled, "every 30 minutes, 18:00-23:30 IST, for the last 10 sessions", (breadthToday, null), now));
         response.Recorders.Add(Recorder(MarketIntelligenceNames.NewsScoring, _options.NewsScoringEnabled, "python -m analysis news-score every 10 minutes, 06:00-23:30 IST", scored, now));
+        var circulars = await Stamps(_db.RegulatoryCirculars.AsNoTracking().Select(x => x.FirstSeenUtc), todayStartUtc, ct);
+        response.Recorders.Add(Recorder(MarketIntelligenceNames.Circulars, _options.CircularsEnabled, "SEBI, NSE and BSE circulars once a day from 20:30 IST", circulars, now));
 
         var lastPublished = MarketIntelligenceDatasets.LatestPublishedDay(now);
         foreach (var dataset in new[] { MarketIntelligenceDatasets.Breadth(_breadth), MarketIntelligenceDatasets.ParticipantOi(_participants) })

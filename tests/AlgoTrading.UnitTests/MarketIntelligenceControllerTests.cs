@@ -255,7 +255,7 @@ public class MarketIntelligenceControllerTests
         var status = Ok(await s.Controller.Status(CancellationToken.None));
 
         Assert.Equal(Now, status.ServerUtc);
-        Assert.Equal(new[] { "news", "announcements", "calendar", "quote-snapshots", "global-daily", "breadth", "news-scoring" }, status.Recorders.Select(r => r.Name));
+        Assert.Equal(new[] { "news", "announcements", "calendar", "quote-snapshots", "global-daily", "breadth", "news-scoring", "circulars" }, status.Recorders.Select(r => r.Name));
 
         var news = status.Recorders.Single(r => r.Name == MarketIntelligenceNames.News);
         Assert.True(news.Enabled);

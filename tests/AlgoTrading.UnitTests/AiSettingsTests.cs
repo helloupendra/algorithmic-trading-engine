@@ -30,7 +30,10 @@ public class AiSettingsTests
         // The scheduled agents call the provider by themselves: off until the owner turns them on.
         string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader];
         Assert.All(scheduled, key => Assert.Equal("off", state.Agent(key)!.Status));
-        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key)),
+        // The Phase 4 agents built on 10 Oct start on (owner: every agent built and on); each reads only what code measured.
+        string[] onByDefault = [AiCatalog.DataCurator, AiCatalog.StrategyResearcher, AiCatalog.ComplianceTriage];
+        Assert.All(onByDefault, key => Assert.Equal("on", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !onByDefault.Contains(a.Def.Key)),
             a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
@@ -132,7 +135,11 @@ public class AiSettingsTests
         Assert.Equal(Enumerable.Range(1, 15), AiCatalog.Agents.Select(a => a.Number));
         Assert.Equal(AiCatalog.Agents.Count, AiCatalog.Agents.Select(a => a.Key).Distinct().Count());
         Assert.Equal(
-            new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader },
+            new[]
+            {
+                AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
+                AiCatalog.DataCurator, AiCatalog.StrategyResearcher, AiCatalog.ComplianceTriage, AiCatalog.AiTrader,
+            },
             AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
         Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));
         Assert.All(AiCatalog.Agents, a => Assert.NotNull(AiCatalog.Tier(a.Tier)));

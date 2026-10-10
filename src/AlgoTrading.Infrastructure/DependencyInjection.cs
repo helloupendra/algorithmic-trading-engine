@@ -161,6 +161,10 @@ public static class DependencyInjection
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.BreadthRecorder>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.DailyBackfillRunner>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.MarketIntelligenceQueries>();
+        // SEBI, NSE and BSE circulars for the Compliance Triage, once a day.
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder.HttpClientName,
+            AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder.Configure);
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder>();
 
 
         services.AddScoped<ISimulationService, SimulationService>();
