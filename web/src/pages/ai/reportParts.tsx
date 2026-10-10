@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CHECK_PASS_MARK,
+  analystBadge,
   confidenceText,
   directionBadge,
   formatSeconds,
@@ -19,17 +20,22 @@ import {
   useAiReport,
   useLatestReport,
   readIncidentExplanation,
+  readMacroReport,
   readNewsEvent,
+  readOptionsReport,
+  readResultsReport,
+  readTechnicalReport,
   readTradeReview,
   reportLink,
   reportStatus,
   reportSubjectLabel,
   urgencyBadge,
   verdictBadge,
+  yoyText,
 } from '../../lib/ai'
 import type { AiReportDetail, AiReportSummary } from '../../lib/ai'
 import { ApiError } from '../../lib/api'
-import { formatDateTime } from '../../lib/format'
+import { formatDateTime, formatNumber } from '../../lib/format'
 import { Badge } from '../../components/ui'
 import { IconChip } from '../../components/icons'
 import { AnswerText } from './AnswerText'
@@ -250,6 +256,187 @@ export function ReportData({ detail }: { detail: AiReportDetail }) {
                     <td className="ai-check__model">{q.model ? <span title={q.model}>{modelName(q.model)}</span> : <span className="faint">—</span>}</td>
                     <td className="num ai-check__secs">{formatSeconds(q.seconds)}</td>
                     <td className="ai-check__call">{q.callId != null ? <Link to={`/ai/calls?id=${q.callId}`}>call #{q.callId}</Link> : <span className="faint">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  if (report.agentKey === 'technical-analyst') {
+    const t = readTechnicalReport(data)!
+    if (t.indices.length === 0) return null
+    return (
+      <>
+        <div className="tablewrap ai-report-numbers">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Index</th>
+                <th>Bias</th>
+                <th>Grade</th>
+                <th>Key levels</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {t.indices.map((i) => {
+                const b = analystBadge(i.bias)
+                return (
+                  <tr key={i.underlying}>
+                    <td className="mono">{i.underlying}</td>
+                    <td>
+                      <Badge tone={b.tone}>{b.label}</Badge>
+                    </td>
+                    <td className="mono">{i.grade}</td>
+                    <td>
+                      {i.keyLevels.length === 0 ? (
+                        <span className="faint">none</span>
+                      ) : (
+                        <ul className="ai-report-list">
+                          {i.keyLevels.map((l) => (
+                            <li key={l.id || String(l.price)}>
+                              <span className="mono">{formatNumber(l.price)}</span> <span className="muted">{l.what}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                    <td className="ai-report-quote">{i.reason}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {t.summary && (
+          <dl className="ai-report-data">
+            <div>
+              <dt>Summary</dt>
+              <dd>{t.summary}</dd>
+            </div>
+          </dl>
+        )}
+      </>
+    )
+  }
+
+  if (report.agentKey === 'options-analyst') {
+    const o = readOptionsReport(data)!
+    if (o.indices.length === 0) return null
+    return (
+      <dl className="ai-report-data">
+        {o.indices.map((i) => {
+          const b = analystBadge(i.stance)
+          return (
+            <div key={i.underlying}>
+              <dt>{i.underlying}</dt>
+              <dd>
+                <Badge tone={b.tone}>{b.label}</Badge>
+                <Lines items={i.lines} none="no lines" />
+              </dd>
+            </div>
+          )
+        })}
+        {o.summary && (
+          <div>
+            <dt>Summary</dt>
+            <dd>{o.summary}</dd>
+          </div>
+        )}
+      </dl>
+    )
+  }
+
+  if (report.agentKey === 'macro-analyst') {
+    const m = readMacroReport(data)!
+    if (!m.reason && m.restsOn.length === 0) return null
+    const b = analystBadge(m.bias)
+    return (
+      <dl className="ai-report-data">
+        <div>
+          <dt>Bias</dt>
+          <dd>
+            <Badge tone={b.tone}>{b.label}</Badge>
+          </dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>
+            <span className="mono">×{m.sizeModifier == null ? '?' : m.sizeModifier.toFixed(2)}</span>
+            {m.sizeModifierAsked != null && <span className="muted"> (it asked {m.sizeModifierAsked}; code keeps it within 0.5–1.0)</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>Rests on</dt>
+          <dd>
+            <Lines items={m.restsOn.map((f) => `${f.id}: ${f.fact}`)} none="no fact named" />
+          </dd>
+        </div>
+        {m.risks && (
+          <div>
+            <dt>Would change it</dt>
+            <dd>{m.risks}</dd>
+          </div>
+        )}
+      </dl>
+    )
+  }
+
+  if (report.agentKey === 'fundamental-analyst') {
+    const r = readResultsReport(data)!
+    const s = analystBadge(r.results ? r.surprise : 'unclear')
+    return (
+      <>
+        <dl className="ai-report-data">
+          <div>
+            <dt>Stock</dt>
+            <dd className="mono">{r.symbol || '—'}</dd>
+          </div>
+          <div>
+            <dt>Surprise</dt>
+            <dd>{r.results ? <Badge tone={s.tone}>{s.label}</Badge> : <span className="faint">not the results themselves</span>}</dd>
+          </div>
+          {r.period && (
+            <div>
+              <dt>Period</dt>
+              <dd>{r.period}</dd>
+            </div>
+          )}
+          {r.summary && (
+            <div>
+              <dt>Summary</dt>
+              <dd>{r.summary}</dd>
+            </div>
+          )}
+        </dl>
+        {r.metrics.length > 0 && (
+          <div className="tablewrap ai-report-numbers">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th className="num">Value</th>
+                  <th>Unit</th>
+                  <th className="num">Year earlier</th>
+                  <th className="num">YoY</th>
+                  <th>From the filing</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.metrics.map((x, i) => (
+                  <tr key={i}>
+                    <td>{x.metric}</td>
+                    <td className="num mono">{formatNumber(x.value)}</td>
+                    <td className="muted">{x.unit}</td>
+                    <td className="num mono">{formatNumber(x.previous)}</td>
+                    <td className="num mono" title={x.yoyComputed != null ? `From the two figures: ${yoyText({ yoyPct: null, yoyComputed: x.yoyComputed })}` : undefined}>
+                      {yoyText(x)}
+                    </td>
+                    <td className="ai-report-quote">“{x.quote}”</td>
                   </tr>
                 ))}
               </tbody>

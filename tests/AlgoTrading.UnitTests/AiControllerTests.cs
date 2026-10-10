@@ -37,7 +37,7 @@ public class AiControllerTests
         Assert.Equal(Judge1, assistant.LastCall.Model);
         Assert.Equal(1, assistant.Today.Calls);
         Assert.Equal(30, assistant.Today.TotalTokens);
-        Assert.Equal(10, list.Agents.Count(a => a.Status == "planned"));
+        Assert.Equal(6, list.Agents.Count(a => a.Status == "planned"));
         Assert.Null(list.Agents.Single(a => a.Key == "news-analyst").LastCall);
         Assert.NotEmpty(list.RuleBased);
     }
@@ -47,7 +47,7 @@ public class AiControllerTests
     {
         var controller = Build().Controller();
 
-        Assert.IsType<ConflictObjectResult>(await controller.UpdateAgent("technical-analyst", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
+        Assert.IsType<ConflictObjectResult>(await controller.UpdateAgent("data-curator", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
         Assert.IsType<NotFoundObjectResult>(await controller.UpdateAgent("nobody", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
     }
 
@@ -237,7 +237,8 @@ public class AiControllerTests
         Assert.Equal(6, overview.Today.AvgSeconds);
         Assert.Equal(10, overview.Today.P95Seconds);
         Assert.True(overview.Provider.KeyConfigured);
-        Assert.Equal(new AiAgentCounts(15, 5, 1, 4, 10), overview.Agents);
+        // The desk analysts start on (owner, 10 Oct 2026); the Desk Assistant is on; four scheduled agents start off.
+        Assert.Equal(new AiAgentCounts(15, 9, 5, 4, 6), overview.Agents);
         Assert.Equal(4, overview.Tiers.Count);
     }
 

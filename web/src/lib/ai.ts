@@ -663,15 +663,45 @@ export interface IncidentExplanation {
   confidence: number | null
 }
 
+/** One scheduled agent: what "Run now" may name, what it writes, and what "Run now" does when that is not the default. */
+export interface ScheduledAgentMeta {
+  subject: 'run' | 'incident' | 'filing' | null
+  writes: string
+  decisions?: true
+  /** "Run now"'s hint beside the button. */
+  hint?: string
+}
+
 /**
  * The agents that run on a schedule, with what "Run now" may name and what
  * they write: reports (the Reports tab), or for the AI Trader its own
  * decisions (`decisions: true`), listed on its panel on AI → Agents.
  */
-export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incident' | null; writes: string; decisions?: true }>> = {
+export const SCHEDULED_AGENTS: Readonly<Record<string, ScheduledAgentMeta>> = {
   'trade-reviewer': { subject: 'run', writes: 'after 15:45 IST, a review of each run stopped that day' },
   'news-analyst': { subject: null, writes: "every 10 minutes, a structured event for each unread news item or filing of the last 24 hours" },
   'incident-explainer': { subject: 'incident', writes: 'for each live incident of medium severity or worse, what happened, why and what to do' },
+  'technical-analyst': {
+    subject: null,
+    writes:
+      'at 08:20 IST on trading days, and on the half hour 09:30–15:00 while an index option is open, a bias, a grade and key levels for NIFTY, BANKNIFTY and SENSEX',
+    hint: 'Grades the indices now, outside its schedule.',
+  },
+  'options-analyst': {
+    subject: null,
+    writes: "at 08:30, 10:30, 13:00 and 14:30 IST on trading days, a few lines on each index's option chain",
+    hint: 'Reads the chains now, outside its schedule.',
+  },
+  'macro-analyst': {
+    subject: null,
+    writes: "at 08:45 IST on trading days, the day's bias band and a position-size modifier from 0.5 to 1.0",
+    hint: 'Reads the market factors now, outside its schedule.',
+  },
+  'fundamental-analyst': {
+    subject: 'filing',
+    writes: 'for each results filing of a stock in the F&O universe (polled every 10 minutes), the numbers with their quotes and the surprise',
+    hint: 'Blank reads the results filings that are due.',
+  },
   'assistant-check': { subject: null, writes: "on weekdays after 16:40 IST, the Desk Assistant's graded answers to questions the code knows" },
   'assistant-exam': { subject: null, writes: 'on Sundays from 10:30 IST, the Desk Assistant\'s score on a fixed bank of questions about finished days' },
   'ai-trader': {
@@ -775,6 +805,177 @@ export function readNewsEvent(data: Record<string, unknown> | null): NewsEvent |
 export function readIncidentExplanation(data: Record<string, unknown> | null): IncidentExplanation | null {
   if (!data) return null
   return { urgency: str(data.urgency) ?? 'unclear', confidence: num(data.confidence) }
+}
+
+// ---------- the desk analysts' reports ----------------------------------------------
+
+/** The four desk analysts, by the key their reports carry, with the word their report subjects start with. */
+export const DESK_ANALYSTS: Readonly<Record<string, string>> = {
+  'technical-analyst': 'Technical',
+  'options-analyst': 'Options',
+  'macro-analyst': 'Macro',
+  'fundamental-analyst': 'Fundamental',
+}
+
+/** A key level a technical grade named; code checked it is one of the levels it found. */
+export interface TechnicalLevel {
+  id: string
+  price: number | null
+  what: string
+}
+
+export interface TechnicalGrade {
+  underlying: string
+  bias: string
+  /** A to D: how readable the setup is, not a forecast. */
+  grade: string
+  keyLevels: TechnicalLevel[]
+  reason: string
+}
+
+export interface TechnicalReport {
+  /** "08:20": the IST time the report is for. */
+  slot: string | null
+  indices: TechnicalGrade[]
+  summary: string
+}
+
+export interface OptionsReading {
+  underlying: string
+  stance: string
+  lines: string[]
+}
+
+export interface OptionsReport {
+  slot: string | null
+  indices: OptionsReading[]
+  summary: string
+}
+
+/** A fact the Macro Analyst rested on, as code wrote it. */
+export interface MacroFactCited {
+  id: string
+  fact: string
+}
+
+export interface MacroReport {
+  slot: string | null
+  bias: string
+  /** 0.5 to 1.0, as code clamped it. */
+  sizeModifier: number | null
+  /** What the model asked, when code had to clamp it; null otherwise. */
+  sizeModifierAsked: number | null
+  restsOn: MacroFactCited[]
+  reason: string
+  risks: string
+}
+
+export interface ResultsMetric {
+  metric: string
+  value: number | null
+  unit: string
+  /** The words in the filing the value was read from; the check requires them to be there. */
+  quote: string
+  previous: number | null
+  /** The change the model gave, written in the filing or equal to code's own. */
+  yoyPct: number | null
+  /** The change code computed from the two figures. */
+  yoyComputed: number | null
+}
+
+export interface ResultsReport {
+  symbol: string
+  /** False: the model judged the filing is not the results themselves. */
+  results: boolean
+  period: string
+  metrics: ResultsMetric[]
+  surprise: string
+  summary: string
+}
+
+const objects = (v: unknown): Record<string, unknown>[] =>
+  list<unknown>(v).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x))
+
+export function readTechnicalReport(data: Record<string, unknown> | null): TechnicalReport | null {
+  if (!data) return null
+  return {
+    slot: str(data.slot),
+    indices: objects(data.indices).map((i) => ({
+      underlying: str(i.underlying) ?? '?',
+      bias: str(i.bias) ?? 'unclear',
+      grade: str(i.grade) ?? '?',
+      keyLevels: objects(i.keyLevels).map((l) => ({ id: str(l.id) ?? '', price: num(l.price), what: str(l.what) ?? '' })),
+      reason: str(i.reason) ?? '',
+    })),
+    summary: str(data.summary) ?? '',
+  }
+}
+
+export function readOptionsReport(data: Record<string, unknown> | null): OptionsReport | null {
+  if (!data) return null
+  return {
+    slot: str(data.slot),
+    indices: objects(data.indices).map((i) => ({ underlying: str(i.underlying) ?? '?', stance: str(i.stance) ?? 'unclear', lines: strings(i.lines) })),
+    summary: str(data.summary) ?? '',
+  }
+}
+
+export function readMacroReport(data: Record<string, unknown> | null): MacroReport | null {
+  if (!data) return null
+  return {
+    slot: str(data.slot),
+    bias: str(data.bias) ?? 'unclear',
+    sizeModifier: num(data.sizeModifier),
+    sizeModifierAsked: num(data.sizeModifierAsked),
+    restsOn: objects(data.restsOn).map((f) => ({ id: str(f.id) ?? '', fact: str(f.fact) ?? '' })),
+    reason: str(data.reason) ?? '',
+    risks: str(data.risks) ?? '',
+  }
+}
+
+export function readResultsReport(data: Record<string, unknown> | null): ResultsReport | null {
+  if (!data) return null
+  return {
+    symbol: str(data.symbol) ?? '',
+    results: data.results !== false,
+    period: str(data.period) ?? '',
+    metrics: objects(data.metrics).map((m) => ({
+      metric: str(m.metric) ?? '',
+      value: num(m.value),
+      unit: str(m.unit) ?? '',
+      quote: str(m.quote) ?? '',
+      previous: num(m.previous),
+      yoyPct: num(m.yoyPct),
+      yoyComputed: num(m.yoyComputed),
+    })),
+    surprise: str(data.surprise) ?? 'unclear',
+    summary: str(data.summary) ?? '',
+  }
+}
+
+const ANALYST_WORDS: Record<string, { label: string; tone: Tone }> = {
+  bullish: { label: 'Bullish', tone: 'pos' },
+  'lean bullish': { label: 'Lean bullish', tone: 'pos' },
+  bearish: { label: 'Bearish', tone: 'neg' },
+  'lean bearish': { label: 'Lean bearish', tone: 'neg' },
+  neutral: { label: 'Neutral', tone: 'neutral' },
+  'range-bound': { label: 'Range-bound', tone: 'neutral' },
+  positive: { label: 'Positive surprise', tone: 'pos' },
+  negative: { label: 'Negative surprise', tone: 'neg' },
+  inline: { label: 'In line', tone: 'neutral' },
+  unclear: { label: 'Unclear', tone: 'neutral' },
+}
+
+/** A desk analyst's bias, stance or surprise as a badge: up is green, down red, the rest plain. */
+export function analystBadge(word: string | null | undefined): { label: string; tone: Tone } {
+  return ANALYST_WORDS[word ?? ''] ?? { label: word || 'unknown', tone: 'neutral' }
+}
+
+/** A year-on-year change as the report shows it: "+8.8%", "−3.1%"; the stated one first, else code's own. */
+export function yoyText(m: Pick<ResultsMetric, 'yoyPct' | 'yoyComputed'>): string {
+  const v = m.yoyPct ?? m.yoyComputed
+  if (v == null || !Number.isFinite(v)) return '—'
+  return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%`
 }
 
 export interface AiReportFilters {
@@ -956,6 +1157,13 @@ export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'sub
     return `AI Trader reflection · ${replay ? `replay #${replay[1]}` : day ? shortDate(day[1]) : r.subjectId}`
   }
   if (r.agentKey === 'ai-trader-lesson-check') return `AI Trader lesson test · ${r.subjectId}`
+  // The desk analysts: a slot of the day ("2026-10-07 08:20"), or a results filing.
+  const analyst = DESK_ANALYSTS[r.agentKey ?? '']
+  if (analyst) {
+    if (r.subjectType === 'filing') return 'Results filing'
+    const slot = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(r.subjectId)
+    return `${analyst} · ${slot ? `${shortDate(slot[1])} ${slot[2]}` : r.subjectId}`
+  }
   switch (r.subjectType) {
     case 'check':
       return `Assistant check · ${shortDate(r.subjectId)}`
@@ -2459,6 +2667,34 @@ export const CHAT_AGENTS: readonly ChatAgentMeta[] = [
     lead: "Question the Incident Explainer about Sentinel's incidents and its explanations of them.",
     starters: ['Explain the latest incident', 'Which incidents are open, and how urgent are they?', 'What did you explain this week?'],
     placeholder: 'Ask the Incident Explainer about an incident…',
+  },
+  {
+    key: 'technical-analyst',
+    label: 'Technical Analyst',
+    lead: 'Question the Technical Analyst about its grades of NIFTY, BANKNIFTY and SENSEX: the bias, the grade and the key levels, and the facts the code handed it.',
+    starters: ["Why did you grade NIFTY as you did this morning?", 'Which levels matter most today?', 'Which of your reports were invalid, and why?'],
+    placeholder: 'Ask the Technical Analyst about a grade or a level…',
+  },
+  {
+    key: 'options-analyst',
+    label: 'Options Analyst',
+    lead: 'Question the Options/OI Analyst about its readings of the index option chains: walls, PCR, IV and max pain, from the numbers the code computed.',
+    starters: ['Where are the walls today?', 'What changed between your 10:30 and 13:00 readings?', 'What does IV say about option prices today?'],
+    placeholder: 'Ask the Options Analyst about the chains…',
+  },
+  {
+    key: 'macro-analyst',
+    label: 'Macro Analyst',
+    lead: "Question the Macro Analyst about the day's bias band and size modifier, and the market factors it rested them on.",
+    starters: ["What is today's bias, and what does it rest on?", 'Why that size modifier?', 'What would change your view?'],
+    placeholder: 'Ask the Macro Analyst about the morning…',
+  },
+  {
+    key: 'fundamental-analyst',
+    label: 'Fundamental Analyst',
+    lead: 'Question the Fundamental Analyst about the results filings it read: the numbers, the exact words they came from, and the surprise.',
+    starters: ['Which results today were a positive surprise?', 'Show me the numbers you took from the last results filing.', 'Which results filings did you read today?'],
+    placeholder: 'Ask the Fundamental Analyst about a results filing…',
   },
 ]
 

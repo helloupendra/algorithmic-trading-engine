@@ -103,6 +103,8 @@ public sealed class MarketBriefBuilder(
         text.Append("\nTODAY'S FORECASTS (issued before the open)\n").Append(await Section("forecasts", () => ForecastsAsync(day, asOf, cancellationToken))).Append('\n');
         text.Append("\nDAY CONTEXT\n").Append(await Section("context", () => ContextAsync(day, asOf, cancellationToken))).Append('\n');
         text.Append("\nNEWS (the last hour, as the News Analyst read it)\n").Append(await Section("news", () => NewsAsync(asOf, cancellationToken))).Append('\n');
+        text.Append("\nDESK ANALYSTS (today's latest checked report of each, written by this moment; advisory)\n")
+            .Append(await Section("desk analysts", () => AiAgents.DeskAnalysts.BriefSectionAsync(db, asOf, replay, cancellationToken))).Append('\n');
 
         return new MarketBrief(asOf, replay, text.ToString(), chainsByUnderlying);
     }

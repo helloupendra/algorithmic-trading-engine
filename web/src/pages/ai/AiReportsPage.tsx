@@ -1,12 +1,15 @@
 /**
  * AI → Reports (/ai/reports): what the scheduled agents wrote.
  *
- * Three agents run on their own and write reports: the Trade Reviewer (a
+ * These agents run on their own and write reports: the Trade Reviewer (a
  * review of each run stopped that day, against its written spec), the News
- * Analyst (a structured event for each news item or filing) and the Incident
- * Explainer (what happened, why and what to do, for each serious incident).
- * Each report is checked before it counts. One whose answer fails the check
- * (not the JSON asked for, or a number whose quote is not in the item) is
+ * Analyst (a structured event for each news item or filing), the Incident
+ * Explainer (what happened, why and what to do, for each serious incident),
+ * and the desk analysts (Technical, Options/OI, Macro and Fundamental: views
+ * on facts the code computed, every number checked against them). The agent
+ * filter lists each of them. Each report is checked before it counts. One
+ * whose answer fails the check (not the JSON asked for, a number whose quote
+ * is not in the item, or a level or number the code did not hand over) is
  * kept as "invalid" with the model's raw text and the reason; one no model
  * answered is "failed" and retried after 15 minutes, three times at most.
  *
