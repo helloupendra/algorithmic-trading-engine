@@ -231,7 +231,7 @@ public sealed class AiAgentScheduler(
     public async Task RunTickAsync(CancellationToken cancellationToken)
     {
         var s = settings.CurrentValue;
-        if (!s.SchedulerEnabled || !s.KeyConfigured) return;
+        if (!s.SchedulerEnabled || !s.ProviderConfigured) return;
 
         AiState state;
         int count;

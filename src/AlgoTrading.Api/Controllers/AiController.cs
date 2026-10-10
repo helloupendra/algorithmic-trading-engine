@@ -176,7 +176,7 @@ public class AiController : ControllerBase
         if (body.Chain is not null)
         {
             var models = await _catalog.GetAsync(cancellationToken: cancellationToken);
-            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds()) is string problem) return BadRequest(new { error = problem });
+            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds(), bedrockOnly: _settings.CurrentValue.Bedrock.Enabled) is string problem) return BadRequest(new { error = problem });
         }
 
         string by = Actor();
@@ -201,7 +201,7 @@ public class AiController : ControllerBase
         if (body.Chain is { Count: > 0 })
         {
             var models = await _catalog.GetAsync(cancellationToken: cancellationToken);
-            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds()) is string problem) return BadRequest(new { error = problem });
+            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds(), bedrockOnly: _settings.CurrentValue.Bedrock.Enabled) is string problem) return BadRequest(new { error = problem });
         }
 
         await _store.SetTierChainAsync(def.Key, body.Chain, Actor(), Reason(body.Reason), cancellationToken);
@@ -234,12 +234,15 @@ public class AiController : ControllerBase
             foreach (string id in agent.Chain) if (!inUse.Contains(id)) inUse.Add(id);
         }
 
+        // NVIDIA's catalog, then the Claude models the desk can ask on Bedrock (its Messages API lists none).
         var owners = list.Models.ToDictionary(m => m.Id, m => m.OwnedBy, StringComparer.Ordinal);
-        var ids = inUse.Concat(list.Models.Select(m => m.Id).Where(id => !inUse.Contains(id)).OrderBy(id => id, StringComparer.Ordinal));
+        foreach (var claude in AiCatalog.BedrockModels) owners[claude.Id] = "anthropic";
+        var s = _settings.CurrentValue;
+        var ids = inUse.Concat(owners.Keys.Where(id => !inUse.Contains(id)).OrderBy(id => id, StringComparer.Ordinal));
 
         var models = ids.Select(id => new AiModelDto(
             id,
-            owners.TryGetValue(id, out string? owner) && owner.Length > 0 ? owner : id.Split('/')[0],
+            owners.TryGetValue(id, out string? owner) && owner.Length > 0 ? owner : AiCatalog.BedrockModelId(id).Split('/', '.')[0],
             inUse.Contains(id),
             state.Tiers.Where(t => t.Chain.Contains(id)).Select(t => t.Def.Key).ToList(),
             state.Agents.Where(a => a.Def.Built && a.Chain.Contains(id)).Select(a => a.Def.Key).ToList(),
@@ -247,9 +250,13 @@ public class AiController : ControllerBase
             tests.TryGetValue(id, out var test) ? test : null,
             usage.TryGetValue(id, out var used) ? used : new AiModelUsage(0, 0, 0, null),
             AiCatalog.IsEmbeddingModel(id),
-            list.Models.Count == 0 || owners.ContainsKey(id))
+            AiCatalog.IsBedrock(id) ? AiCatalog.BedrockModelIds.Contains(id) || id == AiEmbedder.Target(s) : list.Models.Count == 0 || owners.ContainsKey(id))
         {
             Health = inUse.Contains(id) ? ToHealth(_health.State(id, Now())) : null,
+            Provider = AiCatalog.ProviderOf(id),
+            Name = AiCatalog.BedrockModel(id)?.Name,
+            Available = (AiCatalog.IsBedrock(id) ? s.Bedrock.Enabled : s.KeyConfigured),
+            Price = AiGateway.Price(id, s) is { } p ? new AiModelPriceDto(p.Input, p.Output, p.CacheRead, p.CacheWrite, AiModelPrice.Note) : null,
         }).ToList();
 
         return Ok(new AiModelsDto(
@@ -351,7 +358,7 @@ public class AiController : ControllerBase
             ReadList<string>(x.ChainJson),
             ReadAttempts(x.AttemptsJson),
             ReadTools(x.ToolsJson),
-            new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true))
+            new AiRequestDto($"POST {ChatEndpoint(x.Model.Length > 0 ? x.Model : ReadList<string>(x.ChainJson).FirstOrDefault() ?? string.Empty)}", x.MaxTokens, x.Temperature, true))
         {
             MemoryIds = AiGateway.MemoryIds(x.MemoryIdsJson),
             Feedback = x.FeedbackScore is int score
@@ -374,7 +381,10 @@ public class AiController : ControllerBase
         var statusDto = new AiDocIndexStatusDto(status.Files, status.Passages, Utc(status.IndexedUtc), status.Model);
         if (string.IsNullOrWhiteSpace(q)) return Ok(new AiSearchResult(statusDto, q, []));
         if (q.Length > 300) return BadRequest(new { error = "The query is longer than 300 characters." });
-        if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
+        if (!docs.Embedder.CanEmbed(status.Model))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = $"{status.Model} cannot be asked now: no NVIDIA_API_KEY on the server, or Amazon Bedrock is off." });
+        }
 
         try
         {
@@ -385,6 +395,65 @@ public class AiController : ControllerBase
         {
             return StatusCode(StatusCodes.Status502BadGateway, new { error = $"The query could not be embedded: {ex.Outcome}" });
         }
+    }
+
+    // ---------- embeddings --------------------------------------------------
+
+    /// <summary>
+    /// Which model the docs and memories are embedded with now, the one the re-embedding would switch to, and how many
+    /// vectors each model holds.
+    /// </summary>
+    [HttpGet("embeddings")]
+    public async Task<IActionResult> Embeddings([FromServices] AiEmbedder embedder, CancellationToken cancellationToken)
+    {
+        var s = _settings.CurrentValue;
+        string active = await embedder.ActiveModelAsync(_db, cancellationToken);
+        var switched = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == AiEmbedder.ActiveModelKey, cancellationToken);
+        var memories = await _db.AiMemories.AsNoTracking().GroupBy(m => m.EmbeddingModel).Select(g => new { Model = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+        var passages = await _db.AiDocChunks.AsNoTracking().GroupBy(c => c.Model).Select(g => new { g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new AiEmbeddingsDto(
+            active,
+            AiEmbedder.Target(s),
+            s.Bedrock.Enabled,
+            AiReembedder.Running,
+            switched is null ? null : new AiEmbeddingSwitchDto(switched.Value, Utc(switched.UpdatedUtc), switched.UpdatedBy, switched.Reason),
+            memories.ToDictionary(m => m.Model.Length > 0 ? m.Model : "(none)", m => m.Count),
+            passages.ToDictionary(p => p.Key.Length > 0 ? p.Key : "(none)", p => p.Count)));
+    }
+
+    /// <summary>
+    /// Embeds every memory and doc passage again with Bedrock's model and, only when all are done, switches search
+    /// and memory to it. Runs in the background and answers 202; the result is one row on the Calls tab (agent
+    /// <c>reembed</c>).
+    /// </summary>
+    [HttpPost("embeddings/reembed")]
+    public IActionResult Reembed()
+    {
+        var s = _settings.CurrentValue;
+        if (!s.Bedrock.Enabled) return Conflict(new { error = "Amazon Bedrock is off (Ai:Bedrock:Enabled is false): there is nothing to switch to." });
+        if (AiReembedder.Running) return Conflict(new { error = "A re-embedding is already running." });
+        if (_scopes is null) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "The API cannot run background work here." });
+
+        string by = Actor();
+        var scopes = _scopes;
+        var logger = _logger;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AiReembedder>().RunAsync(by, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Re-embedding with Bedrock failed");
+            }
+        });
+
+        return Accepted(new { started = true, model = AiEmbedder.Target(s) });
     }
 
     // ---------- telegram ----------------------------------------------------
@@ -543,7 +612,7 @@ public class AiController : ControllerBase
                 ? "The AI Trader's lessons run only while the AI Trader is on and Ai:AiTraderLessons is true."
                 : $"{def.Name} is switched off." });
         }
-        if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
+        if (!_settings.CurrentValue.ProviderConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No model provider: no NVIDIA_API_KEY on the server, and Amazon Bedrock is off." });
 
         string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();
         if (subject is not null && !long.TryParse(subject, out _))
@@ -656,6 +725,7 @@ public class AiController : ControllerBase
                     toolCalls = result.Tools.Count,
                     rounds = result.Rounds,
                     memoryIds = result.MemoryIds,
+                    costUsd = result.CostUsd,
                 });
             }
             else
@@ -691,6 +761,7 @@ public class AiController : ControllerBase
             result.Rounds)
         {
             MemoryIds = result.MemoryIds,
+            CostUsd = result.CostUsd,
         };
 
         return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
@@ -760,10 +831,16 @@ public class AiController : ControllerBase
         (s.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/'),
         s.KeyConfigured,
         AiCatalog.ProviderCatalogUrl,
-        AiCatalog.ProviderTerms);
+        AiCatalog.ProviderTerms)
+    {
+        Bedrock = new AiBedrockDto(s.Bedrock.Enabled, s.Bedrock.Region, AiCatalog.BedrockEndpoint(s.Bedrock.Region),
+            new Dictionary<string, string>(s.Bedrock.EffortByTier, StringComparer.OrdinalIgnoreCase)),
+    };
 
-    private string ChatEndpoint() =>
-        $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
+    /// <summary>Where a call's model was asked: Bedrock's Messages API for a <c>bedrock:</c> model, else NVIDIA's.</summary>
+    private string ChatEndpoint(string model) => AiCatalog.IsBedrock(model)
+        ? AiCatalog.BedrockEndpoint(_settings.CurrentValue.Bedrock.Region)
+        : $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
 
     private static AiTierDto ToTier(AiTierState t) => new(
         t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.Def.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);
@@ -953,7 +1030,8 @@ public class AiController : ControllerBase
         var usage = new Dictionary<string, (int Calls, int Ok, int Failed, List<double> Seconds)>(StringComparer.Ordinal);
         foreach (var row in rows)
         {
-            foreach (var a in ReadAttempts(row.AttemptsJson))
+            // A skipped model was not asked: it is no call to it.
+            foreach (var a in ReadAttempts(row.AttemptsJson).Where(a => !AiGateway.IsSkipped(a.Outcome)))
             {
                 if (!usage.TryGetValue(a.Model, out var u)) u = (0, 0, 0, []);
                 u.Calls++;
@@ -1063,7 +1141,9 @@ public class AiController : ControllerBase
         }
     }
 
-    private static AiUsageDto? Usage(AiUsage? u) => u is null ? null : new AiUsageDto(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
+    private static AiUsageDto? Usage(AiUsage? u) => u is null
+        ? null
+        : new AiUsageDto(u.PromptTokens, u.CompletionTokens, u.TotalTokens) { CacheReadTokens = u.CacheReadTokens, CacheWriteTokens = u.CacheWriteTokens };
 
     private DateTime Now() => _time.GetUtcNow().UtcDateTime;
 
@@ -1087,7 +1167,21 @@ public class AiController : ControllerBase
 
 // ---------- wire shapes (camelCase on the wire; docs/ai_module.md) ----------
 
-public sealed record AiProviderDto(string Key, string Name, string BaseUrl, bool KeyConfigured, string CatalogUrl, string Terms);
+public sealed record AiProviderDto(string Key, string Name, string BaseUrl, bool KeyConfigured, string CatalogUrl, string Terms)
+{
+    /// <summary>The second provider: whether it is on, where, and Claude's effort per tier. No credential is ever shown: it has none.</summary>
+    public AiBedrockDto? Bedrock { get; init; }
+}
+
+public sealed record AiBedrockDto(bool Enabled, string Region, string Endpoint, IReadOnlyDictionary<string, string> EffortByTier);
+
+/// <summary>The embedding model in use, the re-embedding's target, and the vectors each model holds (memories, doc passages).</summary>
+public sealed record AiEmbeddingsDto(
+    string Active, string Target, bool BedrockEnabled, bool Running, AiEmbeddingSwitchDto? Switched,
+    IReadOnlyDictionary<string, int> Memories, IReadOnlyDictionary<string, int> Passages);
+
+/// <summary>The last switch the re-embedding made: to which model, when, by whom, with what.</summary>
+public sealed record AiEmbeddingSwitchDto(string Model, DateTime? Utc, string? By, string? Reason);
 
 public sealed record AiLimits(int PerUserPer10Min, int GlobalPerMinute, int MaxConcurrent, int UsedLastMinute, int InFlight, string ProviderNote);
 
@@ -1158,7 +1252,22 @@ public sealed record AiModelDto(
 {
     /// <summary>Its health, for a model in use; null for the rest of the catalog.</summary>
     public AiModelHealthDto? Health { get; init; }
+
+    /// <summary>Who serves it: NVIDIA's NIM API or Amazon Bedrock.</summary>
+    public string Provider { get; init; } = AiCatalog.ProviderName;
+
+    /// <summary>Its name, for a Claude model on Bedrock; null when the id says it.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>Whether its provider can be asked now (NVIDIA's key is there; Bedrock is on). A chain skips it otherwise.</summary>
+    public bool Available { get; init; } = true;
+
+    /// <summary>Its list price, for a Bedrock model; null for NVIDIA's free tier.</summary>
+    public AiModelPriceDto? Price { get; init; }
 }
+
+/// <summary>US dollars per million tokens; <c>note</c> says whose price it is.</summary>
+public sealed record AiModelPriceDto(decimal Input, decimal Output, decimal CacheRead, decimal CacheWrite, string Note);
 
 public sealed record AiLocalModelDto(string Id, string Kind, string Where, string UsedBy);
 
@@ -1249,7 +1358,14 @@ public sealed record AiAskMessage(string? Role, string? Content);
 public sealed record AiAskRequest(
     List<AiAskMessage>? Messages, string? Tier, string? System, int? MaxTokens, double? Temperature, string? ConversationId, string? Agent);
 
-public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
+public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? TotalTokens)
+{
+    /// <summary>Of the prompt tokens, those read from Claude's prompt cache; null for a provider that does not say.</summary>
+    public int? CacheReadTokens { get; init; }
+
+    /// <summary>Of the prompt tokens, those written to it.</summary>
+    public int? CacheWriteTokens { get; init; }
+}
 
 public sealed record AiAnswer(
     long CallId, string Outcome, string Model, string Text, string Reasoning, double Seconds, string FinishReason,
@@ -1257,4 +1373,7 @@ public sealed record AiAnswer(
 {
     /// <summary>The memories the answer was given.</summary>
     public IReadOnlyList<long> MemoryIds { get; init; } = [];
+
+    /// <summary>What it cost in US dollars at list price; null when NVIDIA's free tier answered.</summary>
+    public decimal? CostUsd { get; init; }
 }

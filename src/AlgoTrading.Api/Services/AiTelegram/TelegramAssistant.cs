@@ -147,7 +147,7 @@ public sealed class TelegramAssistant(
         }
     }
 
-    public bool Enabled => settings.CurrentValue.TelegramAssistantEnabled && !string.IsNullOrWhiteSpace(Token) && settings.CurrentValue.KeyConfigured;
+    public bool Enabled => settings.CurrentValue.TelegramAssistantEnabled && !string.IsNullOrWhiteSpace(Token) && settings.CurrentValue.ProviderConfigured;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

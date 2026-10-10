@@ -69,4 +69,18 @@ check "the NVIDIA key reaches the API"            "nvapi-x https://integrate.api
 check "no key is written empty, with the default endpoint" "- https://integrate.api.nvidia.com/v1" "$(ai)"
 check "the endpoint can be moved"                 "- http://localhost:8000/v1"                  "$(ai NVIDIA_API_BASE_URL=http://localhost:8000/v1)"
 
+bedrock() {  # key=value ... -> the Ai section's Bedrock part as sorted JSON
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+print(json.dumps(build_api_settings(env)["Ai"].get("Bedrock"), sort_keys=True))
+PY
+}
+check "Bedrock is left out unless switched on (off in code)"  "null"                                        "$(bedrock)"
+check "the switch and the region reach the API"     '{"Enabled": true, "Region": "us-east-1"}'    "$(bedrock AI_BEDROCK_ENABLED=true AI_BEDROCK_REGION=us-east-1)"
+check "anything else for the switch is ignored"     "null"                                        "$(bedrock AI_BEDROCK_ENABLED=yes)"
+check "no AWS credential is ever carried"           "null"                                        "$(bedrock AWS_ACCESS_KEY_ID=not-a-key AWS_SECRET_ACCESS_KEY=not-a-secret)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
