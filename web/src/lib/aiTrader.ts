@@ -6,7 +6,10 @@
  * the model proposes one action as JSON, and code judges it against the
  * owner's limits (private/notes/2026-10-01-ai-trader-design.md). Every look
  * is kept, "do nothing" included, with the brief it read and the rule that
- * judged it. It starts in shadow mode: it decides and places nothing.
+ * judged it. It began in shadow mode, deciding and placing nothing; from
+ * 10 Oct it is live: it places paper orders in its own account, each buy or
+ * strategy start first accepted by the Validator and read by the Risk Memo,
+ * and a live decision says what it placed and where to see it.
  *
  * This module is the page-free half, so it can be tested:
  *   - the shapes of GET /api/AiTrader/status, /decisions and /decisions/{id},
@@ -133,6 +136,21 @@ export interface AiTraderDecision {
   error: string
   model: string
   callId: number | null
+  /** In live mode, what it placed in its own account and where to see it; null when it placed nothing (or an older API). */
+  placed: AiTraderPlacement | null
+}
+
+/** What a live decision placed: an order, an exit, a strategy run started or stopped. */
+export interface AiTraderPlacement {
+  /** order, exit, run-start or run-stop; kept a string, so a kind the server adds later still shows. */
+  kind: string
+  /** "Order #12: bought 1 lot(s) of NSE:NIFTY… at ₹120.50 (position #45, stop ₹95.00, target ₹160.00)". */
+  text: string
+  /** A console path (its manual book's run page, or the run's); null when the API sent none it may link to. */
+  link: string | null
+  orderId: number | null
+  positionId: number | null
+  runId: number | null
 }
 
 export interface AiTraderStatus {
@@ -358,6 +376,42 @@ export function readAiTraderDecision(v: unknown): AiTraderDecision | null {
     error: words(v.error),
     model: words(v.model),
     callId: id(v.callId),
+    placed: readAiTraderPlacement(v.placed),
+  }
+}
+
+/**
+ * What a live decision placed, or null. The link is a console path or nothing: one leading slash, never two, so a
+ * body cannot make the page link anywhere else.
+ */
+export function readAiTraderPlacement(v: unknown): AiTraderPlacement | null {
+  if (!record(v)) return null
+  const text = words(v.text)
+  if (!text) return null
+  const link = words(v.link)
+  return {
+    kind: words(v.kind).toLowerCase(),
+    text,
+    link: /^\/(?!\/)\S*$/.test(link) ? link : null,
+    orderId: id(v.orderId),
+    positionId: id(v.positionId),
+    runId: id(v.runId),
+  }
+}
+
+/** A placement in a word or two for a decision's row: "order #12", "exit #13", "run #77 started", "run #77 stopped". */
+export function placedChip(p: AiTraderPlacement): string {
+  switch (p.kind) {
+    case 'order':
+      return p.orderId != null ? `order #${p.orderId}` : 'order'
+    case 'exit':
+      return p.orderId != null ? `exit #${p.orderId}` : 'exit'
+    case 'run-start':
+      return p.runId != null ? `run #${p.runId} started` : 'run started'
+    case 'run-stop':
+      return p.runId != null ? `run #${p.runId} stopped` : 'run stopped'
+    default:
+      return 'placed'
   }
 }
 
@@ -547,6 +601,11 @@ const RULES: Record<string, { short: string; means: string }> = {
   'own-book': { short: 'not its position', means: 'It may close only its own open positions.' },
   'own-runs': { short: 'not its run', means: 'It may stop only its own strategy runs.' },
   'kill-switch': { short: 'kill switch', means: "The desk's kill switch is on: nothing new is placed." },
+  validator: { short: 'validator', means: 'The Validator rejected the plan: two of its three answers named a flaw, so it was not placed.' },
+  'validator-unavailable': {
+    short: 'no validator verdict',
+    means: 'The Validator gave no verdict (a provider down, or it is switched off): a plan it has not accepted is never placed.',
+  },
   action: { short: 'action', means: 'The plan named an action it may not take.' },
 }
 

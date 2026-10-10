@@ -159,6 +159,7 @@ const body = {
         allowed: false,
         rule: 'stop',
         reason: 'NIFTY broke the morning high with PCR rising; buy the ATM call.',
+        placed: null,
       },
       {
         atUtc: '2026-10-01T05:10:00Z',
@@ -168,12 +169,27 @@ const body = {
         allowed: true,
         rule: 'ok',
         reason: 'No clear move: VIX flat, range inside the ATR.',
+        placed: null,
       },
-      { atUtc: '2026-10-01T05:00:00Z', action: '', underlying: '', option: null, allowed: false, rule: 'no-answer', reason: 'Timed out after 90 s.' },
+      {
+        atUtc: '2026-10-01T05:00:00Z',
+        action: '',
+        underlying: '',
+        option: null,
+        allowed: false,
+        rule: 'no-answer',
+        reason: 'Timed out after 90 s.',
+        placed: null,
+      },
     ],
     shadowPositions: 2,
     shadowOpen: 1,
     shadowNet: -1240.5,
+    live: null,
+    validatorRejected: 0,
+    validatorUnavailable: 0,
+    riskMemoTightened: 0,
+    placed: 0,
   },
 }
 
@@ -243,14 +259,20 @@ describe('reading the day', () => {
       refused: 0,
       noAnswer: 0,
       latest: [
-        { atUtc: null, action: 'buy', underlying: 'NIFTY', option: null, allowed: false, rule: 'size', reason: 'too big' },
-        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '' },
-        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '' },
+        { atUtc: null, action: 'buy', underlying: 'NIFTY', option: null, allowed: false, rule: 'size', reason: 'too big', placed: null },
+        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '', placed: null },
+        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '', placed: null },
       ],
       // An API from before the shadow book sends none of it: no positions, and a net not known (never ₹0).
       shadowPositions: 0,
       shadowOpen: 0,
       shadowNet: null,
+      // Nor, from before 10 Oct, a live book or the checks' counts.
+      live: null,
+      validatorRejected: 0,
+      validatorUnavailable: 0,
+      riskMemoTightened: 0,
+      placed: 0,
     })
     expect(readTodayAiTrader({ shadowPositions: 3.2, shadowOpen: -1, shadowNet: '500' })).toMatchObject({
       shadowPositions: 3,
@@ -274,6 +296,32 @@ describe('reading the day', () => {
     expect(latest.map((d) => actionText(d))).toEqual(['Buy NIFTY CE', 'Buy BANKNIFTY PE', 'Buy SENSEX'])
     // An API from before the option was sent: the buy still reads, without it.
     expect(actionText(readTodayAiTrader({ latest: [{ action: 'buy', underlying: 'NIFTY' }] })!.latest[0])).toBe('Buy NIFTY')
+  })
+
+  it("reads the AI Trader's live book, what it placed and what the checks did", () => {
+    const t = readTodayAiTrader({
+      mode: 'live',
+      live: { positions: 2, open: 1, net: -332.4, charges: 137 },
+      validatorRejected: 1,
+      validatorUnavailable: 2,
+      riskMemoTightened: 1,
+      placed: 3,
+      latest: [
+        {
+          atUtc: '2026-10-01T05:20:00Z',
+          action: 'buy',
+          underlying: 'NIFTY',
+          allowed: true,
+          rule: 'ok',
+          placed: { kind: 'order', text: 'Order #12: bought 1 lot(s)', link: '/trade/runs/7', orderId: 12, positionId: 45, runId: 7 },
+        },
+      ],
+    })!
+    expect(t.live).toEqual({ positions: 2, open: 1, net: -332.4, charges: 137 })
+    expect([t.validatorRejected, t.validatorUnavailable, t.riskMemoTightened, t.placed]).toEqual([1, 2, 1, 3])
+    expect(t.latest[0].placed?.link).toBe('/trade/runs/7')
+    // A live book whose net was not sent shows no net, never ₹0.
+    expect(readTodayAiTrader({ live: { positions: 1, open: 1 } })!.live).toEqual({ positions: 1, open: 1, net: null, charges: null })
   })
 
   it('keeps an empty attention list empty: that is "nothing needs you"', () => {

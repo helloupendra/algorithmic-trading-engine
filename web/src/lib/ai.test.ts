@@ -842,7 +842,11 @@ describe('reports', () => {
     expect(reportSubjectLabel({ subjectType: 'incident', subjectId: '9' })).toBe('Incident #9')
     expect(reportSubjectLabel({ subjectType: 'news', subjectId: 'a1b2' })).toBe('News')
     expect(reportSubjectLabel({ subjectType: 'filing', subjectId: 'bse-77' })).toBe('Filing')
-    expect(reportSubjectLabel({ subjectType: 'order', subjectId: '5' })).toBe('order 5')
+    // The Validator's and the Risk Memo's decisions, and the Execution Reporter's fills (10 Oct).
+    expect(reportSubjectLabel({ subjectType: 'decision', subjectId: '41' })).toBe('AI Trader decision #41')
+    expect(reportSubjectLabel({ subjectType: 'order', subjectId: '5' })).toBe('AI Trader order #5')
+    // A subject this page does not know reads as it came.
+    expect(reportSubjectLabel({ subjectType: 'basket', subjectId: '5' })).toBe('basket 5')
   })
 
   it('links only to a console path or an https page', () => {
@@ -1362,7 +1366,16 @@ describe('the agent picker', () => {
   const chat = (agent: string, action: ChatAction) => ({ type: 'chat' as const, agent, action })
 
   it('offers the Desk Assistant first and the four other agents, each with its own starters', () => {
-    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([DESK_ASSISTANT, 'ai-trader', 'trade-reviewer', 'news-analyst', 'incident-explainer'])
+    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([
+      DESK_ASSISTANT,
+      'ai-trader',
+      'trade-reviewer',
+      'news-analyst',
+      'incident-explainer',
+      'validator',
+      'risk-memo',
+      'execution-reporter',
+    ])
     expect(chatAgentMeta('ai-trader').starters).toContain('What would you do now?')
     expect(chatAgentMeta('trade-reviewer').starters).toContain('Which runs broke their spec this week?')
     expect(chatAgentMeta('news-analyst').starters).toContain('What moved in the last hour?')

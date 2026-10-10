@@ -38,6 +38,7 @@ import {
   shadowEnding,
   shadowLastPrice,
   shadowResultText,
+  placedChip,
   verdictOf,
   lessonEvidenceText,
   lessonGainText,
@@ -203,7 +204,37 @@ describe('reading decisions', () => {
       error: '',
       model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
       callId: 812,
+      // A shadow decision places nothing: no placement, not one made up.
+      placed: null,
     })
+  })
+
+  it('reads what a live decision placed, and links only to a console path', () => {
+    const placed = {
+      kind: 'order',
+      text: 'Order #12: bought 1 lot(s) of NSE:NIFTY26O0622650CE at ₹120.50 (position #45, stop ₹95.00, target ₹160.00)',
+      link: '/trade/runs/7',
+      orderId: 12,
+      positionId: 45,
+      runId: 7,
+    }
+    const d = read({ mode: 'live', allowed: true, rule: 'ok', executed: true, placed })
+    expect(d.placed).toEqual(placed)
+    expect(placedChip(d.placed!)).toBe('order #12')
+    expect(read({ placed: { ...placed, link: '//evil.example/x' } }).placed?.link).toBeNull()
+    expect(read({ placed: { ...placed, link: 'https://evil.example' } }).placed?.link).toBeNull()
+    expect(read({ placed: { kind: 'order', text: '  ' } }).placed).toBeNull()
+    expect(read({ placed: 'Order #12' }).placed).toBeNull()
+    expect(placedChip({ ...placed, kind: 'run-start', orderId: null, runId: 77 })).toBe('run #77 started')
+    expect(placedChip({ ...placed, kind: 'run-stop', orderId: null, runId: 77 })).toBe('run #77 stopped')
+    expect(placedChip({ ...placed, kind: 'exit', orderId: 13 })).toBe('exit #13')
+    expect(placedChip({ ...placed, kind: 'something-new' })).toBe('placed')
+  })
+
+  it("names the Validator's blocks in words", () => {
+    expect(verdictOf({ action: 'buy', allowed: false, rule: 'validator' })).toMatchObject({ key: 'refused', label: 'Refused · validator' })
+    expect(verdictOf({ action: 'buy', allowed: false, rule: 'validator-unavailable' }).label).toBe('Refused · no validator verdict')
+    expect(ruleLabel('validator-unavailable').means).toMatch(/never placed/)
   })
 
   it('never trusts a field: allowed and executed only in as many words, a confidence only in 0..1', () => {
