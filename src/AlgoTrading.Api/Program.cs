@@ -93,6 +93,24 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
+// A live start's checks and launch (the Start button and the AI Trader's starts), and a manual-book order (the ticket
+// and the AI Trader's buys): one path each, whoever asks.
+builder.Services.AddScoped(sp => new AlgoTrading.Api.Services.StrategyStartService(
+    sp.GetRequiredService<AlgoTrading.Infrastructure.Persistence.TradingDbContext>(),
+    sp.GetRequiredService<AlgoTrading.Api.Services.StrategyCatalogService>(),
+    sp.GetRequiredService<AlgoTrading.Api.Services.StrategyProcessRegistry>(),
+    sp.GetRequiredService<AlgoTrading.Api.Services.StrategyRunControl>(),
+    sp.GetRequiredService<AlgoTrading.Api.Services.PythonEngineLocator>(),
+    sp.GetRequiredService<AlgoTrading.Application.UseCases.LiveData.UpsertWatchlistItemUseCase>(),
+    sp.GetRequiredService<AlgoTrading.Application.Interfaces.IStrategyAccessService>(),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AlgoTrading.Api.Configuration.StrategyRunnerOptions>>(),
+    sp.GetRequiredService<ILogger<AlgoTrading.Api.Services.StrategyStartService>>()));
+builder.Services.AddScoped(sp => new AlgoTrading.Api.Services.ManualOrderService(
+    sp.GetRequiredService<AlgoTrading.Infrastructure.Persistence.TradingDbContext>(),
+    sp.GetRequiredService<AlgoTrading.Application.Interfaces.IPaperTradingService>(),
+    sp.GetRequiredService<AlgoTrading.Application.Interfaces.ILotSizeResolver>(),
+    sp.GetRequiredService<ILogger<AlgoTrading.Api.Services.ManualOrderService>>(),
+    sp.GetService<AlgoTrading.Application.Interfaces.IDeskEventPublisher>()));
 // Whether a stored pid is still the runner it was: alive, gone, or cannot tell.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IProcessProbe, AlgoTrading.Api.Services.SystemProcessProbe>();
 // Read before every start: a runner is refused on a host short of memory.
@@ -195,6 +213,8 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.NewsEventTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentExplanationsTool>();
+// The Validator's, the Risk Memo's and the Execution Reporter's records, for their chats.
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderChecksTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
@@ -236,7 +256,14 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.SimilarMomentsSecti
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituationLibrary>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsStatus>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsService>();
+// Its paper execution (10 Oct): its own manual book and strategy runs, the Validator and the Risk Memo before a buy or
+// start, and the Execution Reporter on each of its fills (after the AI Trader, so a look's fill is noted in its tick).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderRuns, AlgoTrading.Api.Services.AiTrader.AiTraderRuns>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderValidator>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderRiskMemo>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderExecution>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderExecutionReporter>();
 // The AI's one Telegram digest a day (the AI Trader's day and the run reviews); last, so a tick's other work is in it.
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AiDailyDigest>();
 // The AI Trader's lessons: a reflection on each finished day, each lesson tested on past looks; after the digest, so nothing waits behind it.

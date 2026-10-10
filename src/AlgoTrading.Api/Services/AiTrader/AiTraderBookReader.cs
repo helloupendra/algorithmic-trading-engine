@@ -24,26 +24,73 @@ public static class AiTraderAccount
     public static Task<AppUser?> FindAsync(TradingDbContext db, CancellationToken cancellationToken) =>
         db.AppUsers.FirstOrDefaultAsync(u => u.UserName.ToLower() == UserName, cancellationToken);
 
+    /// <summary>Who its own grants are recorded as given by: the desk, not a person.</summary>
+    public const string GrantedBy = "system (AI Trader account)";
+
+    /// <summary>
+    /// Its account, created on first use, with the grants a live start needs: the Strategies module and the
+    /// strategies its rules allow (<see cref="AiTraderRules.Strategies"/>), the same grants an admin gives a trader. A
+    /// start goes through the same checks as a person's (<see cref="StrategyStartService"/>), so without them every
+    /// start was refused by the package check. Added when missing, so an account made before 10 Oct gets them on its
+    /// next look.
+    /// </summary>
     public static async Task<AppUser> EnsureAsync(TradingDbContext db, CancellationToken cancellationToken)
     {
         var user = await FindAsync(db, cancellationToken);
-        if (user is not null) return user;
-
-        user = new AppUser
+        if (user is null)
         {
-            UserName = UserName,
-            Email = $"{UserName}@localhost",
-            Role = UserRoles.Trader,
-            TotalCapital = Capital,
-            // Three strategy runs and the manual book.
-            MaxConcurrentRuns = 4,
-            IsActive = true,
-            CreatedUtc = DateTime.UtcNow,
-            UpdatedUtc = DateTime.UtcNow,
-        };
-        db.AppUsers.Add(user);
-        await db.SaveChangesAsync(cancellationToken);
+            user = new AppUser
+            {
+                UserName = UserName,
+                Email = $"{UserName}@localhost",
+                Role = UserRoles.Trader,
+                TotalCapital = Capital,
+                // Three strategy runs and the manual book.
+                MaxConcurrentRuns = 4,
+                IsActive = true,
+                CreatedUtc = DateTime.UtcNow,
+                UpdatedUtc = DateTime.UtcNow,
+            };
+            db.AppUsers.Add(user);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await GrantAsync(db, user.Id, cancellationToken);
         return user;
+    }
+
+    private static async Task GrantAsync(TradingDbContext db, long userId, CancellationToken cancellationToken)
+    {
+        bool module = await db.UserModuleGrants.AnyAsync(g => g.UserId == userId && g.ModuleKey == PlatformModules.Strategies, cancellationToken);
+        var granted = await db.UserStrategyGrants.Where(g => g.UserId == userId).Select(g => g.StrategyName).ToListAsync(cancellationToken);
+        var missing = AiTraderAgent.Rules.Strategies.Where(s => !granted.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (module && missing.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        var added = new List<object>();
+        if (!module)
+        {
+            var grant = new UserModuleGrant { UserId = userId, ModuleKey = PlatformModules.Strategies, GrantedBy = GrantedBy, GrantedUtc = now };
+            db.UserModuleGrants.Add(grant);
+            added.Add(grant);
+        }
+
+        foreach (string name in missing)
+        {
+            var grant = new UserStrategyGrant { UserId = userId, StrategyName = name, GrantedBy = GrantedBy, GrantedUtc = now };
+            db.UserStrategyGrants.Add(grant);
+            added.Add(grant);
+        }
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Two looks on contexts of their own granted at once: the other's rows are there, which is all this wanted.
+            foreach (var row in added) db.Entry(row).State = EntityState.Detached;
+        }
     }
 }
 
@@ -180,7 +227,7 @@ public sealed class AiTraderBookReader(
         {
             AiTraderModes.Replay => "YOUR BOOK (this replay's shadow book, fresh at its start: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
             AiTraderModes.Shadow => "YOUR BOOK (shadow: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
-            _ => "YOUR BOOK\n",
+            _ => "YOUR BOOK (live: your own paper account; an allowed buy is placed in it at the ask with your stop and target on the position, checked every few seconds, and squared off at 15:30; a Validator checks each buy or strategy start first and can block it; nothing reaches a broker)\n",
         });
 
         decimal budget = rules.DailyLossLimit + Math.Min(0m, book.NetToday);

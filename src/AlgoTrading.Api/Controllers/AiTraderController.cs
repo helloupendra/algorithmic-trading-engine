@@ -325,7 +325,7 @@ public class AiTraderController(
 
     public static AiTraderDecisionSummary Summary(AiTraderDecision d) => new(
         d.Id, d.ClockUtc, IstTime.ToIst(d.ClockUtc).ToString("HH:mm"), d.Day.ToString("yyyy-MM-dd"), d.Mode, d.ReplaySessionId, d.Action, d.Underlying,
-        d.Reason, d.Confidence, d.Allowed, d.Rule, d.Why, d.Executed, d.Error, d.Model, d.CallId, OptionOf(d.PlanJson));
+        d.Reason, d.Confidence, d.Allowed, d.Rule, d.Why, d.Executed, d.Error, d.Model, d.CallId, OptionOf(d.PlanJson), AiTraderResults.Placement(d));
 
     /// <summary>The CE or PE a plan names, so a list can say "Buy NIFTY CE" without the plan; null when it names none.</summary>
     public static string? OptionOf(string planJson)
@@ -387,10 +387,11 @@ public sealed record AiTraderShadowPositionView(
 /// <summary>Today's looks: all of them, those that proposed an action, those allowed, those refused by a rule, and those with no usable answer.</summary>
 public sealed record AiTraderDay(string Date, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer);
 
+/// <param name="Placed">In live mode, what the decision placed in its own account (an order, an exit, a run started or stopped) and where to see it.</param>
 public sealed record AiTraderDecisionSummary(
     long Id, DateTime ClockUtc, string ClockIst, string Day, string Mode, long? ReplaySessionId, string Action, string Underlying,
     string Reason, double? Confidence, bool Allowed, string Rule, string Why, bool Executed, string Error, string Model, long? CallId,
-    string? Option = null);
+    string? Option = null, AiTraderPlacementView? Placed = null);
 
 public sealed record AiTraderDecisionDetail(AiTraderDecisionSummary Decision, string Brief, string PlanJson, string ResultJson, string BriefHash)
 {

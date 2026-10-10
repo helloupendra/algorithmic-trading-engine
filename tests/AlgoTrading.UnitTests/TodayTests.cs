@@ -130,6 +130,40 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task Live_the_card_has_its_live_book_what_it_placed_and_what_the_checks_did()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            new AiSettingsStore(db).SetAgentEnabledAsync(AiCatalog.AiTrader, true, "admin", null).GetAwaiter().GetResult();
+            AiTraderDecision Live(int minutes, bool allowed, string rule, bool executed = false, string result = "{}") => new()
+            {
+                CreatedUtc = Now, ClockUtc = Now.AddMinutes(-minutes), Day = Day, Mode = AiTraderModes.Live, BriefHash = "h", Brief = "b",
+                Action = "buy", Underlying = "NIFTY", Allowed = allowed, Rule = rule, Reason = $"r{minutes}", Executed = executed, ResultJson = result,
+            };
+            db.AiTraderDecisions.AddRange(
+                Live(40, false, "validator"),
+                Live(30, false, "validator-unavailable"),
+                Live(20, true, "ok", executed: true, result: """
+                    {"riskMemo":{"tightened":true},"placed":{"bookRunId":7,"orderId":12,"positionId":45,"symbol":"NSE:NIFTY26O0622650CE","lots":1,"price":120.5,"stopLoss":95,"target":160}}
+                    """));
+            db.SaveChanges();
+        }
+
+        var position = new AlgoTrading.Api.Services.AiTrader.AiTraderLivePosition(
+            45, "NSE:NIFTY26O0622650CE", 1, 65, Now.AddMinutes(-19), 120.5m, 118m, Now, null, 95m, 160m, -162.5m, -162.5m);
+        var book = new AlgoTrading.Api.Services.AiTrader.AiTraderLiveDay([position], -210m, 47.5m, 1);
+        var today = await Build(desk, aiSettings: new AiSettings { AiTraderExecute = true }, traderBooks: new LiveDay(book)).BuildAsync(CancellationToken.None);
+
+        var trader = today.AiTrader!;
+        Assert.Equal(("live", 1, 1, 1, 1), (trader.Mode, trader.ValidatorRejected, trader.ValidatorUnavailable, trader.RiskMemoTightened, trader.Placed));
+        Assert.Equal(new TodayAiTraderLive(1, 1, -210m, 47.5m), trader.Live);
+        var placed = trader.Latest[0].Placed!;
+        Assert.Equal(("order", "/trade/runs/7", 12L), (placed.Kind, placed.Link, placed.OrderId));
+        Assert.Null(trader.Latest[1].Placed);
+    }
+
+    [Fact]
     public async Task A_decision_is_logged_newest_first_and_the_same_one_is_replaced()
     {
         using var desk = new RunnerDesk();
@@ -197,7 +231,8 @@ public sealed class TodayTests
         return id;
     }
 
-    private static TodayBuilder Build(RunnerDesk desk, IMarketSessionService? sessions = null, AiSettings? aiSettings = null)
+    private static TodayBuilder Build(RunnerDesk desk, IMarketSessionService? sessions = null, AiSettings? aiSettings = null,
+        AlgoTrading.Api.Services.AiTrader.IAiTraderBooks? traderBooks = null)
     {
         var db = desk.Db();
         var lots = new PositionGreeksTests.FixedLots(65);
@@ -209,7 +244,16 @@ public sealed class TodayTests
         var history = new LiveRunHistoryBuilder(db, desk.Registry, catalog, lots, charges, new RunPnl(db, lots, charges));
         return new TodayBuilder(db, history, sessions ?? new Session(true, Now.AddHours(-4), Now.AddHours(2.5)), new AiSettingsStore(db),
             RecapClockTests.Inert<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>.Create(), new Fixed(Now),
-            aiSettings is null ? null : new AiTestKit.Monitor(aiSettings));
+            aiSettings is null ? null : new AiTestKit.Monitor(aiSettings), traderBooks);
+    }
+
+    /// <summary>The AI Trader's live book as <paramref name="day"/> says, whatever the clock.</summary>
+    private sealed class LiveDay(AlgoTrading.Api.Services.AiTrader.AiTraderLiveDay day) : AlgoTrading.Api.Services.AiTrader.IAiTraderBooks
+    {
+        public Task<AlgoTrading.Api.Services.AiTrader.AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<AlgoTrading.Api.Services.AiTrader.AiTraderLiveDay> DayAsync(DateTime clockUtc, CancellationToken cancellationToken) => Task.FromResult(day);
     }
 
     private sealed class Fixed(DateTime utc) : TimeProvider
