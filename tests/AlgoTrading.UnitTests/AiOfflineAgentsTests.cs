@@ -390,8 +390,23 @@ public class AiOfflineAgentsTests
         Assert.Single(note.Ideas);
     }
 
+    [Fact]
+    public void An_idea_s_test_may_propose_new_settings_the_tables_do_not_hold()
+    {
+        var week = Week();
+        string answer = """
+            {"strategies":[{"strategy":"Ghost","checks":[{"check":"sample","verdict":"concern","note":"Only 20 trades."}],"summary":"20 trades is a coin."}],
+             "ideas":[{"strategy":"Ghost","idea":"Add a band before each roll.","test":"BANKNIFTY, 2020-09-01 to 2023-12-31, a 25-point band, no entry after 14:45","why":"20 trades, ₹4,000 net."}]}
+            """;
+
+        var note = StrategyResearcherAgent.ParseNote(answer, week, StrategyResearcherAgent.Question(week));
+
+        Assert.Empty(note.Problems);
+    }
+
     [Theory]
     [InlineData("""{"strategies":[{"strategy":"Ghost","checks":[],"summary":"It made ₹9,999."}],"ideas":[]}""", "\"9,999\" is not in the tables")]
+    [InlineData("""{"strategies":[],"ideas":[{"strategy":"Ghost","idea":"Cut the churn.","test":"NIFTY 5m, 2024","why":"Charges were 94% of gross."}]}""", "\"94\" is not in the tables")]
     [InlineData("""{"strategies":[{"strategy":"Fulcrum","checks":[],"summary":"x"}],"ideas":[]}""", "a strategy the tables do not list")]
     [InlineData("""{"strategies":[{"strategy":"Ghost","checks":[{"check":"vibes","verdict":"fine","note":"x"}],"summary":"x"}],"ideas":[]}""", "is not one of its checks")]
     [InlineData("""{"strategies":[],"ideas":[{"strategy":"Ghost","idea":"Go live with it on Monday.","test":"none","why":"x"}]}""", "live change")]
