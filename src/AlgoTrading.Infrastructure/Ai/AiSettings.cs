@@ -323,8 +323,8 @@ public sealed class AiBedrockSettings
 public sealed class AiBedrockOpenSettings
 {
     /// <summary>
-    /// On (the default, owner 10 Oct 2026): while Claude is off, every chat tier's NVIDIA chain ends with two of these
-    /// models (<see cref="AiTierDef.OpenFallbacks"/>). Off: a <c>bedrock-oss:</c> model in a chain is skipped with its
+    /// On (the default, owner 10 Oct 2026): while Claude is off, every chat tier starts with two of these models
+    /// (<see cref="AiTierDef.OpenChain"/>) and NVIDIA's chain follows. Off: a <c>bedrock-oss:</c> model in a chain is skipped with its
     /// reason. Either way nothing calls AWS until a chain reaches one of these models.
     /// </summary>
     public bool Enabled { get; set; } = true;
