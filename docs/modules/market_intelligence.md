@@ -75,6 +75,7 @@ All times are IST, which has no daylight saving.
 | Breadth | `market_breadth_daily` | NSE CM bhavcopy + 52-week file | every 30 minutes, 18:00-23:30, the last 10 sessions | from 2020-01-01 |
 | Participant OI | `market_participant_oi` (Market factors) | NSE `fao_participant_oi_DDMMYYYY.csv` | the evening sync as before | from 2020-01-01 |
 | Scores | the six scoring columns | `python -m analysis news-score` | every 10 minutes, 06:00-23:30, not 08:40-15:40 on trading days | scores what is recorded |
+| Circulars | `regulatory_circulars` | SEBI's circulars page, NSE's circulars API, BSE's notices feed | once a day from 20:30 | NSE's last 7 days on each run; SEBI's latest 25 |
 
 Filings are polled on weekends and holidays too. By the evening of Sunday
 27 Sep 2026 NSE had broadcast 33, the latest at 18:47, and a Sunday filing is
@@ -206,6 +207,37 @@ back to 2020):
 - Where the file is missing, the two counts are left null and the row is still
   stored.
 
+## SEBI, NSE and BSE circulars
+
+The circulars that might bind an F&O desk, for the [Compliance Triage](ai.md#compliance-triage) to read on
+Saturdays (`RegulatoryCircularsRecorder`, `RegulatoryCircularParsers`; `RegulatoryCircularsRecorderService`).
+
+| Source | Read from | Kept |
+| --- | --- | --- |
+| SEBI | The circulars page (`sebiweb/home/HomeAction.do?doListing=yes&sid=1&ssid=7&smid=0`): the latest 25, each with its date, title and page. The RSS feed the news recorder reads mixes them with orders and recovery notices, and carries about 30 items | Every circular. For a new one, its page gives the circular number and the PDF its frame shows |
+| NSE | `api/circulars?fromDate=…&toDate=…` for the last 7 days, through `NseWebClient` (cookies, the shared pacer): about 170 a week | The F&O, inspection and compliance, and legal departments; any other whose subject names algos, APIs, derivatives, F&O, options, expiries, lot sizes, margins, position limits, risk controls, trading hours or an index. Listings, mutual funds, debt, SME, EGR and securities lending never. Each with its PDF, or the zip NSE files some in |
+| BSE | The notices feed (`data/xml/notices.xml`) | Notices whose title names the same words |
+
+What a row holds: the source, a key (`sebi:105081`, `nse:76848`, `bse:20261010-1`; the duplicate check, unique), the
+number, title, department, date, page or document, why it was kept (`department: Futures & Options`, `subject: algo`),
+when it was first seen, and the **excerpt**: the first four pages of the document's text, whitespace made single, at
+most 4,000 characters (PdfPig, a managed PDF reader; from a zip, the circular rather than its annexures). A scanned
+PDF gives no text: the row is kept with its title and the triage judges on that.
+
+- **Once a day** from 20:30 IST (`MarketIntelligenceSchedule.CircularsDue`), when the day's circulars are out and
+  nothing trades. The last run's time is kept in `system_settings` (`marketintel.circulars.lastRunUtc`), set before
+  the run, so a restart neither repeats the day's run nor skips it. A run missed for more than 26 hours is made at the
+  next chance outside 09:00-15:40 on a trading day.
+- **Polite.** One document at a time, two seconds apart, at most 40 a run and 8 MB each; NSE's API is paced with every
+  other NSE request. On a usual day that is a few SEBI pages and PDFs and a handful of NSE documents.
+- **Insert-only.** A circular already stored is skipped without fetching its page or document again. One source
+  failing costs only its own circulars; the run's status is on `GET status` as the `circulars` recorder.
+- **Switch:** `MarketIntelligence:CircularsEnabled`.
+
+Known gaps: BSE's feed carries only its latest notices (one on Saturday 10 Oct 2026), so a busy BSE day can scroll
+notices off before the evening run; BSE's full listing is behind an API that refuses plain requests. SEBI's page
+lists 25: more than 25 circulars between two runs would be missed (SEBI publishes a few a week).
+
 ## Backfills
 
 | Dataset | From | Requests | Stops short of |
@@ -294,6 +326,7 @@ table the model does not have, or writes anything else.
 | `BreadthEnabled` | the evening breadth run |
 | `BackfillEnabled` | the breadth and participant-OI history backfills |
 | `NewsScoringEnabled` | the scorer's schedule |
+| `CircularsEnabled` | the SEBI, NSE and BSE circulars recorder |
 
 None of them opens a broker or feed connection: they read public pages and
 archives, and write only this module's tables. They are safe to leave on

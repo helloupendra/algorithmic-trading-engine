@@ -21,13 +21,19 @@ import {
   readIncidentExplanation,
   readNewsEvent,
   readTradeReview,
+  appliesBadge,
+  readCircularTriage,
+  readDataCheck,
+  readResearchNote,
+  readingBadge,
   reportLink,
   reportStatus,
   reportSubjectLabel,
+  severityBadge,
   urgencyBadge,
   verdictBadge,
 } from '../../lib/ai'
-import type { AiReportDetail, AiReportSummary } from '../../lib/ai'
+import type { AiReportDetail, AiReportSummary, ResearchCheck } from '../../lib/ai'
 import { ApiError } from '../../lib/api'
 import { formatDateTime } from '../../lib/format'
 import { Badge } from '../../components/ui'
@@ -279,7 +285,156 @@ export function ReportData({ detail }: { detail: AiReportDetail }) {
     )
   }
 
+  if (report.agentKey === 'data-curator') {
+    const c = readDataCheck(data)!
+    return (
+      <>
+        <dl className="ai-report-data ai-report-data--inline">
+          <div>
+            <dt>Pass</dt>
+            <dd>
+              {c.pass || '—'}
+              {c.checkedDay && <span className="muted"> · data of {c.checkedDay}</span>}
+            </dd>
+          </div>
+          <div>
+            <dt>Findings</dt>
+            <dd>{c.findings.length === 0 ? 'none' : `${c.high} high · ${c.medium} medium · ${c.low} low`}</dd>
+          </div>
+        </dl>
+        {c.findings.length > 0 && (
+          <div className="tablewrap ai-report-numbers">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>What the check found</th>
+                  <th>Breaks if ignored</th>
+                  <th>Do</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.findings.map((f) => {
+                  const s = severityBadge(f.severity)
+                  return (
+                    <tr key={f.id}>
+                      <td>
+                        <Badge tone={s.tone}>{s.label}</Badge>
+                      </td>
+                      <td>
+                        <b>{f.subject}.</b> {f.facts}
+                        <span className="cell-sub mono">{f.id}</span>
+                      </td>
+                      <td>{f.impact ?? <span className="faint">read by {f.readBy.join(', ') || 'nothing listed'}</span>}</td>
+                      <td>{f.actionMeans ?? <span className="faint">—</span>}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  if (report.agentKey === 'compliance-triage') {
+    const t = readCircularTriage(data)!
+    const a = appliesBadge(t.applies)
+    return (
+      <dl className="ai-report-data">
+        <div>
+          <dt>To this desk</dt>
+          <dd>
+            <Badge tone={a.tone}>{a.label}</Badge>
+            {t.area && <span className="muted"> · {t.area}</span>}
+          </dd>
+        </div>
+        {t.why && (
+          <div>
+            <dt>Why</dt>
+            <dd>{t.why}</dd>
+          </div>
+        )}
+        {t.change && (
+          <div>
+            <dt>Would change</dt>
+            <dd>{t.change}</dd>
+          </div>
+        )}
+        {t.quote && (
+          <div>
+            <dt>Rests on</dt>
+            <dd className="ai-report-quote">“{t.quote}”</dd>
+          </div>
+        )}
+      </dl>
+    )
+  }
+
+  if (report.agentKey === 'strategy-researcher') {
+    const n = readResearchNote(data)!
+    return (
+      <>
+        {n.ideas.length > 0 && (
+          <section className="ai-call__sec">
+            <h4 className="ai-call__h">Worth testing (a backtest each, never a live change)</h4>
+            <ol className="ai-report-list">
+              {n.ideas.map((i, k) => (
+                <li key={k}>
+                  <b>{i.strategy}</b>: {i.idea}
+                  <span className="cell-sub">Test: {i.test}</span>
+                  {i.why && <span className="cell-sub">Why: {i.why}</span>}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+        {n.checks.length > 0 && <ResearchChecks checks={n.checks} />}
+      </>
+    )
+  }
+
   return null
+}
+
+/** The code's overfitting checks, strategy by strategy, beside what the researcher made of each. */
+function ResearchChecks({ checks }: { checks: ResearchCheck[] }) {
+  return (
+    <div className="tablewrap ai-report-numbers">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Strategy</th>
+            <th>Check</th>
+            <th>Code</th>
+            <th>Researcher</th>
+            <th>What the code measured</th>
+          </tr>
+        </thead>
+        <tbody>
+          {checks.map((c) => {
+            const code = readingBadge(c.reading)
+            const said = c.verdict ? readingBadge(c.verdict) : null
+            return (
+              <tr key={`${c.strategy}|${c.check}`}>
+                <td>{c.strategy}</td>
+                <td className="mono">{c.check}</td>
+                <td>
+                  <Badge tone={code.tone}>{code.label}</Badge>
+                </td>
+                <td>
+                  {said ? <Badge tone={said.tone}>{said.label}</Badge> : <span className="faint">—</span>}
+                  {c.note && <span className="cell-sub">{c.note}</span>}
+                </td>
+                <td>{c.facts}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 /** Why a report that is not ok says nothing useful, in one line. */
