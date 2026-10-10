@@ -270,6 +270,14 @@ describe('modelName', () => {
     expect(modelName('nvidia/nemotron-3-super-120b-a12b')).toBe('Nemotron 3 Super')
   })
 
+  it('names the models on Amazon Bedrock for where they run', () => {
+    expect(modelName('bedrock-oss:moonshotai.kimi-k2.5')).toBe('Kimi K2.5 · Bedrock')
+    expect(modelName('bedrock-oss:openai.gpt-oss-120b')).toBe('gpt-oss-120b · Bedrock')
+    expect(modelName('bedrock-oss:qwen.qwen3-32b')).toBe('qwen3-32b · Bedrock')
+    expect(modelName('bedrock:anthropic.claude-opus-5-5')).toBe('Claude Opus 5.5')
+    expect(modelName('bedrock:anthropic.claude-sonnet-5')).toBe('claude-sonnet-5')
+  })
+
   it('falls back to the part after the vendor, and says "—" for none', () => {
     expect(modelName('meta/llama-4-maverick-17b-128e-instruct')).toBe('llama-4-maverick-17b-128e-instruct')
     expect(modelName('plain-id')).toBe('plain-id')

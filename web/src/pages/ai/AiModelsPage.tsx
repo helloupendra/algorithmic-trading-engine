@@ -31,7 +31,7 @@ import type { AiModel, AiModelHealth, AiModelsResponse, AiTier, ModelTestResult 
 import { formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { IconChip, IconLayers, IconSearch, IconServer } from '../../components/icons'
-import { CallLink, ChainChips, ChainEditor, HealthLine, KeyBadge } from './parts'
+import { BedrockLines, CallLink, ChainChips, ChainEditor, HealthLine, KeyBadge, nvidiaRole } from './parts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -302,6 +302,7 @@ export function AiModelsPage() {
               <b>{provider.name}</b>
               <span className="mono ai-provider__url">{provider.baseUrl}</span>
               <KeyBadge configured={provider.keyConfigured} />
+              <span className="faint">{nvidiaRole(provider)}</span>
             </>
           ) : overview.isError ? (
             <span className="warn">The provider could not be read: {errorText(overview.error)}</span>
@@ -309,6 +310,7 @@ export function AiModelsPage() {
             <span className="faint">Provider not known yet</span>
           )}
         </div>
+        {provider && <BedrockLines provider={provider} />}
         {data && <CatalogLine data={data} />}
       </section>
 

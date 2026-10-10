@@ -29,7 +29,7 @@ import {
   sameChain,
   toolLabel,
 } from '../../lib/ai'
-import type { AiModel, AiModelHealth, AiToolStep, FeedbackScore } from '../../lib/ai'
+import type { AiModel, AiModelHealth, AiProvider, AiToolStep, FeedbackScore } from '../../lib/ai'
 import { Badge } from '../../components/ui'
 
 /** "Nemotron 3 Ultra" with its full id beside it (or in its title when `bare`). */
@@ -311,6 +311,49 @@ export function NotKnown({ children = 'not known yet' }: { children?: ReactNode 
 /** A tone badge for "key configured". */
 export function KeyBadge({ configured }: { configured: boolean }) {
   return <Badge tone={configured ? 'pos' : 'warn'}>{configured ? 'key configured' : 'no key on the server'}</Badge>
+}
+
+/** Where NVIDIA sits in the chains: first, or not asked at all while Claude on Bedrock answers every chain. */
+export function nvidiaRole(provider: AiProvider): string {
+  return provider.bedrock?.enabled ? 'not asked while Claude is on' : 'first in every chain'
+}
+
+/**
+ * The two providers on Amazon Bedrock, under NVIDIA's line: the open models, each tier's fallbacks after NVIDIA, and
+ * Claude, which while on answers every chain. The server's AWS role signs both, so no key is held for either.
+ */
+export function BedrockLines({ provider }: { provider: AiProvider }) {
+  const open = provider.bedrockOpen
+  const claude = provider.bedrock
+  return (
+    <>
+      {open && (
+        <div className="ai-provider__line">
+          <b>Amazon Bedrock · open models</b>
+          <span className="mono ai-provider__url">{open.region}</span>
+          <Badge tone={open.enabled ? 'pos' : 'neutral'}>{open.enabled ? 'on' : 'off'}</Badge>
+          <span className="faint">
+            {!open.enabled
+              ? 'Ai:BedrockOpen:Enabled is false'
+              : claude?.enabled
+                ? 'not asked while Claude is on'
+                : "each tier's fallbacks after NVIDIA"}{' '}
+            · signed by the server's AWS role, no key
+          </span>
+        </div>
+      )}
+      {claude && (
+        <div className="ai-provider__line">
+          <b>Claude on Amazon Bedrock</b>
+          <span className="mono ai-provider__url">{claude.region}</span>
+          <Badge tone={claude.enabled ? 'pos' : 'neutral'}>{claude.enabled ? 'on' : 'off'}</Badge>
+          <span className="faint">
+            {claude.enabled ? 'answers every chain' : 'off until AWS enables Claude for this account'}
+          </span>
+        </div>
+      )}
+    </>
+  )
 }
 
 /**
