@@ -70,7 +70,8 @@ public sealed class AiTraderReflection(
     AiMemoryService memory,
     AiTraderBaselineScorer baselines,
     IReplaySessions replays,
-    ILogger<AiTraderReflection> logger)
+    ILogger<AiTraderReflection> logger,
+    IOptionsMonitor<AiSettings>? settings = null)
 {
     /// <summary>Lessons one day may give at most.</summary>
     public const int MaxLessons = 3;
@@ -149,7 +150,8 @@ public sealed class AiTraderReflection(
         }
 
         string text = DayText(subject, decisions, positions, baseline);
-        var judge = (await new AiSettingsStore(db).LoadAsync(cancellationToken)).Tier("judge").Chain;
+        // With the settings, so the chain is the one the providers' switches make (Claude's, or NVIDIA's and Bedrock's open models).
+        var judge = (await new AiSettingsStore(db, null, settings).LoadAsync(cancellationToken)).Tier("judge").Chain;
         var result = await gateway.AskAsync(new AiAskInput(
             AiCatalog.AiTraderReflect, null, [new AiMessage("user", text)], AiCatalog.AiTraderReflectPrompt, 6000, 0.2,
             $"reflect-{subject.Id}", "check", AiCatalog.AiTraderReflect, null, judge), NullAiStreamSink.Instance, cancellationToken);

@@ -234,9 +234,10 @@ public class AiController : ControllerBase
             foreach (string id in agent.Chain) if (!inUse.Contains(id)) inUse.Add(id);
         }
 
-        // NVIDIA's catalog, then the Claude models the desk can ask on Bedrock (its Messages API lists none).
+        // NVIDIA's catalog, then the Claude and open models the desk can ask on Bedrock (it keeps its own list of each).
         var owners = list.Models.ToDictionary(m => m.Id, m => m.OwnedBy, StringComparer.Ordinal);
         foreach (var claude in AiCatalog.BedrockModels) owners[claude.Id] = "anthropic";
+        foreach (var open in AiCatalog.BedrockOpenModels) owners[open.Id] = AiCatalog.BedrockOpenModelId(open.Id).Split('.')[0];
         var s = _settings.CurrentValue;
         var ids = inUse.Concat(owners.Keys.Where(id => !inUse.Contains(id)).OrderBy(id => id, StringComparer.Ordinal));
 
@@ -250,12 +251,14 @@ public class AiController : ControllerBase
             tests.TryGetValue(id, out var test) ? test : null,
             usage.TryGetValue(id, out var used) ? used : new AiModelUsage(0, 0, 0, null),
             AiCatalog.IsEmbeddingModel(id),
-            AiCatalog.IsBedrock(id) ? AiCatalog.BedrockModelIds.Contains(id) || id == AiEmbedder.Target(s) : list.Models.Count == 0 || owners.ContainsKey(id))
+            AiCatalog.IsBedrock(id) ? AiCatalog.BedrockModelIds.Contains(id) || id == AiEmbedder.Target(s)
+            : AiCatalog.IsBedrockOpen(id) ? AiCatalog.BedrockOpenModelIds.Contains(id)
+            : list.Models.Count == 0 || owners.ContainsKey(id))
         {
             Health = inUse.Contains(id) ? ToHealth(_health.State(id, Now())) : null,
             Provider = AiCatalog.ProviderOf(id),
-            Name = AiCatalog.BedrockModel(id)?.Name,
-            Available = (AiCatalog.IsBedrock(id) ? s.Bedrock.Enabled : s.KeyConfigured),
+            Name = AiCatalog.BedrockModel(id)?.Name ?? AiCatalog.BedrockOpenModel(id)?.Name,
+            Available = AiCatalog.IsBedrock(id) ? s.Bedrock.Enabled : AiCatalog.IsBedrockOpen(id) ? s.BedrockOpen.Enabled : s.KeyConfigured,
             Price = AiGateway.Price(id, s) is { } p ? new AiModelPriceDto(p.Input, p.Output, p.CacheRead, p.CacheWrite, AiModelPrice.Note) : null,
         }).ToList();
 
@@ -614,7 +617,7 @@ public class AiController : ControllerBase
                 ? "The AI Trader's lessons run only while the AI Trader is on and Ai:AiTraderLessons is true."
                 : $"{def.Name} is switched off." });
         }
-        if (!_settings.CurrentValue.ProviderConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No model provider: no NVIDIA_API_KEY on the server, and Amazon Bedrock is off." });
+        if (!_settings.CurrentValue.ProviderConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No model provider: no NVIDIA_API_KEY on the server, and Amazon Bedrock (Claude and the open models) is off." });
 
         string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();
         if (subject is not null && key is AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst)
@@ -878,15 +881,21 @@ public class AiController : ControllerBase
     {
         Bedrock = new AiBedrockDto(s.Bedrock.Enabled, s.Bedrock.Region, AiCatalog.BedrockEndpoint(s.Bedrock.Region),
             new Dictionary<string, string>(s.Bedrock.EffortByTier, StringComparer.OrdinalIgnoreCase)),
+        BedrockOpen = new AiBedrockOpenDto(s.BedrockOpen.Enabled, s.Bedrock.Region, AiCatalog.BedrockOpenEndpoint(s.Bedrock.Region)),
     };
 
-    /// <summary>Where a call's model was asked: Bedrock's Messages API for a <c>bedrock:</c> model, else NVIDIA's.</summary>
+    /// <summary>
+    /// Where a call's model was asked: Bedrock's Messages API for a <c>bedrock:</c> model, its OpenAI-compatible endpoint
+    /// for a <c>bedrock-oss:</c> one, else NVIDIA's.
+    /// </summary>
     private string ChatEndpoint(string model) => AiCatalog.IsBedrock(model)
         ? AiCatalog.BedrockEndpoint(_settings.CurrentValue.Bedrock.Region)
-        : $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
+        : AiCatalog.IsBedrockOpen(model)
+            ? AiCatalog.BedrockOpenEndpoint(_settings.CurrentValue.Bedrock.Region)
+            : $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
 
     private static AiTierDto ToTier(AiTierState t) => new(
-        t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.Def.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);
+        t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);
 
     private AiAgentDto ToAgent(AiAgentState a, IReadOnlyList<TodayRow> today, IReadOnlyDictionary<string, AiLastCallDto> last)
     {
@@ -1214,9 +1223,14 @@ public sealed record AiProviderDto(string Key, string Name, string BaseUrl, bool
 {
     /// <summary>The second provider: whether it is on, where, and Claude's effort per tier. No credential is ever shown: it has none.</summary>
     public AiBedrockDto? Bedrock { get; init; }
+
+    /// <summary>The third provider, the open models on Bedrock: whether it is on, and where. No credential either.</summary>
+    public AiBedrockOpenDto? BedrockOpen { get; init; }
 }
 
 public sealed record AiBedrockDto(bool Enabled, string Region, string Endpoint, IReadOnlyDictionary<string, string> EffortByTier);
+
+public sealed record AiBedrockOpenDto(bool Enabled, string Region, string Endpoint);
 
 /// <summary>The embedding model in use, the re-embedding's target, and the vectors each model holds (memories, doc passages).</summary>
 public sealed record AiEmbeddingsDto(
@@ -1296,16 +1310,16 @@ public sealed record AiModelDto(
     /// <summary>Its health, for a model in use; null for the rest of the catalog.</summary>
     public AiModelHealthDto? Health { get; init; }
 
-    /// <summary>Who serves it: NVIDIA's NIM API or Amazon Bedrock.</summary>
+    /// <summary>Who serves it: NVIDIA's NIM API, Amazon Bedrock (Claude) or Amazon Bedrock (open models).</summary>
     public string Provider { get; init; } = AiCatalog.ProviderName;
 
-    /// <summary>Its name, for a Claude model on Bedrock; null when the id says it.</summary>
+    /// <summary>Its name, for a model on Bedrock; null when the id says it.</summary>
     public string? Name { get; init; }
 
-    /// <summary>Whether its provider can be asked now (NVIDIA's key is there; Bedrock is on). A chain skips it otherwise.</summary>
+    /// <summary>Whether its provider can be asked now (NVIDIA's key is there; Claude or the open models on Bedrock are on). A chain skips it otherwise.</summary>
     public bool Available { get; init; } = true;
 
-    /// <summary>Its list price, for a Bedrock model; null for NVIDIA's free tier.</summary>
+    /// <summary>Its list price, for a Bedrock model with a verified price; null for NVIDIA's free tier and when unknown.</summary>
     public AiModelPriceDto? Price { get; init; }
 }
 

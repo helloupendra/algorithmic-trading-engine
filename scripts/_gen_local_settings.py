@@ -224,6 +224,7 @@ def build_api_settings(env: dict[str, str]) -> dict:
             "ApiKey": env.get("NVIDIA_API_KEY", ""),
             "BaseUrl": env.get("NVIDIA_API_BASE_URL", "https://integrate.api.nvidia.com/v1"),
             **build_bedrock_settings(env),
+            **build_bedrock_open_settings(env),
         },
     }
 
@@ -242,6 +243,16 @@ def build_bedrock_settings(env: dict[str, str]) -> dict:
     if region:
         bedrock["Region"] = region
     return {"Bedrock": bedrock} if bedrock else {}
+
+
+def build_bedrock_open_settings(env: dict[str, str]) -> dict:
+    """The open models on Amazon Bedrock: only the switch (the region is AI_BEDROCK_REGION's).
+
+    On in code, so the switch is written for true and for false, and left out
+    otherwise. As for Claude, no AWS credential is ever read or written here.
+    """
+    switch = env.get("AI_BEDROCK_OPEN_ENABLED", "").strip().lower()
+    return {"BedrockOpen": {"Enabled": switch == "true"}} if switch in ("true", "false") else {}
 
 
 def main() -> int:

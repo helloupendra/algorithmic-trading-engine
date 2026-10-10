@@ -314,6 +314,10 @@ public class AiBedrockTests
         "Bedrock model access is not enabled for anthropic.claude-opus-5-5 in us-east-1")]
     [InlineData(403, """{"message":"The security token included in the request is invalid."}""", 403, false,
         "Bedrock refused the server's AWS credentials")]
+    [InlineData(401, """{"message":"Model not available for this account."}""", 401, false,
+        "Bedrock model access is not enabled for anthropic.claude-opus-5-5 in us-east-1")]
+    [InlineData(403, """{"message":"User: the desk's role is not authorized to perform: bedrock-mantle:CreateInference"}""", 403, false,
+        "the server's AWS role is not allowed to call Bedrock (an IAM permission is missing)")]
     [InlineData(400, """{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}""", 400, false,
         "http 400: max_tokens: too large")]
     public void Each_bedrock_refusal_says_what_it_means(int status, string body, int expectedStatus, bool capacity, string says)
@@ -629,13 +633,16 @@ public class AiBedrockTests
     }
 
     [Fact]
-    public void Bedrock_is_off_by_default_in_us_east_1()
+    public void Claude_on_bedrock_is_off_by_default_in_us_east_1_and_the_open_models_are_on()
     {
         var s = new AiSettings();
 
         Assert.False(s.Bedrock.Enabled);
+        Assert.True(s.BedrockOpen.Enabled);
         Assert.Equal("us-east-1", s.Bedrock.Region);
-        Assert.False(s.ProviderConfigured);
+        // Without NVIDIA's key the open models are still a provider; with them off too there is none.
+        Assert.True(s.ProviderConfigured);
+        Assert.False(new AiSettings { BedrockOpen = { Enabled = false } }.ProviderConfigured);
         Assert.Equal("https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages", AiCatalog.BedrockEndpoint(s.Bedrock.Region));
     }
 

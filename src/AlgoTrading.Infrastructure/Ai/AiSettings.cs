@@ -233,13 +233,17 @@ public sealed class AiSettings
     /// <summary>Claude on Amazon Bedrock, the second provider (<see cref="BedrockClaudeClient"/>); off until the owner turns it on.</summary>
     public AiBedrockSettings Bedrock { get; set; } = new();
 
+    /// <summary>Open models on Amazon Bedrock, the third provider (<see cref="BedrockOpenChatClient"/>); on unless the owner turns it off.</summary>
+    public AiBedrockOpenSettings BedrockOpen { get; set; } = new();
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>
-    /// Whether any provider can be asked: NVIDIA's key is there, or Bedrock is on (its credentials are the server's
-    /// AWS role, which the desk cannot see). What starts the agents, the probe and the Telegram Assistant.
+    /// Whether any provider can be asked: NVIDIA's key is there, or Claude or the open models on Bedrock are on (their
+    /// credentials are the server's AWS role, which the desk cannot see). What starts the agents and the Telegram
+    /// Assistant.
     /// </summary>
-    public bool ProviderConfigured => KeyConfigured || Bedrock.Enabled;
+    public bool ProviderConfigured => KeyConfigured || Bedrock.Enabled || BedrockOpen.Enabled;
 
     /// <summary>Whether <paramref name="agentKey"/> reads memories.</summary>
     public bool HasMemory(string agentKey) =>
@@ -262,7 +266,8 @@ public sealed class AiBedrockSettings
     public bool Enabled { get; set; }
 
     /// <summary>
-    /// The AWS region asked, for Claude and for Titan. N. Virginia: in Mumbai (ap-south-1) Bedrock's Messages API
+    /// The AWS region asked, for Claude, for Titan and for the open models (<see cref="AiBedrockOpenSettings"/>, which
+    /// has no region of its own). N. Virginia: in Mumbai (ap-south-1) Bedrock's Messages API
     /// answered "model does not exist" for these models (10 Oct 2026). The model ids carry no region or <c>global.</c>
     /// prefix; the Global endpoint type routes across regions with no price premium.
     /// </summary>
@@ -306,6 +311,38 @@ public sealed class AiBedrockSettings
         ["anthropic.claude-sonnet-5-5"] = new() { Input = 2m, Output = 10m, CacheRead = 0.10m, CacheWrite = 2.5m },
         ["anthropic.claude-haiku-5-5"] = new() { Input = 0.10m, Output = 0.50m, CacheRead = 0.01m, CacheWrite = 0.125m },
         ["anthropic.claude-haiku-4-5"] = new() { Input = 1m, Output = 5m, CacheRead = 0.10m, CacheWrite = 1.25m },
+    };
+}
+
+/// <summary>
+/// The <c>Ai:BedrockOpen</c> section: open models (Kimi, GLM, DeepSeek, Qwen, gpt-oss, Mistral, Nemotron, MiniMax) on
+/// Amazon Bedrock's OpenAI-compatible endpoint (<see cref="BedrockOpenChatClient"/>), in
+/// <see cref="AiBedrockSettings.Region"/>. As with Claude, no key here or anywhere in the desk's files, and none is
+/// read from its settings: each request is signed with the default AWS credential chain (the EC2 instance profile).
+/// </summary>
+public sealed class AiBedrockOpenSettings
+{
+    /// <summary>
+    /// On (the default, owner 10 Oct 2026): while Claude is off, every chat tier's NVIDIA chain ends with two of these
+    /// models (<see cref="AiTierDef.OpenFallbacks"/>). Off: a <c>bedrock-oss:</c> model in a chain is skipped with its
+    /// reason. Either way nothing calls AWS until a chain reaches one of these models.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// US dollars per million tokens, by Bedrock model id: AWS's Standard on-demand prices in US East (N. Virginia), as
+    /// its Bedrock pricing page gave them on 10 Oct 2026. A model the page gave no N. Virginia price for (Qwen3 235B
+    /// A22B 2507) is left out, so its cost shows as unknown rather than guessed. Another region bills differently.
+    /// </summary>
+    public Dictionary<string, AiModelPrice> Prices { get; set; } = new(StringComparer.Ordinal)
+    {
+        ["moonshotai.kimi-k2.5"] = new() { Input = 0.60m, Output = 3.00m },
+        ["zai.glm-5"] = new() { Input = 1.00m, Output = 3.20m },
+        ["deepseek.v3.2"] = new() { Input = 0.62m, Output = 1.85m },
+        ["openai.gpt-oss-120b"] = new() { Input = 0.15m, Output = 0.60m },
+        ["mistral.mistral-large-3-675b-instruct"] = new() { Input = 0.50m, Output = 1.50m },
+        ["nvidia.nemotron-super-3-120b"] = new() { Input = 0.15m, Output = 0.65m },
+        ["minimax.minimax-m2.5"] = new() { Input = 0.30m, Output = 1.20m },
     };
 }
 
