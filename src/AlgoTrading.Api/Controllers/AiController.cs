@@ -596,7 +596,7 @@ public class AiController : ControllerBase
             : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
         if (def is null) return NotFound(new { error = $"No agent {key}." });
         if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam
-            or AiCatalog.AiTrader or AiCatalog.AiTraderReflect
+            or AiCatalog.AiTrader or AiCatalog.AiTraderReflect or AiCatalog.ExecutionReporter
             or AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst or AiCatalog.FundamentalAnalyst))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
@@ -628,6 +628,7 @@ public class AiController : ControllerBase
             {
                 AiCatalog.AiTraderReflect => "subjectId is a replay's id.",
                 AiCatalog.FundamentalAnalyst => "subjectId is a filing's id.",
+                AiCatalog.ExecutionReporter => "subjectId is one of the AI Trader's paper orders' id.",
                 _ => "subjectId is a run or incident id.",
             } });
         }
@@ -657,6 +658,8 @@ public class AiController : ControllerBase
         var links = new Dictionary<(string, string), string?>();
         var newsIds = reports.Where(r => r.SubjectType == AiReportSubject.News).Select(r => long.TryParse(r.SubjectId, out long v) ? v : 0).Where(v => v > 0).ToList();
         var filingIds = reports.Where(r => r.SubjectType == AiReportSubject.Filing).Select(r => long.TryParse(r.SubjectId, out long v) ? v : 0).Where(v => v > 0).ToList();
+        var orderIds = reports.Where(r => r.SubjectType == AiReportSubject.Order).Select(r => long.TryParse(r.SubjectId, out long v) ? v : 0).Where(v => v > 0).ToList();
+        var orders = orderIds.Count == 0 ? [] : await _db.PaperOrders.AsNoTracking().Where(o => orderIds.Contains(o.Id)).Select(o => new { o.Id, o.SimulationRunId }).ToListAsync(cancellationToken);
         var news = newsIds.Count == 0 ? [] : await _db.NewsItems.AsNoTracking().Where(n => newsIds.Contains(n.Id)).Select(n => new { n.Id, n.Link }).ToListAsync(cancellationToken);
         var filings = filingIds.Count == 0 ? [] : await _db.CorporateAnnouncements.AsNoTracking().Where(a => filingIds.Contains(a.Id)).Select(a => new { a.Id, a.AttachmentUrl }).ToListAsync(cancellationToken);
 
@@ -668,6 +671,9 @@ public class AiController : ControllerBase
                 AiReportSubject.Incident => $"/system/incidents?id={r.SubjectId}",
                 AiReportSubject.News => news.FirstOrDefault(n => n.Id.ToString() == r.SubjectId)?.Link,
                 AiReportSubject.Filing => filings.FirstOrDefault(a => a.Id.ToString() == r.SubjectId)?.AttachmentUrl,
+                // The AI Trader's decision is on its panel; a fill is in its manual book.
+                AiReportSubject.Decision => $"/ai/agents?agent={AiCatalog.AiTrader}",
+                AiReportSubject.Order => orders.FirstOrDefault(o => o.Id.ToString() == r.SubjectId) is { } o ? $"/trade/runs/{o.SimulationRunId}" : null,
                 _ => null,
             };
         }

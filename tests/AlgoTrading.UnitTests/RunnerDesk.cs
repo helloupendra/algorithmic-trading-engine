@@ -46,10 +46,15 @@ internal sealed class RunnerDesk : IDisposable
     private readonly StrategyCatalogService _catalog;
     private readonly List<Process> _processes = new();
 
-    public RunnerDesk()
+    /// <param name="moreStrategies">Strategies the catalog finds besides Ghost (the AI Trader's allowed ones, say).</param>
+    public RunnerDesk(params string[] moreStrategies)
     {
         var strategies = Directory.CreateDirectory(Path.Combine(_engine, "strategies")).FullName;
         File.WriteAllText(Path.Combine(strategies, "ghost.py"), "class Ghost(BaseStrategy):\n    name = \"Ghost\"\n");
+        foreach (string name in moreStrategies)
+        {
+            File.WriteAllText(Path.Combine(strategies, $"{name.ToLowerInvariant()}.py"), $"class {name}(BaseStrategy):\n    name = \"{name}\"\n");
+        }
         File.WriteAllText(Path.Combine(strategies, "execution_runner.py"), "import time\ntime.sleep(30)\n");
 
         Options.EngineDirectory = _engine;
@@ -115,6 +120,19 @@ internal sealed class RunnerDesk : IDisposable
             CancellationToken.None,
             sessions);
     }
+
+    /// <summary>The start path itself, as the AI Trader's starts take it, on <paramref name="db"/>; every package allows everything unless <paramref name="access"/> says otherwise.</summary>
+    public StrategyStartService Starts(TradingDbContext db, IStrategyAccessService? access = null) => new(
+        db, _catalog, Registry, RunControl(db), _locator, null!, access ?? new AllowEverything(),
+        Microsoft.Extensions.Options.Options.Create(Options), NullLogger<StrategyStartService>.Instance);
+
+    /// <summary>The platform's run cap as the start reads it (<see cref="MaxRunsPerAccount"/>).</summary>
+    public IRiskLimitsStore Limits => new FixedLimits(MaxRunsPerAccount);
+
+    /// <summary>The host's memory as the start reads it (<see cref="AvailableMemoryBytes"/>).</summary>
+    public IHostMemory Memory => new FixedMemory(() => AvailableMemoryBytes);
+
+    public StrategyCatalogService Catalog => _catalog;
 
     /// <summary>The durable runner pids (system_settings), as the reconcile reads them.</summary>
     public PidStore Pids { get; } = new();

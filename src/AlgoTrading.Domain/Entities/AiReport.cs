@@ -81,7 +81,13 @@ public static class AiReportSubject
     /// <summary>The Desk Assistant's exam; the subject id is the exam's id.</summary>
     public const string Exam = "exam";
 
-    public static readonly IReadOnlyList<string> All = [Run, News, Filing, Incident, Check, Exam];
+    /// <summary>An AI Trader decision (the Validator's verdict, the Risk Memo); the subject id is the decision's id.</summary>
+    public const string Decision = "decision";
+
+    /// <summary>An AI Trader fill (the Execution Reporter); the subject id is the paper order's id.</summary>
+    public const string Order = "order";
+
+    public static readonly IReadOnlyList<string> All = [Run, News, Filing, Incident, Check, Exam, Decision, Order];
 }
 
 /// <summary>How a report came out.</summary>

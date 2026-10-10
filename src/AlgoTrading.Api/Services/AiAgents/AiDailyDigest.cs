@@ -257,7 +257,7 @@ public sealed class AiDailyDigest(
         var looks = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.Day == day && d.ReplaySessionId == null)
             .OrderBy(d => d.ClockUtc).ThenBy(d => d.Id)
-            .Select(d => new Look(d.Mode, d.Action, d.Allowed, d.Rule))
+            .Select(d => new Look(d.Mode, d.Action, d.Allowed, d.Rule, d.ResultJson))
             .ToListAsync(cancellationToken);
         if (!on && looks.Count == 0) return null;
 
@@ -338,6 +338,15 @@ public sealed class AiDailyDigest(
                 .Append($"net {Net(live.Net)} after {AiTraderGuard.Rupees(Whole(live.Charges))} charges");
             foreach (var p in live.Positions.Take(PositionsShown)) text.Append("\n• ").Append(LiveLine(p, t.Day));
             if (live.Positions.Count > PositionsShown) text.Append($"\n• and {live.Positions.Count - PositionsShown} more");
+        }
+
+        // The checks around its live placements (10 Oct): what the Validator blocked, and what the Risk Memo tightened.
+        int rejected = t.Looks.Count(l => l.Rule == AiTraderValidator.RejectedRule);
+        int unavailable = t.Looks.Count(l => l.Rule == AiTraderValidator.UnavailableRule);
+        int tightened = t.Looks.Count(l => AiTraderResults.Tightened(l.ResultJson));
+        if (rejected + unavailable + tightened > 0)
+        {
+            text.Append($"\nValidator rejected {rejected}{(unavailable > 0 ? $", gave no verdict on {unavailable} (not placed)" : string.Empty)} · risk memo tightened {tightened}");
         }
 
         if (refused.Count > 0)
@@ -430,7 +439,7 @@ public sealed class AiDailyDigest(
     /// </summary>
     private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
-    private sealed record Look(string Mode, string Action, bool Allowed, string Rule);
+    private sealed record Look(string Mode, string Action, bool Allowed, string Rule, string ResultJson = "{}");
 
     /// <param name="Live">Its live book, on a day it was live (and the digest can read it); else null.</param>
     private sealed record TraderDay(DateOnly Day, bool On, string Mode, IReadOnlyList<Look> Looks, IReadOnlyList<AiTraderShadowPosition> Book,

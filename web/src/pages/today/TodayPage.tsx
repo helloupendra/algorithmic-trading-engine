@@ -406,6 +406,17 @@ function AiTrader({ t, now }: { t: TodayAiTrader; now: number }) {
             <span className={`tdy-kv__v ${tone}`}>{n}</span>
           </div>
         ))}
+        {t.live && (
+          <div
+            title={`Its own paper account today: ${t.live.positions} ${t.live.positions === 1 ? 'position' : 'positions'} in its manual book, net after the charges of today's fills; open ones at their marks. Nothing reaches a broker.`}
+          >
+            <span className="tdy-kv__k">Live net</span>
+            <span className={`tdy-kv__v ${netTone(t.live.net)}`}>{t.live.net == null ? '—' : formatInrSigned(t.live.net)}</span>
+            <span className="tdy-kv__s faint">
+              {t.live.positions} {t.live.positions === 1 ? 'trade' : 'trades'} · {t.live.open} open
+            </span>
+          </div>
+        )}
         {t.shadowPositions > 0 && (
           <div
             title={`Its shadow book today: ${t.shadowPositions} ${t.shadowPositions === 1 ? 'buy' : 'buys'} kept by code as if placed, net after charges; open ones as if sold at their marks. Nothing reaches a broker.`}
@@ -416,6 +427,12 @@ function AiTrader({ t, now }: { t: TodayAiTrader; now: number }) {
           </div>
         )}
       </div>
+      {(t.mode === 'live' || t.validatorRejected + t.validatorUnavailable + t.riskMemoTightened + t.placed > 0) && (
+        <p className="small-note" title="Each buy or strategy start is put to the Validator (two REJECTs, or no verdict, and it is not placed) and the Risk Memo, which may only tighten it.">
+          Placed {t.placed} · validator rejected {t.validatorRejected}
+          {t.validatorUnavailable > 0 ? `, gave no verdict on ${t.validatorUnavailable}` : ''} · risk memo tightened {t.riskMemoTightened}
+        </p>
+      )}
       {t.latest.length === 0 ? (
         <p className="tdy-none">
           No look yet today{t.status === 'on' ? '; it looks every 10 minutes from 09:20 IST on trading days' : ''}.
@@ -430,6 +447,11 @@ function AiTrader({ t, now }: { t: TodayAiTrader; now: number }) {
               <div className="tdy-dec__body">
                 <div className="tdy-dec__title">{actionText(d)}</div>
                 {d.reason && <p className="tdy-dec__text">{d.reason}</p>}
+                {d.placed && (
+                  <p className="tdy-dec__text">
+                    {d.placed.link ? <Link to={d.placed.link}>{d.placed.text}</Link> : d.placed.text}
+                  </p>
+                )}
               </div>
               <div className="tdy-dec__meta">
                 <AiTraderVerdict d={d} />

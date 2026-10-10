@@ -25,6 +25,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from './api'
 import { istDay, istHm, weekdayOf } from './desk'
 import { runStatusTone } from './runHistory'
+import { readAiTraderPlacement } from './aiTrader'
+import type { AiTraderPlacement } from './aiTrader'
 
 // ---------- shapes ---------------------------------------------------------------
 
@@ -175,6 +177,17 @@ export interface TodayAiTraderDecision {
   rule: string
   /** The model's reason, else the verdict's why. */
   reason: string
+  /** What it placed in its own account (live), with where to see it; null when it placed nothing. */
+  placed: AiTraderPlacement | null
+}
+
+/** Its live book today (its own manual book): positions of the day, those open, and the net after charges. */
+export interface TodayAiTraderLive {
+  positions: number
+  open: number
+  /** Null when not sent: never shown as ₹0. */
+  net: number | null
+  charges: number | null
 }
 
 /** The AI Trader today (live and shadow looks; a replay's are not in these). */
@@ -194,6 +207,16 @@ export interface TodayAiTrader {
   shadowPositions: number
   shadowOpen: number
   shadowNet: number | null
+  /** Its live book, on a day it is or was live; null otherwise (or an older API). */
+  live: TodayAiTraderLive | null
+  /** Plans the Validator rejected: not placed. */
+  validatorRejected: number
+  /** Plans the Validator gave no verdict on (a provider down, it switched off): not placed. */
+  validatorUnavailable: number
+  /** Plans the Risk Memo tightened. */
+  riskMemoTightened: number
+  /** Decisions that placed something in its own account. */
+  placed: number
 }
 
 export type DecisionStatus = 'decided' | 'default' | 'open'
@@ -419,7 +442,13 @@ function readAiTraderDecision(d: Record<string, unknown>): TodayAiTraderDecision
     allowed: d.allowed === true,
     rule: words(d.rule).toLowerCase(),
     reason: words(d.reason),
+    placed: readAiTraderPlacement(d.placed),
   }
+}
+
+function readAiTraderLive(v: unknown): TodayAiTraderLive | null {
+  if (!record(v)) return null
+  return { positions: count(v.positions), open: count(v.open), net: num(v.net), charges: num(v.charges) }
 }
 
 /** The AI Trader's day, or null when the body sent none (it has never been on, or the API is older). */
@@ -441,6 +470,11 @@ export function readTodayAiTrader(v: unknown): TodayAiTrader | null {
     shadowPositions: count(v.shadowPositions),
     shadowOpen: count(v.shadowOpen),
     shadowNet: num(v.shadowNet),
+    live: readAiTraderLive(v.live),
+    validatorRejected: count(v.validatorRejected),
+    validatorUnavailable: count(v.validatorUnavailable),
+    riskMemoTightened: count(v.riskMemoTightened),
+    placed: count(v.placed),
   }
 }
 

@@ -134,10 +134,11 @@ public sealed class AiSettings
     public int ExamLookbackDays { get; set; } = 45;
 
     /// <summary>
-    /// Whether the AI Trader places what its rules allow (paper orders in its own account). Off: it decides and
-    /// places nothing (shadow), which is how it starts (owner, 1 Oct 2026: one shadow session first).
+    /// Whether the AI Trader places what its rules and the Validator allow: paper orders in its own manual book and
+    /// strategy starts in its own account (live mode). On from 10 Oct 2026 (owner: every AI part on). Off: it decides
+    /// and places nothing, keeping its allowed buys in its shadow book (shadow mode), as it began on 1 Oct.
     /// </summary>
-    public bool AiTraderExecute { get; set; } = false;
+    public bool AiTraderExecute { get; set; } = true;
 
     /// <summary>Minutes between the AI Trader's looks at the market.</summary>
     public int AiTraderEveryMinutes { get; set; } = 10;
@@ -157,12 +158,14 @@ public sealed class AiSettings
     /// The agents that have memory, comma-separated. The Desk Assistant first (owner, 1 Oct morning), then every
     /// built agent the same day, once they were all on: a correction on any agent's report is its memory. The AI
     /// Trader from 2 Oct, for its lessons; it reads them bounded by the day it decides on, never through the
-    /// gateway's recall (<c>AiTraderMemory</c>).
+    /// gateway's recall (<c>AiTraderMemory</c>). The Validator, the Risk Memo and the Execution Reporter from 10 Oct,
+    /// when they were built: a correction on one of their records is read by their next call.
     /// </summary>
     /// <remarks>The four desk analysts from 10 Oct, when they were built: a correction on their reports is their memory too.</remarks>
     public string MemoryAgents { get; set; } =
         $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}," +
-        $"{AiCatalog.TechnicalAnalyst},{AiCatalog.OptionsAnalyst},{AiCatalog.MacroAnalyst},{AiCatalog.FundamentalAnalyst}";
+        $"{AiCatalog.TechnicalAnalyst},{AiCatalog.OptionsAnalyst},{AiCatalog.MacroAnalyst},{AiCatalog.FundamentalAnalyst}," +
+        $"{AiCatalog.Validator},{AiCatalog.RiskMemo},{AiCatalog.ExecutionReporter}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;

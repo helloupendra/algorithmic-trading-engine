@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.Replay;
 using AlgoTrading.Application.Interfaces;
@@ -24,15 +25,23 @@ namespace AlgoTrading.Api.Services.AiTrader;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It starts in shadow mode: it decides and places nothing (<see cref="AiSettings.AiTraderExecute"/>). Its
-/// allowed buys go into its shadow book instead (<see cref="AiTraderShadowBook"/>), checked every minute
-/// against their stops and targets whether it is on or off (<see cref="AiTraderShadowWatcher"/>), so a shadow
-/// day can be scored after charges and the model sees what it holds. In a market replay that the owner asked it
-/// into, it decides on the replay's clock with a fresh shadow book of that replay's own.
+/// Live (<see cref="AiSettings.AiTraderExecute"/>, on from 10 Oct 2026), an allowed plan is placed in its own account
+/// (<see cref="AiTraderExecution"/>): a buy is a paper order in its own manual book with the plan's stop and target on
+/// the position; an exit closes its own position; a strategy start or stop is its own run. A buy or a start is first
+/// put to the Validator (<see cref="AiTraderValidator"/>, three sampled asks; two REJECTs, or no majority, block it) and
+/// the Risk Memo (<see cref="AiTraderRiskMemo"/>, which may only tighten), then judged by the rules again on the fresh
+/// book, and a buy on the price it would pay, just before it is placed.
 /// </para>
 /// <para>
-/// No model holds an order tool. The model's answer only proposes; the code checks it and, once execution
-/// is on, places it in its own account.
+/// In shadow mode it decides and places nothing: its allowed buys go into its shadow book instead
+/// (<see cref="AiTraderShadowBook"/>), checked every minute against their stops and targets whether it is on or off
+/// (<see cref="AiTraderShadowWatcher"/>), so a shadow day can be scored after charges and the model sees what it holds.
+/// In a market replay that the owner asked it into, it decides on the replay's clock with a fresh shadow book of that
+/// replay's own, and places nothing whatever the mode.
+/// </para>
+/// <para>
+/// No model holds an order tool. The model's answer only proposes; the code checks it and places it in its own
+/// account.
 /// </para>
 /// <para>
 /// It reads its tested lessons with its own prompt, only those learned from days before the one it decides on
@@ -52,7 +61,8 @@ public sealed class AiTraderAgent(
     ILogger<AiTraderAgent> logger,
     IMarketReplayBook? replayBook = null,
     TimeProvider? time = null,
-    AiTraderBaselineScorer? baselines = null) : IAiScheduledAgent
+    AiTraderBaselineScorer? baselines = null,
+    AiTraderExecution? execution = null) : IAiScheduledAgent
 {
     /// <summary>The owner's limits; <see cref="AiTraderRules"/> holds the defaults.</summary>
     public static readonly AiTraderRules Rules = new();
@@ -239,32 +249,257 @@ public sealed class AiTraderAgent(
         var contract = plan.Action == AiTraderPlan.Buy ? Resolve(plan, brief, replay) : null;
         if (contract is not null) row.ResultJson = JsonSerializer.Serialize(new { contract }, Json);
 
+        bool live = mode == AiTraderModes.Live;
+        bool checkThenPlace = false;
+        AiTraderVerdict verdict;
         await BookGate.WaitAsync(cancellationToken);
         try
         {
             // Read again: while the model answered, another look may have opened or closed a position, or the minute
             // check stopped one.
             var book = await ReadBookAsync(clockUtc, mode, replaySessionId, cancellationToken);
-            var verdict = AiTraderGuard.Check(plan, book, Rules, contract);
+            verdict = AiTraderGuard.Check(plan, book, Rules, contract);
             row.Allowed = verdict.Allowed;
             row.Rule = verdict.Rule;
             row.Why = Cut(verdict.Why, 1000);
 
-            if (verdict.Allowed && plan.Action != AiTraderPlan.None && mode == AiTraderModes.Live)
+            bool acts = verdict.Allowed && plan.Action != AiTraderPlan.None;
+            if (acts && live && execution is null)
             {
-                // Execution comes with its own step: until then a live decision is kept like a shadow one.
-                row.Error = "Execution is not switched on in this build: nothing was placed.";
+                row.Error = "Execution is not available on this API: nothing was placed.";
+            }
+            else if (acts && live && plan.Action is AiTraderPlan.Buy or AiTraderPlan.StartStrategy)
+            {
+                // Kept as allowed and not yet placed while the Validator and the Risk Memo are asked, outside this gate.
+                row.Error = AwaitingChecks;
+                checkThenPlace = true;
             }
 
             await SaveAsync(row, cancellationToken);
-            if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, verdict, cancellationToken);
+            if (verdict.Allowed && !live) await ApplyToShadowAsync(row, plan, contract, verdict, cancellationToken);
+            else if (acts && live && execution is not null && plan.Action is AiTraderPlan.Exit or AiTraderPlan.StopStrategy)
+            {
+                // Getting flatter is never put to the Validator, nor refused by the kill switch: done here, on the book
+                // just judged.
+                await ReduceAsync(row, plan, verdict, cancellationToken);
+            }
         }
         finally
         {
             BookGate.Release();
         }
 
+        if (checkThenPlace) await CheckAndPlaceAsync(row, plan, contract, verdict, cancellationToken);
         return row;
+    }
+
+    /// <summary>What a live buy or start says while the Validator and the Risk Memo are asked.</summary>
+    public const string AwaitingChecks = "Waiting for the Validator and the Risk Memo: not placed yet.";
+
+    /// <summary>
+    /// A live exit or strategy stop the rules allowed, under <see cref="BookGate"/>: its own position closed at the bid,
+    /// or its own run stopped. A failure is recorded on the decision, never thrown out of the loop.
+    /// </summary>
+    private async Task ReduceAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderVerdict verdict, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var account = await AiTraderAccount.EnsureAsync(db, cancellationToken);
+            if (plan.Action == AiTraderPlan.Exit && (verdict.PositionId ?? plan.PositionId) is long positionId)
+            {
+                var exit = await execution!.ExitAsync(account, row, positionId, plan.Reason, cancellationToken);
+                if (exit is null)
+                {
+                    row.Error = "It was no longer open: closed by its stop, target or the close before this look.";
+                }
+                else
+                {
+                    row.Executed = true;
+                    Merge(row, "exit", new
+                    {
+                        bookRunId = exit.BookRunId, positionId = exit.PositionId, symbol = exit.Symbol, orderId = exit.OrderId, price = exit.Price,
+                        bidSeen = exit.BidSeen, quoteUtc = exit.QuoteUtc,
+                    });
+                }
+            }
+            else if (plan.Action == AiTraderPlan.StopStrategy && plan.RunId is long runId)
+            {
+                var stop = await execution!.StopAsync(account, runId, $"Stopped by the AI Trader (decision #{row.Id})", cancellationToken);
+                if (stop.Stopped)
+                {
+                    row.Executed = true;
+                    Merge(row, "stopped", new { runId, flattened = stop.Flattened });
+                }
+                else
+                {
+                    row.Error = Cut($"Not stopped: {stop.Message}", 1000);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            row.Error = Cut($"Placing failed: {ex.Message}", 1000);
+            logger.LogWarning(ex, "AI Trader: decision {DecisionId} ({Action}) could not be carried out", row.Id, row.Action);
+        }
+
+        await SaveResultAsync(row);
+    }
+
+    /// <summary>
+    /// A live buy or strategy start the rules allowed: the Validator (three asks, outside <see cref="BookGate"/>), then
+    /// the Risk Memo, then under the gate the rules again on the fresh book (a buy on the price it would pay) and the
+    /// placement. A plan the Validator did not accept is never placed: rejected, or no verdict at all (the desk fails
+    /// closed). Every outcome is recorded on the decision; nothing is thrown out of the loop.
+    /// </summary>
+    private async Task CheckAndPlaceAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
+        CancellationToken cancellationToken)
+    {
+        var exec = execution!;
+        bool start = plan.Action == AiTraderPlan.StartStrategy;
+        // A start runs with the plan's lots when they are within the rules' lots, else one.
+        if (start) plan = plan with { Lots = plan.Lots is int l && l >= 1 && l <= Rules.MaxLotsPerTrade ? l : 1 };
+        try
+        {
+            var validation = await exec.Validator.JudgeAsync(row, plan, contract, verdict, cancellationToken);
+            Merge(row, "validator", validation.Data());
+            if (!validation.Placeable)
+            {
+                row.Allowed = false;
+                row.Rule = validation.Rule;
+                row.Why = Cut(validation.Why, 1000);
+                row.Error = string.Empty;
+                await SaveResultAsync(row);
+                return;
+            }
+
+            var exposure = await ReadBookAsync(_time.GetUtcNow().UtcDateTime, AiTraderModes.Live, null, cancellationToken);
+            var memo = await exec.RiskMemo.ReviewAsync(row, plan, contract, verdict, exposure, Rules, cancellationToken);
+            Merge(row, "riskMemo", memo.Data());
+            var final = memo.Plan;
+
+            await BookGate.WaitAsync(cancellationToken);
+            try
+            {
+                // The book as it is now, and the clock: the checks took minutes, and the hours rule is the hours now.
+                var book = await ReadBookAsync(_time.GetUtcNow().UtcDateTime, AiTraderModes.Live, null, cancellationToken);
+                var account = await AiTraderAccount.EnsureAsync(db, cancellationToken);
+                row.Error = string.Empty;
+                if (start) await StartAsync(row, final, book, account);
+                else await BuyAsync(row, final, contract!, book, account);
+            }
+            finally
+            {
+                BookGate.Release();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            row.Error = Cut($"Placing failed: {ex.Message}", 1000);
+            logger.LogWarning(ex, "AI Trader: decision {DecisionId} ({Action}) could not be placed", row.Id, row.Action);
+        }
+
+        await SaveResultAsync(row);
+    }
+
+    /// <summary>
+    /// The buy, judged by the rules once more on the fresh book at the price it would pay, just before the order is
+    /// booked. Placed past that point, it is finished even if the look's caller goes away.
+    /// </summary>
+    private async Task BuyAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderContract contract, AiTraderBook book, AppUser account)
+    {
+        var buy = await execution!.BuyAsync(account, row, plan, contract,
+            price => AiTraderGuard.Check(plan, book, Rules, contract with { Ask = price }), CancellationToken.None);
+        if (buy.Refused is { } refused)
+        {
+            row.Allowed = false;
+            row.Rule = refused.Rule;
+            row.Why = Cut($"Judged again on the fresh book at the price it would pay: {refused.Why}", 1000);
+        }
+        else if (buy.Fill is { } fill)
+        {
+            row.Executed = true;
+            Merge(row, "placed", new
+            {
+                bookRunId = fill.RunId, orderId = fill.OrderIds.Count > 0 ? fill.OrderIds[0] : (long?)null,
+                positionId = fill.PositionIds.Count > 0 ? fill.PositionIds[0] : (long?)null, groupId = fill.GroupId, symbol = fill.Symbol,
+                lots = fill.Quantity, lotSize = fill.LotSize, price = fill.Price, priceBasis = fill.PriceBasis, stopLoss = fill.StopLossPrice,
+                target = fill.TargetPrice, bid = fill.Bid, ask = fill.Ask, quoteUtc = fill.QuoteUtc, carryForward = fill.CarryForward,
+            });
+        }
+        else
+        {
+            row.Error = Cut($"Not placed: {buy.Error}", 1000);
+        }
+    }
+
+    /// <summary>The start, judged by the rules once more on the fresh book (its run limit, its hours), then started as a person's would be.</summary>
+    private async Task StartAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderBook book, AppUser account)
+    {
+        var recheck = AiTraderGuard.Check(plan, book, Rules);
+        if (!recheck.Allowed)
+        {
+            row.Allowed = false;
+            row.Rule = recheck.Rule;
+            row.Why = Cut($"Judged again on the fresh book: {recheck.Why}", 1000);
+            return;
+        }
+
+        string strategy = Rules.Strategies.First(s => string.Equals(s, plan.Strategy, StringComparison.OrdinalIgnoreCase));
+        string underlying = plan.Underlying!.Trim().ToUpperInvariant();
+        int lots = plan.Lots ?? 1;
+        var started = await execution!.StartAsync(account, strategy, underlying, lots, CancellationToken.None);
+        if (started.Started)
+        {
+            row.Executed = true;
+            Merge(row, "started", new { runId = started.RunId, strategy, underlying, lots });
+        }
+        else
+        {
+            row.Error = Cut($"Not started: {started.Message}", 1000);
+        }
+    }
+
+    /// <summary>Puts <paramref name="value"/> under <paramref name="key"/> in the decision's result, beside what is there.</summary>
+    private static void Merge(AiTraderDecision row, string key, object value)
+    {
+        JsonObject result;
+        try
+        {
+            result = JsonNode.Parse(string.IsNullOrWhiteSpace(row.ResultJson) ? "{}" : row.ResultJson) as JsonObject ?? new JsonObject();
+        }
+        catch (JsonException)
+        {
+            result = new JsonObject();
+        }
+
+        result[key] = JsonSerializer.SerializeToNode(value, Json);
+        row.ResultJson = result.ToJsonString(Json);
+    }
+
+    /// <summary>
+    /// Saves what a live decision did. A placement that failed half way can leave rows tracked that will not save; the
+    /// decision's record must still be written, so it is then saved on its own.
+    /// </summary>
+    private async Task SaveResultAsync(AiTraderDecision row)
+    {
+        try
+        {
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "AI Trader: saving decision {DecisionId} failed; it is saved on its own", row.Id);
+            try
+            {
+                db.ChangeTracker.Clear();
+                db.AiTraderDecisions.Update(row);
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (Exception again)
+            {
+                logger.LogError(again, "AI Trader: decision {DecisionId} could not be saved with its outcome ({Error})", row.Id, row.Error);
+            }
+        }
     }
 
     /// <summary>
