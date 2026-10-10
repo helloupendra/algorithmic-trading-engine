@@ -215,7 +215,8 @@ public class AiDailyDigestTests
         await On(ai, AiCatalog.AiTrader);
         var telegram = new Recorder();
         Assert.True(await Digest(ai, telegram).RunOnceAsync(Ist(15, 46), default));
-        Assert.Equal("AI Trader (shadow mode)\nOn, but no looks today.", Assert.Single(telegram.Sent).Message);
+        // Live is the default from 10 Oct (Ai:AiTraderExecute).
+        Assert.Equal("AI Trader (live mode)\nOn, but no looks today.", Assert.Single(telegram.Sent).Message);
 
         // Switched off with a position open and the API down from 14:00 over the close: the minute check never squared it off.
         var other = Build(Settings());
@@ -283,6 +284,30 @@ public class AiDailyDigestTests
 
         Assert.Equal("AI Trader (live mode)\nLooks 1 · proposed 0 · allowed 0 · refused 0 · no answer 0\nLive book: no trades",
             Assert.Single(telegram.Sent).Message);
+    }
+
+    [Fact]
+    public async Task In_live_mode_it_counts_what_the_validator_blocked_and_the_risk_memo_tightened()
+    {
+        var ai = Build(Settings(s => s.AiTraderExecute = true));
+        await On(ai, AiCatalog.AiTrader);
+        var tightened = Look(Ist(9, 30), "buy", true, "ok", mode: AiTraderModes.Live);
+        tightened.ResultJson = """{"riskMemo":{"status":"ok","tightened":true,"applied":["stop 90 → 95"]}}""";
+        var unchanged = Look(Ist(9, 40), "buy", true, "ok", mode: AiTraderModes.Live);
+        unchanged.ResultJson = """{"riskMemo":{"status":"ok","tightened":false}}""";
+        ai.Db.AiTraderDecisions.AddRange(tightened, unchanged,
+            Look(Ist(10, 0), "buy", false, AiTraderValidator.RejectedRule, mode: AiTraderModes.Live),
+            Look(Ist(10, 10), "buy", false, AiTraderValidator.RejectedRule, mode: AiTraderModes.Live),
+            Look(Ist(10, 20), "buy", false, AiTraderValidator.UnavailableRule, mode: AiTraderModes.Live));
+        await ai.Db.SaveChangesAsync();
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram, AiTraderBookReaderTests.Reader(ai.Db)).RunOnceAsync(Ist(15, 46), default));
+
+        string message = Assert.Single(telegram.Sent).Message;
+        Assert.Contains("Looks 5 · proposed 5 · allowed 2 · refused 3 · no answer 0", message);
+        Assert.Contains("\nValidator rejected 2, gave no verdict on 1 (not placed) · risk memo tightened 1", message);
+        Assert.Contains("Top refusals: validator (2), validator-unavailable (1)", message);
     }
 
     [Fact]

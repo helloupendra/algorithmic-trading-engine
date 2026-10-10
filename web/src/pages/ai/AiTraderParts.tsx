@@ -36,6 +36,7 @@ import {
   lotsText,
   modeLabel,
   netTone,
+  placedChip,
   placedText,
   planFacts,
   sampleNote,
@@ -108,6 +109,15 @@ function DecisionDetail({ summary, domId }: { summary: AiTraderDecision; domId: 
           <div>
             <dt>Placed</dt>
             <dd className={placed.tone === 'pos' ? 'pos' : placed.tone === 'warn' ? 'warn' : ''}>{placed.text}</dd>
+          </div>
+        )}
+        {d.placed && (
+          <div>
+            <dt>{d.placed.kind.startsWith('run') ? 'Run' : 'Order'}</dt>
+            <dd>
+              {d.placed.link ? <Link to={d.placed.link}>{d.placed.text}</Link> : d.placed.text}
+              <span className="muted"> · {d.placed.kind.startsWith('run') ? 'its own strategy run' : 'in its own manual book'}</span>
+            </dd>
           </div>
         )}
         {shadow && (
@@ -209,6 +219,11 @@ function DecisionRow({ d, open, onToggle, markReplay }: { d: AiTraderDecision; o
           <span className={`badge badge--${v.tone} atr-verdict`} title={v.means || undefined}>
             {v.label}
           </span>
+          {d.placed && (
+            <span className="atr-chip" title={d.placed.text}>
+              {placedChip(d.placed)}
+            </span>
+          )}
           {markReplay && d.mode === 'replay' && (
             <span className="atr-chip" title="Decided on a market replay's clock; it placed nothing">
               replay{d.replaySessionId != null ? ` #${d.replaySessionId}` : ''}

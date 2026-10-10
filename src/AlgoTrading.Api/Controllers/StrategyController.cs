@@ -37,7 +37,6 @@ namespace AlgoTrading.Api.Controllers;
 public class StrategyController : ControllerBase
 {
     private const string LivePaperMode = "LivePaper";
-    private const decimal DefaultInitialCapital = 1_000_000m;
     private const int ActivityLimit = 60;
 
     private readonly TradingDbContext _dbContext;
@@ -46,15 +45,13 @@ public class StrategyController : ControllerBase
     private readonly ISystemNotifier _notifier;
     private readonly IStrategyAccessService _strategyAccess;
     private readonly StrategyRunControl _runControl;
-    private readonly PythonEngineLocator _engine;
     private readonly IPaperTradingService _paperTrading;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly PositionViewBuilder _positionViews;
     private readonly LiveRunHistoryBuilder _history;
     private readonly RunCharges _runCharges;
     private readonly GetPaperOrdersUseCase _getPaperOrders;
-    private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
-    private readonly StrategyRunnerOptions _options;
+    private readonly StrategyStartService _starts;
     private readonly ILogger<StrategyController> _logger;
 
     public StrategyController(
@@ -79,18 +76,17 @@ public class StrategyController : ControllerBase
         _catalog = catalog;
         _registry = registry;
         _runControl = runControl;
-        _engine = engine;
         _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
         _positionViews = positionViews;
         _history = history;
         _runCharges = runCharges;
         _getPaperOrders = getPaperOrders;
-        _upsertWatchlistItem = upsertWatchlistItem;
         _notifier = notifier;
         _strategyAccess = strategyAccess;
-        _options = options.Value;
         _logger = logger;
+        // The start's checks and launch, shared with the AI Trader's strategy starts.
+        _starts = new StrategyStartService(dbContext, catalog, registry, runControl, engine, upsertWatchlistItem, strategyAccess, options, logger);
     }
 
     // ------------------------------------------------------------------
@@ -159,24 +155,7 @@ public class StrategyController : ControllerBase
     /// </summary>
     public static string? WhyMarketClosed(AlgoTrading.Application.Interfaces.IMarketSessionService sessions, DateTime nowUtc,
         string underlying, string? spotSymbol)
-    {
-        string exchange = MarketCloseRules.ExchangeOf(underlying, spotSymbol);
-        var info = sessions.GetSessionInfo(nowUtc, exchange, exchange == MarketCloseRules.Mcx ? "COM" : "FO");
-        var ist = IstTime.ToIst(nowUtc);
-        if (!info.IsTradingDay)
-        {
-            return $"{exchange} is closed today ({ist:ddd d MMM}): a live run can start only on a trading day. " +
-                   "To test the strategy on a past session, start it as a recap.";
-        }
-
-        if (nowUtc >= info.SessionCloseUtc)
-        {
-            return $"{exchange} closed at {IstTime.ToIst(info.SessionCloseUtc):HH:mm} IST today: a live run started now would trade " +
-                   "on stale prices. Start it on the next trading day, or as a recap to test it on today's session.";
-        }
-
-        return null;
-    }
+        => StrategyStartService.WhyMarketClosed(sessions, nowUtc, underlying, spotSymbol);
 
     /// <summary>
     /// Launches the Python execution runner on the chosen underlying.
@@ -186,16 +165,14 @@ public class StrategyController : ControllerBase
     /// uses the same launch dialog (underlying, lots, risk rules, strikes) as
     /// the admin runner, and this is the one endpoint behind it. What keeps a
     /// trader inside their package is <see cref="IStrategyAccessService.CanDeployAsync"/>,
-    /// checked below on the last step before a runner is launched. Admins pass
+    /// checked on the last step before a runner is launched. Admins pass
     /// it by role. The run is owned by whoever started it, or by the trader an
     /// admin names in <c>ownerUserId</c>.
     /// <para>
-    /// A refusal leaves no row behind. Everything that can refuse — the
-    /// request, the duplicate checks, the caps, the host's memory, the
-    /// trader's package — is decided before the run row is inserted; only a
-    /// runner that fails to launch after that is recorded, as Failed. Until
-    /// 28 Sep the duplicate and desk-wide checks ran after the insert, and
-    /// every refusal left a Failed run in the history.
+    /// The start itself is <see cref="StrategyStartService"/>, which the AI
+    /// Trader's strategy starts go through too. A refusal leaves no row behind:
+    /// everything that can refuse is decided before the run row is inserted;
+    /// only a runner that fails to launch after that is recorded, as Failed.
     /// </para>
     /// </remarks>
     [HttpPost("{id:int}/start")]
@@ -208,285 +185,43 @@ public class StrategyController : ControllerBase
         CancellationToken cancellationToken,
         [FromServices] AlgoTrading.Application.Interfaces.IMarketSessionService? sessions = null)
     {
-        var strategy = await _catalog.FindAsync(id, cancellationToken);
-        if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
-
-        if (!string.IsNullOrWhiteSpace(strategy.Error))
-            return BadRequest(new { message = $"{strategy.Name} cannot be started: {strategy.Error}" });
-
-        if (request is null || string.IsNullOrWhiteSpace(request.Underlying))
-            return BadRequest(new { message = "underlying is required — pick the index or stock the strategy should trade." });
-
-        var underlying = request.Underlying.Trim().ToUpperInvariant();
-
-        // Whose account this run belongs to. Normally the caller's; an admin
-        // may name another trader, which is how the morning job deploys into
-        // every account without holding anyone's password.
         long callerId = User.GetRequiredUserId();
-        long userId = callerId;
-        string ownerName = User.GetUserName() ?? "unknown";
-        if (request.OwnerUserId is long owner && owner != callerId)
+        var caller = new StrategyStarter(callerId, User.GetUserName(), User.IsAdmin());
+        var outcome = await _starts.StartAsync(id, request, caller, limitsStore, derivatives, memory, sessions, cancellationToken);
+
+        if (outcome.Started)
         {
-            if (!User.IsAdmin())
-                return StatusCode(StatusCodes.Status403Forbidden,
-                    new { message = "Only an admin can start a run in another trader's account." });
-
-            var target = await _dbContext.AppUsers
-                .FirstOrDefaultAsync(u => u.Id == owner, cancellationToken);
-            if (target is null)
-                return NotFound(new { message = $"There is no user {owner}." });
-            if (!target.IsActive)
-                return BadRequest(new { message = $"{target.UserName}'s account is disabled." });
-
-            userId = target.Id;
-            ownerName = target.UserName;
-        }
-
-        int lots = request.Lots ?? Math.Max(1, strategy.DefaultLots);
-        if (lots < 1)
-            return BadRequest(new { message = "lots must be at least 1." });
-
-        if (request.StopLoss.HasValue && request.StopLoss.Value <= 0)
-            return BadRequest(new { message = "stopLoss must be a positive rupee amount, or omitted." });
-
-        if (request.Target.HasValue && request.Target.Value <= 0)
-            return BadRequest(new { message = "target must be a positive rupee amount, or omitted." });
-
-        if (!RiskRulesDto.TryValidate(request.Risk, out var riskError))
-            return BadRequest(new { message = $"risk: {riskError}" });
-
-        var risk = RunRiskRules.Resolve(request.Risk, request.StopLoss, request.Target);
-
-        decimal initialCapital = request.InitialCapital ?? DefaultInitialCapital;
-        if (initialCapital <= 0)
-            return BadRequest(new { message = "initialCapital must be positive." });
-
-        if (!await HasFutureOptionContractsAsync(underlying, cancellationToken))
-            return BadRequest(new { message = $"No option contracts loaded for {underlying} — import the F&O master first." });
-
-        if (strategy.SupportedUnderlyings.Count > 0
-            && !strategy.SupportedUnderlyings.Contains(underlying, StringComparer.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning("{Strategy} started on {Underlying}, which is not in its supported list ({Supported}).",
-                strategy.Name, underlying, string.Join(", ", strategy.SupportedUnderlyings));
-        }
-
-        // What the run prices itself against. For an index that is a fixed spot
-        // symbol; for a commodity there is no spot at all, so the near-month
-        // future stands in - resolved now and stored on the run, because it is a
-        // different contract every month and a run must not silently follow a
-        // symbol that expires under it.
-        var spotSymbol = UnderlyingCatalog.SpotSymbolFor(underlying);
-        if (string.IsNullOrWhiteSpace(spotSymbol))
-        {
-            spotSymbol = await derivatives.GetNearestFutureSymbolAsync(underlying, cancellationToken)
-                         ?? string.Empty;
-
-            if (string.IsNullOrWhiteSpace(spotSymbol))
-            {
-                return BadRequest(new
-                {
-                    message = $"{underlying} has no unexpired futures contract in the instrument master, "
-                              + "so there is nothing to price it against. Import the master and try again."
-                });
-            }
-        }
-
-        // A live run trades a session that has not ended yet today; before the open
-        // it waits for it. Started after the close, at a weekend or on a holiday it
-        // had only stale quotes and old bars to trade, and on 11-12 Sep such runs
-        // booked trades timed before they began. A recap replays a past session on
-        // purpose and may start any time (RecapRuns).
-        string parametersJson = LiveRunParameters.Merge(strategy.DefaultParametersJson, request.Parameters, lots, risk, underlying);
-        if (sessions is not null && !RecapClock.IsRecap(parametersJson)
-            && WhyMarketClosed(sessions, DateTime.UtcNow, underlying, spotSymbol) is string closed)
-        {
-            return Conflict(new { message = closed });
-        }
-
-        var command = PrepareRunner(strategy, out var commandError);
-        if (command is null) return commandError!;
-
-        // Who pressed the button, which is not always whose account it is.
-        var startedBy = User.GetUserName() ?? "unknown";
-
-        // From the duplicate checks to the registered runner, one start at a
-        // time. Without it two overlapping starts (a double click, the morning
-        // job racing the console) could both pass the checks and both launch.
-        await _registry.StartGate.WaitAsync(cancellationToken);
-        try
-        {
-            var refusal = await RefuseStartAsync(strategy, underlying, userId, ownerName, lots, limitsStore, memory, cancellationToken);
-            if (refusal is not null) return refusal;
-
-            // Past the checks the start is decided, and it is finished even if
-            // the caller goes away: a row inserted and then abandoned before its
-            // launch would be an open run with no runner behind it.
-            var now = DateTime.UtcNow;
-            var run = new SimulationRun
-            {
-                UserId = userId,
-                StartedByUserId = callerId,
-                StartedByName = startedBy,
-                Mode = LivePaperMode,
-                Symbol = spotSymbol,
-                Resolution = "1m",
-                ReplaySpeed = string.Empty,
-                Status = "Running",
-                StrategyName = strategy.Name,
-                ParametersJson = parametersJson,
-                InitialCapital = initialCapital,
-                CreatedUtc = now,
-                StartedUtc = now
-            };
-
-            await _dbContext.SimulationRuns.AddAsync(run, CancellationToken.None);
-            await _dbContext.SaveChangesAsync(CancellationToken.None);
-
-            await EnsureSpotOnWatchlistAsync(spotSymbol, CancellationToken.None);
-
-            var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, risk);
-            var (error, running) = LaunchRunner(launch, command);
-            if (error is not null || running is null)
-            {
-                run.Status = "Failed";
-                run.LastError = "Runner failed to start.";
-                run.CompletedUtc = DateTime.UtcNow;
-                await _dbContext.SaveChangesAsync(CancellationToken.None);
-                _runControl.PublishRunEvent(run.Id, userId, $"Failed: the runner of {strategy.Name} on {underlying} did not start");
-
-                HttpContext.Describe(
-                    $"Start of {strategy.Name} on {underlying} failed — run #{run.Id} could not start its runner.",
-                    "run",
-                    run.Id.ToString());
-
-                return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
-            }
-
-            // Durable pid so a restarted API can adopt (or stop) this runner.
-            await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
-            _runControl.PublishRunEvent(run.Id, userId, $"Started {strategy.Name} on {underlying}, {lots} lot(s)");
-
             HttpContext.Describe(
-                $"Started {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s)"
-                    + (userId == callerId ? "." : $", in {ownerName}'s account."),
+                $"Started {outcome.Strategy} on {outcome.Underlying} — run #{outcome.RunId}, {outcome.Lots} lot(s)"
+                    + (outcome.OwnerUserId == callerId ? "." : $", in {outcome.OwnerName}'s account."),
                 "run",
-                run.Id.ToString());
+                outcome.RunId?.ToString());
 
-            return Ok(StartResponse($"Started {strategy.Name} on {underlying} (paper).", running));
+            return Ok(StartResponse(outcome.Message, outcome.Running!));
         }
-        finally
+
+        if (outcome.LaunchFailed)
         {
-            _registry.StartGate.Release();
+            HttpContext.Describe(
+                $"Start of {outcome.Strategy} on {outcome.Underlying} failed — run #{outcome.RunId} could not start its runner.",
+                "run",
+                outcome.RunId?.ToString());
         }
+
+        return StartRefusal(outcome);
     }
 
-    /// <summary>
-    /// Why this start must not happen, or null. Called under
-    /// <see cref="StrategyProcessRegistry.StartGate"/>, so nothing it counts
-    /// can change before the run is launched.
-    /// </summary>
-    private async Task<IActionResult?> RefuseStartAsync(
-        StrategyCatalogEntry strategy,
-        string underlying,
-        long userId,
-        string ownerName,
-        int lots,
-        AlgoTrading.Application.Interfaces.IRiskLimitsStore limitsStore,
-        IHostMemory memory,
-        CancellationToken cancellationToken)
+    /// <summary>A refused start as the endpoint has always answered it: the status, and <c>{ message }</c> (with <c>runId</c> for an open run).</summary>
+    private IActionResult StartRefusal(StrategyStartOutcome outcome) => outcome.Kind switch
     {
-        // The same strategy may run on several underlyings at once, and two
-        // traders may each run it on the same one — their books are separate.
-        // Only the same strategy, on the same underlying, in the SAME account
-        // is refused: that would double a position by accident.
-        if (_registry.Find(strategy.Id, underlying, userId) is not null)
-            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying, ownerName) });
-
-        // The registry is not the whole truth: a run the startup reconcile
-        // could neither adopt nor close is still open in the database with no
-        // entry here, and a second runner beside it would trade the same book.
-        var open = await FindOpenRunAsync(strategy.Name, underlying, userId, cancellationToken);
-        if (open is { } row)
-        {
-            return Conflict(new
-            {
-                message = $"{strategy.Name} run #{row.RunId} on {underlying} is still {row.Status} in {ownerName}'s account "
-                          + "with no runner the API knows of — stop it from its run page before starting another.",
-                runId = row.RunId
-            });
-        }
-
-        // The limit is per trader: one account filling the desk must not stop
-        // another account from opening its first run of the day.
-        var riskLimits = limitsStore.GetLimits();
-        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.CountFor(userId)))
-            return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
-
-        // The box's own ceiling, whoever's runs they are.
-        if (_registry.Count >= _options.MaxConcurrentProcesses)
-            return StatusCode(StatusCodes.Status429TooManyRequests, new
-            {
-                message = $"The desk already runs {_registry.Count} strategy runners, its limit "
-                          + $"(StrategyRunner:MaxConcurrentProcesses = {_options.MaxConcurrentProcesses}). Stop one first."
-            });
-
-        // A null reading is "cannot tell" (not Linux), never "none left".
-        long floor = (long)_options.MinAvailableMemoryMb * 1024 * 1024;
-        if (memory.AvailableBytes() is long available && available < floor)
-        {
-            return StatusCode(StatusCodes.Status429TooManyRequests, new
-            {
-                message = $"The server has only {available / (1024 * 1024)} MB of memory available; a new runner needs "
-                          + $"{_options.MinAvailableMemoryMb} MB free to start without starving the ones already running. "
-                          + "Stop a run first."
-            });
-        }
-
-        // What this trader may run — strategy, underlying, lots, mode and how
-        // many runs they already have open. Filtering the list they see is a
-        // courtesy; this is what actually stops anything.
-        int openRuns = await _dbContext.SimulationRuns
-            .CountAsync(
-                x => x.UserId == userId && (x.Status == "Running" || x.Status == "Stopping"),
-                cancellationToken);
-        var decision = await _strategyAccess.CanDeployAsync(
-            userId, strategy.Name, underlying, lots, LivePaperMode, openRuns, cancellationToken);
-        if (!decision.Allowed)
-            return StatusCode(StatusCodes.Status403Forbidden, new { message = decision.Reason });
-
-        return null;
-    }
-
-    /// <summary>
-    /// The LivePaper run of this strategy on this underlying in this account
-    /// whose row is still Running or Stopping, if there is one.
-    /// </summary>
-    private async Task<(long RunId, string Status)?> FindOpenRunAsync(
-        string strategyName, string underlying, long userId, CancellationToken cancellationToken)
-    {
-        // The underlying lives in ParametersJson, not in a column. An account
-        // has a handful of open rows, so they are read and parsed here.
-        var rows = await _dbContext.SimulationRuns.AsNoTracking()
-            .Where(x => x.UserId == userId
-                        && x.Mode == LivePaperMode
-                        && x.StrategyName == strategyName
-                        && (x.Status == StrategyRunControl.RunStatusRunning || x.Status == StrategyRunControl.RunStatusStopping))
-            .Select(x => new { x.Id, x.Status, x.Symbol, x.ParametersJson })
-            .ToListAsync(cancellationToken);
-
-        foreach (var row in rows)
-        {
-            var rowUnderlying = LiveRunParameters.Parse(row.ParametersJson).Underlying
-                                ?? UnderlyingCatalog.UnderlyingForSpot(row.Symbol)
-                                ?? UnderlyingCatalog.InferUnderlying(row.Symbol);
-            if (string.Equals(rowUnderlying?.Trim(), underlying, StringComparison.OrdinalIgnoreCase))
-                return (row.Id, row.Status);
-        }
-
-        return null;
-    }
+        StrategyStartKind.NotFound => NotFound(new { message = outcome.Message }),
+        StrategyStartKind.BadRequest => BadRequest(new { message = outcome.Message }),
+        StrategyStartKind.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { message = outcome.Message }),
+        StrategyStartKind.Conflict when outcome.RunId is long open && !outcome.LaunchFailed => Conflict(new { message = outcome.Message, runId = open }),
+        StrategyStartKind.Conflict => Conflict(new { message = outcome.Message }),
+        StrategyStartKind.TooMany => StatusCode(StatusCodes.Status429TooManyRequests, new { message = outcome.Message }),
+        _ => StatusCode(StatusCodes.Status500InternalServerError, new { message = outcome.Message }),
+    };
 
     /// <summary>
     /// Stops one run of a strategy by run id: squares off its open positions at
@@ -1577,157 +1312,6 @@ public class StrategyController : ControllerBase
         return runs.Count == 0 ? null : runs[^1];
     }
 
-    private static string AlreadyRunningMessage(string strategyName, string underlying, string? account = null)
-        => account is null
-            ? $"{strategyName} is already running on {underlying} — stop that run or pick another underlying."
-            : $"{strategyName} is already running on {underlying} in {account}'s account — stop that run or pick another underlying.";
-
-    // ------------------------------------------------------------------
-    // Launch plumbing
-    // ------------------------------------------------------------------
-
-    private sealed record LaunchSpec(
-        StrategyCatalogEntry Strategy,
-        long RunId,
-        long UserId,
-        string StartedBy,
-        string Underlying,
-        string SpotSymbol,
-        int Lots,
-        RiskRulesDto Risk);
-
-    /// <summary>What goes on the runner's command line, settled before any row exists.</summary>
-    private sealed record RunnerCommand(string ScriptPath, string StrategyArgument);
-
-    /// <summary>
-    /// The runner script and the strategy argument, or the refusal. Checked
-    /// before the run row is inserted: a missing script is a refusal, not a
-    /// Failed run.
-    /// </summary>
-    private RunnerCommand? PrepareRunner(StrategyCatalogEntry strategy, out IActionResult? error)
-    {
-        error = null;
-        var scriptPath = _engine.ScriptPath("strategies", "execution_runner.py");
-        if (!System.IO.File.Exists(scriptPath))
-        {
-            _logger.LogError("Strategy runner not found at {ScriptPath}", scriptPath);
-            error = StatusCode(StatusCodes.Status500InternalServerError,
-                new { message = $"Strategy runner not found at '{scriptPath}'. Set StrategyRunner:EngineDirectory." });
-            return null;
-        }
-
-        // The strategy name reaches a command line, so allow only characters that
-        // appear in a legitimate strategy identifier.
-        var strategyArgument = new string(strategy.Name.Where(char.IsLetterOrDigit).ToArray());
-        if (string.IsNullOrEmpty(strategyArgument))
-        {
-            error = BadRequest(new { message = $"Strategy name '{strategy.Name}' contains no usable characters." });
-            return null;
-        }
-
-        return new RunnerCommand(scriptPath, strategyArgument);
-    }
-
-    /// <summary>
-    /// Spawns execution_runner.py and registers it. Returns an error result
-    /// instead of throwing so the caller can close its run row. The duplicate
-    /// and capacity checks are the caller's, made under
-    /// <see cref="StrategyProcessRegistry.StartGate"/>; this only launches.
-    /// </summary>
-    private (IActionResult? Error, RunningStrategy? Running) LaunchRunner(LaunchSpec spec, RunnerCommand command)
-    {
-        int id = spec.Strategy.Id;
-        var engineDirectory = _engine.EngineDirectory;
-
-        var processInfo = new ProcessStartInfo
-        {
-            FileName = _engine.PythonExecutable,
-            WorkingDirectory = engineDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        // ArgumentList quotes each value, so paths with spaces work on every platform.
-        processInfo.ArgumentList.Add(command.ScriptPath);
-        processInfo.ArgumentList.Add("--strategy");
-        processInfo.ArgumentList.Add(command.StrategyArgument);
-        processInfo.ArgumentList.Add("--strategy-id");
-        processInfo.ArgumentList.Add(id.ToString(CultureInfo.InvariantCulture));
-        processInfo.ArgumentList.Add("--user-id");
-        processInfo.ArgumentList.Add(spec.UserId.ToString(CultureInfo.InvariantCulture));
-        processInfo.ArgumentList.Add("--run-id");
-        processInfo.ArgumentList.Add(spec.RunId.ToString(CultureInfo.InvariantCulture));
-        processInfo.ArgumentList.Add("--underlying");
-        processInfo.ArgumentList.Add(spec.Underlying);
-        processInfo.ArgumentList.Add("--spot-symbol");
-        processInfo.ArgumentList.Add(spec.SpotSymbol);
-
-        // The engine uses absolute package imports and resolves .env relative to
-        // its own location, so PYTHONPATH must point at the engine directory.
-        processInfo.Environment["PYTHONPATH"] = engineDirectory;
-        // Line-buffered output so log lines arrive as they happen, not in 8KB blocks.
-        processInfo.Environment["PYTHONUNBUFFERED"] = "1";
-        // A redirected stdout takes the locale encoding on Windows (cp1252), and
-        // the runner prints "→", "≤", "₹"... — force UTF-8 on the pipe everywhere.
-        processInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-
-        Process? process = null;
-        try
-        {
-            process = new Process { StartInfo = processInfo, EnableRaisingEvents = true };
-            if (!process.Start())
-            {
-                process.Dispose();
-                return (StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start python process." }), null);
-            }
-
-            var running = new RunningStrategy(
-                id, spec.Strategy.Name, process, spec.StartedBy, spec.UserId, DateTime.UtcNow,
-                spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.Risk)
-            {
-                // Where the runner writes its own output from its first line;
-                // the console is read from there (core/safe_output.py).
-                OutputLogPath = RunnerOutputLog.PathFor(_engine.EngineLogDirectory, spec.RunId, process.Id)
-            };
-
-            if (!_registry.TryAdd(running))
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                process.Dispose();
-                return (Conflict(new { message = $"Run {spec.RunId} already has a runner behind it." }), null);
-            }
-
-            _logger.LogInformation(
-                "Started strategy {StrategyId} ({Name}) pid {Pid} run {RunId} on {Underlying} ({Spot}) x{Lots} risk=[{Risk}] by {User}",
-                id, spec.Strategy.Name, running.ProcessId, spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots,
-                spec.Risk.Describe(), spec.StartedBy);
-
-            return (null, running);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start strategy {StrategyId}.", id);
-            try { process?.Dispose(); } catch { /* ignore */ }
-            return (StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message }), null);
-        }
-    }
-
-    /// <summary>True when the underlying has at least one unexpired CE/PE contract in the master.</summary>
-    private Task<bool> HasFutureOptionContractsAsync(string underlying, CancellationToken cancellationToken)
-    {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        return _dbContext.Instruments
-            .AsNoTracking()
-            .AnyAsync(x => x.IsEnabled
-                        && x.Underlying == underlying
-                        && (x.OptionType == "CE" || x.OptionType == "PE")
-                        && x.ExpiryDate.HasValue
-                        && x.ExpiryDate >= today,
-                cancellationToken);
-    }
-
     private static object StartResponse(string message, RunningStrategy running) => new
     {
         message,
@@ -1741,29 +1325,6 @@ public class StrategyController : ControllerBase
         risk = running.Risk,
         startedBy = running.StartedBy
     };
-
-    /// <summary>
-    /// The runner reads spot ticks for the underlying from the live feed, so the
-    /// spot symbol must be on the watchlist. Failure here is not fatal — the
-    /// runner warns on its own when ticks never arrive.
-    /// </summary>
-    private async Task EnsureSpotOnWatchlistAsync(string spotSymbol, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _upsertWatchlistItem.ExecuteAsync(new UpsertWatchlistItemRequest
-            {
-                Symbol = spotSymbol,
-                DataType = "symbolUpdate",
-                IsActive = true,
-                Priority = 100
-            }, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not add {Symbol} to the live watchlist.", spotSymbol);
-        }
-    }
 
     // ------------------------------------------------------------------
     // Mapping helpers

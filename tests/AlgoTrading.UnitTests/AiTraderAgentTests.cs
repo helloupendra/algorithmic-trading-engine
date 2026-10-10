@@ -105,7 +105,8 @@ public class AiTraderAgentTests
         Assert.True(await agent.RunOnceAsync(Eleven.AddMinutes(10), default));
         Assert.False(await agent.RunOnceAsync(IstTime.FromIst(new DateTime(2026, 10, 3, 11, 0, 0)), default));   // a Saturday
 
-        Assert.Equal(new[] { AiTraderModes.Shadow, AiTraderModes.Shadow }, await ai.Db.AiTraderDecisions.Select(d => d.Mode).ToListAsync());
+        // Live is the default from 10 Oct (Ai:AiTraderExecute); nothing here acts, so nothing is placed.
+        Assert.Equal(new[] { AiTraderModes.Live, AiTraderModes.Live }, await ai.Db.AiTraderDecisions.Select(d => d.Mode).ToListAsync());
     }
 
     [Fact]

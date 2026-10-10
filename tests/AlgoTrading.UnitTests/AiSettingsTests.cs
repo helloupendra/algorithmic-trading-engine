@@ -30,10 +30,12 @@ public class AiSettingsTests
         // The scheduled agents call the provider by themselves: off until the owner turns them on.
         string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader];
         Assert.All(scheduled, key => Assert.Equal("off", state.Agent(key)!.Status));
-        // The desk analysts start on (owner, 10 Oct 2026: every AI agent built and on).
+        // The desk analysts start on (owner, 10 Oct 2026: every AI agent built and on), and so do the checks around the AI
+        // Trader's placements: they call a model only when it places.
         string[] analysts = [AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst];
-        Assert.All(analysts, key => Assert.Equal("on", state.Agent(key)!.Status));
-        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !analysts.Contains(a.Def.Key)),
+        string[] checks = [AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter];
+        Assert.All(analysts.Concat(checks), key => Assert.Equal("on", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !analysts.Contains(a.Def.Key) && !checks.Contains(a.Def.Key)),
             a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
@@ -138,7 +140,8 @@ public class AiSettingsTests
             new[]
             {
                 AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
-                AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst, AiCatalog.AiTrader,
+                AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
+                AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter, AiCatalog.AiTrader,
             },
             AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
         Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));
