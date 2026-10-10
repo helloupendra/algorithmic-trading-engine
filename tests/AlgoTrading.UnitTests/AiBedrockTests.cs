@@ -793,7 +793,7 @@ public class AiBedrockTests
         var v = new float[32];
         foreach (var word in text.ToLowerInvariant().Split((char[])[' ', '\n', '.', ',', '?', '›'], StringSplitOptions.RemoveEmptyEntries))
         {
-            v[(int)((uint)word.GetHashCode(StringComparison.Ordinal) % 32)] += 1;
+            v[(int)(AiTestKit.StableHash(word) % 32)] += 1;
         }
 
         return v;
