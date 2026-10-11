@@ -56,7 +56,7 @@ export interface AiProvider {
   terms: string
   /** Claude on Amazon Bedrock: while on, every chain is Claude's. Absent from an older API. */
   bedrock?: AiBedrockProvider
-  /** The open models on Amazon Bedrock, first in each tier with NVIDIA's after them. Absent from an older API. */
+  /** The open models on Amazon Bedrock: while on (and Claude off), every chat tier is theirs alone. Absent from an older API. */
   bedrockOpen?: AiBedrockProvider
 }
 

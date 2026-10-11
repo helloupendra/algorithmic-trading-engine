@@ -97,7 +97,8 @@ stored in `system_settings` under `ai.`. The defaults are in `AiCatalog` and mat
 which Python scripts use directly. `AiSettingsTests` fails if the two drift.
 
 These are NVIDIA's chains. While Claude on Bedrock is off and the open models there are on (the default), each chat
-tier walks two open models on Bedrock first and then its NVIDIA chain ([Open models on Bedrock](#open-models-on-bedrock)).
+tier walks four open models on Bedrock instead, and NVIDIA is not asked ([Open models on Bedrock](#open-models-on-bedrock)).
+NVIDIA still makes the embeddings until Titan answers.
 With Claude on, every tier is Claude ([Providers](#providers-nvidia-and-amazon-bedrock)).
 
 ### Latency on the free tier (measured 30 Sep, ~16:30 IST)
@@ -234,19 +235,19 @@ Every Bedrock call is billed, so:
 
 The third provider (owner, 10 Oct 2026): in the three days to 10 Oct, 12% of calls failed on every NVIDIA model of
 their chain, and answers took 37 s on average. These answered from the server in about 1 to 2 s on 10 Oct, through the
-OpenAI-compatible endpoint in `us-east-1`. From 11 Oct each tier starts with two of them (owner: "every answer from
-AWS Bedrock"), and NVIDIA's chain, the newer Kimi K3 and GLM-5.3 among it, catches their failures:
+OpenAI-compatible endpoint in `us-east-1`. From 11 Oct each chat tier is four of them, from four makers, and NVIDIA is
+not asked (owner: "leave NVIDIA, put everything on Bedrock"):
 
 | Tier | Chain while Claude is off |
 | --- | --- |
-| Judge | `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:zai.glm-5` → NVIDIA's three |
-| Analyst | `bedrock-oss:deepseek.v3.2` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` → NVIDIA's three |
-| Extract | `bedrock-oss:openai.gpt-oss-120b` → `bedrock-oss:mistral.mistral-large-3-675b-instruct` → NVIDIA's three |
+| Judge | `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:zai.glm-5` → `bedrock-oss:deepseek.v3.2` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` |
+| Analyst | `bedrock-oss:deepseek.v3.2` → `bedrock-oss:moonshotai.kimi-k2.5` → `bedrock-oss:qwen.qwen3-235b-a22b-2507` → `bedrock-oss:zai.glm-5` |
+| Extract | `bedrock-oss:openai.gpt-oss-120b` → `bedrock-oss:mistral.mistral-large-3-675b-instruct` → `bedrock-oss:deepseek.v3.2` → `bedrock-oss:nvidia.nemotron-super-3-120b` |
 
 - The models a chain may name (`AiCatalog.BedrockOpenModels`): those six, `nvidia.nemotron-super-3-120b` and
   `minimax.minimax-m2.5`. Claude, OpenAI's GPT-5 and later models and Grok did not answer there for this account.
 - `Ai:BedrockOpen:Enabled` (default `true`; `.env` `AI_BEDROCK_OPEN_ENABLED=false` turns it off): off, a `bedrock-oss:`
-  model is skipped with its reason and the chains are NVIDIA's alone. The region is `Ai:Bedrock:Region`.
+  model is skipped with its reason and the chains are NVIDIA's again. The region is `Ai:Bedrock:Region`.
 - With Claude on, nothing changes: every chain is Claude, and the Models and Agents tabs refuse an open model too.
 - An owner's chain may name `bedrock-oss:` models; it is walked as set.
 - **Signing.** Each request's exact body is signed with SigV4 (service `bedrock-mantle`, the region above) by
