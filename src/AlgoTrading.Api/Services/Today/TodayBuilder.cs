@@ -171,9 +171,9 @@ public sealed class TodayBuilder(
     /// The AI Trader today: on or off, shadow or placing, its looks and the last three decisions (with what each placed),
     /// its shadow book and, on a day it was live, its live book (its own manual book, net after charges), and how many of
     /// its plans the Validator rejected or could not judge and the Risk Memo tightened. Null until it has ever looked or
-    /// been switched on.
+    /// been switched on. Ira's close briefing reads it too (<see cref="AiVoice.IraDesk"/>), so the two never differ.
     /// </summary>
-    private async Task<TodayAiTrader?> AiTraderAsync(DateOnly today, CancellationToken cancellationToken)
+    public async Task<TodayAiTrader?> AiTraderAsync(DateOnly today, CancellationToken cancellationToken)
     {
         var state = await aiStore.LoadAsync(cancellationToken);
         string status = state.Agent(AiCatalog.AiTrader)?.Status ?? "off";
@@ -226,7 +226,11 @@ public sealed class TodayBuilder(
         return new TodayMarket(exchange, state, Utc(info.SessionOpenUtc), Utc(info.SessionCloseUtc));
     }
 
-    private async Task<TodayTrading> TradingAsync(DateOnly today, CancellationToken cancellationToken)
+    /// <summary>
+    /// The day's live runs (recaps left out) by account, worst net first, and run by run, net after charges as the run
+    /// history states it. Ira's close briefing reads it too (<see cref="AiVoice.IraDesk"/>), so the two never differ.
+    /// </summary>
+    public async Task<TodayTrading> TradingAsync(DateOnly today, CancellationToken cancellationToken)
     {
         var runs = await history.ListAsync(new LiveRunHistoryFilter(null, null, null, null, today, today, LiveRunHistoryFilter.MaxTake, 0), cancellationToken);
         var recaps = await history.ListAsync(new LiveRunHistoryFilter(null, null, null, null, today, today, LiveRunHistoryFilter.MaxTake, 0, Recaps: true),
