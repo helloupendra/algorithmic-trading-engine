@@ -226,7 +226,9 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Se
 // The Desk Assistant on the desk's Telegram bot, for linked owners only; long polls with its own client (50 s).
 builder.Services.AddHttpClient(AlgoTrading.Api.Services.AiTelegram.TelegramAssistant.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(75));
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramPairing>();
-// Its voice ("Ira", Ai:Voice): owners' voice notes written down on Bedrock, answers spoken back by Amazon Polly.
+// The assistant's one voice ("Ira", Ai:Voice): questions written down on Bedrock, answers spoken back by Amazon Polly,
+// its name and its Polly back-off shared by Telegram's voice notes and the console's AI → Assistant (api/Ai/voice/*).
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiVoice.AiVoiceService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramVoice>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
@@ -579,7 +581,9 @@ app.Use(async (context, next) =>
     h["X-Content-Type-Options"] = "nosniff";
     h["X-Frame-Options"] = "DENY";
     h["Referrer-Policy"] = "strict-origin-when-cross-origin";
-    h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+    // The microphone for the console's own pages only: AI → Assistant records a spoken question (the browser still
+    // asks the viewer first).
+    h["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=(), payment=(), usb=()";
     h["Cross-Origin-Opener-Policy"] = "same-origin";
     h["Content-Security-Policy"] =
         "default-src 'self'; " +
@@ -594,6 +598,8 @@ app.Use(async (context, next) =>
         "font-src 'self' data:; " +
         "connect-src 'self' ws: wss:; " +
         "worker-src 'self' blob:; " +
+        // A spoken reply plays from a blob: URL of the MP3 the API returned (AI → Assistant).
+        "media-src 'self' blob:; " +
         "manifest-src 'self'; " +
         "object-src 'none'; " +
         "base-uri 'self'; " +

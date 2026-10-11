@@ -8,7 +8,7 @@ namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>
 /// Amazon Polly's SynthesizeSpeech (<c>POST polly.{region}.amazonaws.com/v1/speech</c>): text in, MP3 out, for the
-/// Telegram assistant's spoken replies. Signed with SigV4 (service <c>polly</c>) by the same signer and the same AWS
+/// assistant's spoken replies, on Telegram and the console. Signed with SigV4 (service <c>polly</c>) by the same signer and the same AWS
 /// role as the open models on Bedrock (<see cref="IBedrockRequestSigner"/>); no key anywhere in the desk's files.
 /// </summary>
 /// <remarks>

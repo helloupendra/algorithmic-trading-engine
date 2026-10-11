@@ -350,13 +350,17 @@ public sealed class AiBedrockOpenSettings
 }
 
 /// <summary>
-/// The <c>Ai:Voice</c> section: voice notes to the desk's Telegram assistant, written down by Mistral's Voxtral on
-/// Bedrock's OpenAI-compatible endpoint (in <see cref="AiBedrockSettings.Region"/>), and the answer spoken back by Amazon
-/// Polly. As for Bedrock, no key here or anywhere in the desk's files: both are signed with the server's AWS role.
+/// The <c>Ai:Voice</c> section: voice notes to the desk's Telegram assistant and questions spoken on the console's
+/// AI → Assistant, written down by Mistral's Voxtral on Bedrock's OpenAI-compatible endpoint (in
+/// <see cref="AiBedrockSettings.Region"/>), and answers spoken back by Amazon Polly. As for Bedrock, no key here or
+/// anywhere in the desk's files: both are signed with the server's AWS role.
 /// </summary>
 public sealed class AiVoiceSettings
 {
-    /// <summary>Off: a voice note gets one line asking for the question typed, and nothing calls AWS for it.</summary>
+    /// <summary>
+    /// Off: a voice note gets one line asking for the question typed, the console's voice endpoints answer 503, and
+    /// nothing calls AWS for either.
+    /// </summary>
     public bool Enabled { get; set; } = true;
 
     /// <summary>
@@ -365,7 +369,10 @@ public sealed class AiVoiceSettings
     /// </summary>
     public string TranscribeModel { get; set; } = "mistral.voxtral-small-24b-2507";
 
-    /// <summary>Whether a voice note's answer is spoken back as a voice message too (Amazon Polly), after the text.</summary>
+    /// <summary>
+    /// Whether answers may be spoken by Amazon Polly: a voice note's answer on Telegram, as a voice message after the
+    /// text, and on the console when the viewer has "Speak replies" on. Off, nothing asks Polly.
+    /// </summary>
     public bool SpeakReplies { get; set; } = true;
 
     public string PollyVoice { get; set; } = "Kajal";
@@ -388,6 +395,13 @@ public sealed class AiVoiceSettings
 
     /// <summary>The largest voice note downloaded, in bytes (2 MB).</summary>
     public int MaxBytes { get; set; } = 2 * 1024 * 1024;
+
+    /// <summary>
+    /// The largest recording the console may send, in bytes (4 MB). The console sends 16 kHz mono 16-bit WAV, 32 KB a
+    /// second, so <see cref="MaxSeconds"/> of it (3.75 MB at 120 s) would not fit in <see cref="MaxBytes"/>, which is
+    /// sized for Telegram's compressed voice notes.
+    /// </summary>
+    public int ConsoleMaxBytes { get; set; } = 4 * 1024 * 1024;
 
     /// <summary>Characters of the spoken reply at most, cut at a sentence; the full answer is in the text above it.</summary>
     public int MaxSpokenChars { get; set; } = 600;
