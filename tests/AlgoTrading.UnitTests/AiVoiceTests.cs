@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services.AgentMemory;
+using AlgoTrading.Api.Services.AiActions;
 using AlgoTrading.Api.Services.AiTelegram;
 using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
@@ -294,6 +295,40 @@ public sealed class AiVoiceTests
         var said = calls[2];
         Assert.Equal((AiCallOutcome.Ok, "polly:Kajal/neural"), (said.Outcome, said.Model));
         Assert.Equal("Spoke 69 characters (Kajal, neural): $0.001104 at list price ($16 per 1M characters)", said.Summary);
+    }
+
+    [Fact]
+    public async Task A_heard_number_is_never_a_pin_it_is_asked_as_a_question_and_the_action_waits()
+    {
+        IraActionsTestKit.FastPins();
+        var hands = new IraActionsTestKit.FakeHands();
+        var time = new IraActionsTestKit.MovableTime(DateTime.UtcNow);
+        var guard = new IraPinGuard(time);
+        var (ai, aws, bot, _, assistant, _) = Setup(more: (services, kit) => IraActionsTestKit.AddActions(services, hands, guard, kit.Options, time));
+        IraActionsTestKit.SeedUsers(ai.Db);
+        var actions = new IraActions(NewDb(_dbName), hands, guard, ai.Options, NullLogger<IraActions>.Instance, time);
+        var owner = new IraOwner(IraActionsTestKit.Admin, "upendra");
+        await actions.SetPinAsync(owner, IraActionsTestKit.Pin, null, requireCurrent: false, "Telegram", CancellationToken.None);
+        var pending = await actions.ProposeAsync(owner,
+            new AiToolCaller(AiCatalog.DeskAssistant, "telegram", "upendra", IraActionsTestKit.Admin, TelegramAssistant.ActionConversation(Owner), 3),
+            new IraProposal(AiActionKind.AgentSwitch, """{"agent":"news-analyst","agentName":"News Analyst","on":true}""", "Switch the News Analyst on."),
+            CancellationToken.None);
+        await Link(assistant);
+        bot.Sent.Clear();
+        bot.File = OggOpus(seconds: 2, sampleRate: 48_000, channels: 1);
+        aws.Transcripts.Enqueue((200, Heard(IraActionsTestKit.Pin)));
+        aws.Speech.Enqueue((200, Mp3));
+        ai.Provider.On(Judge1, Answer("A PIN is typed, never spoken: type it to confirm."));
+
+        await assistant.HandleAsync(Voice(Owner, seconds: 2), CancellationToken.None);
+
+        // Heard, and asked as a question: the model got the number, the desk carried out nothing.
+        Assert.Equal($"🎙 \"{IraActionsTestKit.Pin}\"", bot.Texts[0]);
+        Assert.Contains(IraActionsTestKit.Pin, JsonNode.Parse(ai.Provider.Requests.Single(r => r.Model == Judge1).Body)!["messages"]!.AsArray().Last()!["content"]!.GetValue<string>());
+        Assert.Empty(hands.Calls);
+        Assert.DoesNotContain(bot.Sent, s => s["method"] == "deleteMessage");
+        await using var db = NewDb(_dbName);
+        Assert.Equal(AiActionStatus.Pending, (await db.AiActions.SingleAsync(a => a.Id == pending.Id)).Status);
     }
 
     [Fact]
@@ -841,7 +876,9 @@ public sealed class AiVoiceTests
         ["usage"] = new JsonObject { ["prompt_tokens"] = 410, ["completion_tokens"] = 12, ["total_tokens"] = 422 },
     }.ToJsonString();
 
-    private (Services Ai, FakeAws Aws, VoiceBot Bot, FakeSigner Signer, TelegramAssistant Assistant, AiTestKit.Monitor Options) Setup(ILogger<TelegramVoice>? log = null)
+    /// <param name="more">More of the API's services for the bot's scopes (Ira's actions, say).</param>
+    private (Services Ai, FakeAws Aws, VoiceBot Bot, FakeSigner Signer, TelegramAssistant Assistant, AiTestKit.Monitor Options) Setup(
+        ILogger<TelegramVoice>? log = null, Action<IServiceCollection, Services>? more = null)
     {
         var ai = Build(null, NewDb(_dbName));
         var aws = new FakeAws();
@@ -852,6 +889,7 @@ public sealed class AiVoiceTests
         services.AddScoped(_ => ai.Gateway);
         services.AddScoped(sp => new AiMemoryService(sp.GetRequiredService<TradingDbContext>(),
             new AiMemoryBook(sp.GetRequiredService<TradingDbContext>(), ai.Client, ai.Options), ai.Options));
+        more?.Invoke(services, ai);
         var scopes = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Telegram:BotToken"] = "123:TEST" }).Build();
         var shared = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), ai.Options, signer),

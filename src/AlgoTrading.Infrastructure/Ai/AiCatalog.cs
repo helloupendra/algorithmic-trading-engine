@@ -127,6 +127,17 @@ public static class AiToolNames
     public static readonly IReadOnlyList<string> Desk =
         [Runs, StrategyHistory, Run, OpenPositions, Quotes, OptionChain, Incidents, Checkup, Forecasts, News, StrategySpec, SearchDocs];
 
+    // The Desk Assistant's proposals (Ira's actions): each validates and resolves its target and stores a pending
+    // action; code runs it only after the owner's PIN. Offered to the Desk Assistant alone, in a chat, to an admin
+    // (AiCatalog.ActionsOffered), never in an agent's Tools or ChatTools.
+    public const string ProposeStopRun = "propose_stop_run";
+    public const string ProposeStartRun = "propose_start_run";
+    public const string ProposeSquareOff = "propose_square_off";
+    public const string ProposeAgentSwitch = "propose_agent_switch";
+
+    /// <summary>The four proposal tools, in the order the model sees them after the read tools.</summary>
+    public static readonly IReadOnlyList<string> Actions = [ProposeStopRun, ProposeStartRun, ProposeSquareOff, ProposeAgentSwitch];
+
     /// <summary>What the AI Trader reads when the owner talks with it.</summary>
     public static readonly IReadOnlyList<string> AiTraderChat =
         [AiTraderDecisions, AiTraderDecision, AiTraderBook, AiTraderScoreboard, AiTraderLessons, AiTraderLookNow];
@@ -385,7 +396,18 @@ public static partial class AiCatalog
             ["nvidia/nemotron-3-embed-1b"], Chat: false),
     ];
 
-    private const string NoOrders = "Never places, changes or cancels an order; no model on this desk holds an order tool.";
+    private const string NoOrders =
+        "Never places, changes or cancels an order, and cannot propose an action: it only reads. No model on this desk holds an order tool.";
+
+    /// <summary>
+    /// The Desk Assistant's limits: it reads, and may propose four paper-desk actions that code runs only after the
+    /// owner's PIN; no model on the desk holds an order tool.
+    /// </summary>
+    private const string DeskAssistantLimits =
+        "Never places, changes or cancels a broker order; no model on this desk holds an order tool. It may propose four " +
+        "actions on the paper desk (stop or start a strategy run, square off manual-book positions, switch an AI agent on " +
+        "or off), and code runs one only after the owner confirms it with his PIN, as the owner, through the same checks " +
+        "as his own click.";
 
     private const string DeskAssistantPrompt =
         "You are the desk assistant of OpenFNO, a paper-trading desk for Indian futures and options (NSE, BSE, MCX), " +
@@ -393,8 +415,9 @@ public static partial class AiCatalog
         "or an account's history over a week or a month (get_strategy_history, one call for the whole period), one run's orders and " +
         "legs, open positions, index quotes, option chain summaries, Sentinel incidents, the latest desk checkup, " +
         "forecasts, news and filings, the strategies' written specs, and a search over the desk's own docs (how each " +
-        "module works, its rules and its settings). The tools only read; you cannot place, change " +
-        "or cancel anything.\n" +
+        "module works, its rules and its settings). The read tools only read. You can never place, change or cancel a " +
+        "broker order; when the propose_ tools are offered, you may propose an action for the owner to confirm with his " +
+        "PIN, and nothing else.\n" +
         "Rules:\n" +
         "- For any question about the desk, markets today, runs, orders, positions or P&L, call the tools first. Never " +
         "guess a number the tools can give you, and never invent one they did not.\n" +
@@ -404,6 +427,25 @@ public static partial class AiCatalog
         "- P&L is net of charges unless a tool labels it gross. Money in rupees (₹), Indian digit grouping. Times are IST.\n" +
         "- Be direct and brief. Show the working for any sum. Say plainly when you are not sure.\n" +
         "- Do not present a trade as advice to act on: the desk trades on paper and tests every rule change first.";
+
+    /// <summary>
+    /// Put after the Desk Assistant's prompt when its proposal tools are offered (<see cref="ActionsOffered"/>): what
+    /// it may propose, that a proposal does nothing by itself, and that the PIN is the owner's alone.
+    /// </summary>
+    public const string ActionsPrompt =
+        "Actions (only with the owner's PIN): when the owner asks for it, and only then, you may propose one of four " +
+        "actions on the paper desk: stop a strategy run (propose_stop_run), start one (propose_start_run), square off " +
+        "manual-book positions (propose_square_off), or switch an AI agent on or off (propose_agent_switch). A proposal " +
+        "does nothing by itself: code checks it, resolves the exact run, account or positions, and runs it only after the " +
+        "owner confirms with his PIN, as the owner, through the same checks as his own click.\n" +
+        "- Never ask for the PIN, never write one, and never treat a number in the chat as one: the owner types it to the " +
+        "desk, not to you.\n" +
+        "- After a proposal, repeat its summary in one line as the tool gave it and say how to confirm it (the tool says " +
+        "how). Never say it is done: you cannot know until the owner confirms and the desk replies.\n" +
+        "- If a proposal tool answers with an error (two runs match, no PIN is set, the action is locked), say what it " +
+        "said and ask; never guess between runs or accounts.\n" +
+        "- One proposal per answer. Nothing else can be done: no broker order, deploy, setting or risk-limit change, " +
+        "delete or user change.";
 
     private const string ReviewerPrompt =
         "You are the trade reviewer of OpenFNO, a paper-trading desk for Indian futures and options. After the close you " +
@@ -837,14 +879,23 @@ public static partial class AiCatalog
     /// <summary>The system prompt a call from <paramref name="source"/> gets when its asker brings none.</summary>
     public static string SystemPromptFor(AiAgentDef agent, string? source) => ChatsAs(agent, source) ? agent.ChatPrompt : agent.SystemPrompt;
 
+    /// <summary>
+    /// Whether a call may be offered the proposal tools (<see cref="AiToolNames.Actions"/>): the desk-wide switch is on,
+    /// it is the Desk Assistant, the owner is chatting (console or Telegram) with its own prompt, and the asker is an
+    /// admin (<paramref name="askerIsAdmin"/>, read from the account, not the token). Every other agent, source and
+    /// asker reads only.
+    /// </summary>
+    public static bool ActionsOffered(bool enabled, string agentKey, string? source, bool ownPrompt, bool askerIsAdmin) =>
+        enabled && agentKey == DeskAssistant && ownPrompt && askerIsAdmin && ChatSources.Contains(source ?? string.Empty, StringComparer.Ordinal);
+
     public static readonly IReadOnlyList<AiAgentDef> Agents =
     [
         new(DeskAssistant, 1, "Desk Assistant",
             "Answers the owner's questions in the console, reading the desk's own records.",
-            "Why a run did what it did today, from its orders and legs; what is open; what Sentinel saw; explain a backtest, a market move, a concept or a piece of the code.",
+            "Why a run did what it did today, from its orders and legs; what is open; what Sentinel saw; explain a backtest, a market move, a concept or a piece of the code. With the owner's PIN: stop or start a run, square off manual positions, switch an agent.",
             "On request, from the Assistant tab", "1–2", Built: true, "judge",
-            "Read-only desk tools: runs and net P&L, a strategy's history over a period, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs.",
-            NoOrders, DeskAssistantPrompt, AiToolNames.Desk),
+            "Read-only desk tools: runs and net P&L, a strategy's history over a period, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs. In a chat with an admin, four proposal tools whose actions code runs only after the owner's PIN.",
+            DeskAssistantLimits, DeskAssistantPrompt, AiToolNames.Desk),
         new(TradeReviewer, 2, "Trade Reviewer / Coach",
             "Reviews each stopped run against its written spec after the close and writes a short journal.",
             "Which rules the run kept and which it did not, fills at stale prices, the market around it, one thing worth testing; a Telegram digest when a batch is done.",
