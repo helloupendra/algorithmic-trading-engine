@@ -3,8 +3,10 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services.AgentMemory;
 using AlgoTrading.Api.Services.AiTelegram;
+using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -12,6 +14,8 @@ using Amazon.Runtime;
 using Concentus;
 using Concentus.Enums;
 using Concentus.Oggfile;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -149,8 +153,8 @@ public sealed class AiVoiceTests
     public void A_short_answer_without_a_table_is_spoken_whole()
     {
         Assert.Equal("Haan, aaj ka P&L ₹42,000 hai.", VoiceText.Spoken("Haan, aaj ka P&L **₹42,000** hai.", 600));
-        Assert.Equal(200, TelegramVoice.MaxTokens(3));
-        Assert.Equal(720, TelegramVoice.MaxTokens(119.6));
+        Assert.Equal(200, AiVoiceService.MaxTokens(3));
+        Assert.Equal(720, AiVoiceService.MaxTokens(119.6));
     }
 
     // ---------- the calls to AWS, scripted ----------
@@ -480,7 +484,300 @@ public sealed class AiVoiceTests
         Assert.Empty(aws.Requests);
     }
 
+    // ---------- on the console (AI → Assistant) ----------
+
+    [Fact]
+    public async Task A_console_recording_is_written_down_by_the_same_voice_and_recorded_as_the_consoles()
+    {
+        var (_, aws, _, signer, _, _) = Setup();
+        aws.Transcripts.Enqueue((200, Heard("Ira, aaj ka P&L kya hai?")));
+        byte[] wav = Recording(seconds: 2);
+
+        var result = await Transcribe(wav, "c-abc123");
+
+        var heard = Assert.IsType<AiVoiceTranscript>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(("Ira, aaj ka P&L kya hai?", 2.0), (heard.Text, heard.Seconds));
+        // Sent as the WAV it came as, with the same instruction Telegram's notes get.
+        var body = JsonNode.Parse(Assert.Single(aws.Requests).Body)!;
+        var parts = body["messages"]![0]!["content"]!.AsArray();
+        Assert.Equal("wav", parts[0]!["input_audio"]!["format"]!.GetValue<string>());
+        Assert.Equal(wav, Convert.FromBase64String(parts[0]!["input_audio"]!["data"]!.GetValue<string>()));
+        Assert.StartsWith(VoiceText.BaseInstruction, parts[1]!["text"]!.GetValue<string>());
+        Assert.EndsWith("NIFTY, BANKNIFTY, SENSEX, P&L, Ira.", parts[1]!["text"]!.GetValue<string>());
+        Assert.Equal(("bedrock-mantle", 200), (Assert.Single(signer.Signed).Service, body["max_tokens"]!.GetValue<int>()));
+
+        await using var db = NewDb(_dbName);
+        var call = await db.AiCalls.SingleAsync();
+        Assert.Equal(heard.CallId, call.Id);
+        Assert.Equal((AiCatalog.VoiceTranscribe, "console", "upendra", (long?)1, "c-abc123"), (call.AgentKey, call.Source, call.RequestedBy, call.UserId, call.ConversationId));
+        Assert.Equal((AiCallOutcome.Ok, "bedrock-oss:" + Voxtral, "Ira, aaj ka P&L kya hai?"), (call.Outcome, call.Model, call.Answer));
+        // The audio is not kept: a line stands for it.
+        Assert.Contains("[recording, 2 s, 62.5 KB, sent as wav; the audio is not kept]", call.MessagesJson);
+        Assert.DoesNotContain("UklGR", call.MessagesJson);
+    }
+
+    [Fact]
+    public void A_wav_header_is_read_past_other_chunks_and_compressed_sound_is_refused()
+    {
+        byte[] plain = Recording(seconds: 1.5);
+        // A LIST chunk between fmt and data, as some recorders write: 4 bytes of INFO, padded chunk walking.
+        byte[] listed = [.. plain[..36], .. "LIST"u8, 5, 0, 0, 0, .. "INFOx"u8, 0, .. plain[36..]];
+        byte[] mp3InWav = (byte[])plain.Clone();
+        BinaryPrimitives.WriteInt16LittleEndian(mp3InWav.AsSpan(20), 0x55);
+
+        var a = WavHeader.Read(plain);
+        var b = WavHeader.Read(listed);
+
+        Assert.Equal((1, 1, 16_000, 16, 48_000, 1.5), (a.AudioFormat, a.Channels, a.SampleRate, a.BitsPerSample, a.DataBytes, a.Seconds));
+        Assert.Equal(a, b);
+        Assert.Equal("its sound is compressed (format 85), not PCM", Assert.Throws<InvalidDataException>(() => WavHeader.Read(mp3InWav)).Message);
+        Assert.Equal("it has no sound (no data chunk)", Assert.Throws<InvalidDataException>(() => WavHeader.Read(plain[..36])).Message);
+    }
+
+    [Fact]
+    public async Task The_name_given_on_telegram_is_the_one_the_console_hears()
+    {
+        var (_, aws, _, _, assistant, _) = Setup();
+        await Link(assistant);
+        await assistant.HandleAsync(Message(Owner, """{"text":"/name Kavya"}"""), CancellationToken.None);
+        aws.Transcripts.Enqueue((200, Heard("Kavya, aaj ka P&L?")));
+
+        Assert.IsType<OkObjectResult>(await Transcribe(Recording(seconds: 1)));
+
+        var parts = JsonNode.Parse(Assert.Single(aws.Requests).Body)!["messages"]![0]!["content"]!.AsArray();
+        Assert.EndsWith("P&L, Kavya.", parts[1]!["text"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(3, 64 * 1024, 120, true, "That recording is larger than 0.1 MB, the most the desk takes.")]
+    [InlineData(3, 64 * 1024, 120, false, "That recording is larger than 0.1 MB, the most the desk takes.")]
+    [InlineData(3, 4 * 1024 * 1024, 2, false, "That recording is 3 s long; the desk listens to 2 s at most.")]
+    public async Task A_recording_past_the_limits_is_refused_in_words_and_asks_no_model(int seconds, int maxBytes, int maxSeconds, bool lengthHeader, string said)
+    {
+        var (_, aws, _, _, _, options) = Setup();
+        options.CurrentValue.Voice.ConsoleMaxBytes = maxBytes;
+        options.CurrentValue.Voice.MaxSeconds = maxSeconds;
+        byte[] wav = Recording(seconds);
+
+        var result = await Transcribe(wav, contentLength: lengthHeader ? wav.Length : null);
+
+        Assert.StartsWith(said, Error(result, StatusCodes.Status413PayloadTooLarge));
+        Assert.Empty(aws.Requests);
+        await using var db = NewDb(_dbName);
+        Assert.Empty(db.AiCalls);
+    }
+
+    [Fact]
+    public void The_console_may_send_two_minutes_of_its_wav_though_a_telegram_note_stops_at_2_mb()
+    {
+        var voice = new AiVoiceSettings();
+
+        Assert.True(Recording(voice.MaxSeconds).Length <= voice.ConsoleMaxBytes);
+        Assert.True(Recording(voice.MaxSeconds).Length > voice.MaxBytes);
+    }
+
+    [Fact]
+    public async Task Audio_that_is_not_a_wav_recording_is_refused_in_words()
+    {
+        var (_, aws, _, _, _, _) = Setup();
+
+        var webm = await Transcribe(Encoding.ASCII.GetBytes("\x1a\x45\xdf\xa3 webm"), contentType: "audio/webm;codecs=opus");
+        var junk = await Transcribe(Encoding.ASCII.GetBytes("RIFF....this is not a wave"));
+        var blank = await Transcribe(Recording(seconds: 0));
+        var badId = await Transcribe(Recording(seconds: 1), "not a valid id!");
+
+        Assert.StartsWith("Send the recording as audio/wav, not audio/webm", Error(webm, StatusCodes.Status415UnsupportedMediaType));
+        Assert.Equal("That recording could not be read: not a WAV file. Record it again, or type the question.", Error(junk, StatusCodes.Status400BadRequest));
+        Assert.StartsWith("That recording is too short", Error(blank, StatusCodes.Status400BadRequest));
+        Assert.StartsWith("conversationId is", Error(badId, StatusCodes.Status400BadRequest));
+        Assert.Empty(aws.Requests);
+    }
+
+    [Fact]
+    public async Task A_recording_counts_toward_the_same_per_user_limit_as_a_typed_question()
+    {
+        var (ai, aws, _, _, _, options) = Setup();
+        options.CurrentValue.PerUserPer10Min = 1;
+        ai.Provider.On(Judge1, Answer("₹42,000."));
+        await ai.Gateway.AskAsync(Question(), NullAiStreamSink.Instance, CancellationToken.None);
+
+        var controller = Console(Recording(seconds: 1));
+        var result = await controller.Transcribe(_shared, null, CancellationToken.None);
+
+        Assert.StartsWith("You have asked 1 questions in the last ten minutes", Error(result, StatusCodes.Status429TooManyRequests));
+        Assert.True(int.Parse(controller.Response.Headers.RetryAfter.ToString(), System.Globalization.CultureInfo.InvariantCulture) > 0);
+        Assert.Empty(aws.Requests);
+    }
+
+    [Fact]
+    public async Task A_recording_the_model_cannot_make_out_says_why_with_its_call()
+    {
+        var (_, aws, _, _, _, _) = Setup();
+        aws.Transcripts.Enqueue((400, """{"error":{"message":"Unsupported audio format"}}"""));
+
+        var result = await Transcribe(Recording(seconds: 1), "c-abc123");
+
+        await using var db = NewDb(_dbName);
+        var call = await db.AiCalls.SingleAsync();
+        Assert.Equal((AiCallOutcome.Failed, "console", "Recording of 1 s: not written down"), (call.Outcome, call.Source, call.Summary));
+        Assert.Equal(
+            $"The audio model could not make out that recording: http 400: Unsupported audio format (call #{call.Id}). Try again, or type the question.",
+            Error(result, StatusCodes.Status502BadGateway));
+    }
+
+    [Fact]
+    public async Task An_answer_is_spoken_as_mp3_in_its_conversation_and_recorded_as_the_consoles()
+    {
+        var (_, aws, _, _, _, _) = Setup();
+        aws.Speech.Enqueue((200, Mp3));
+        long answer = await AnswerCall("c-xyz789");
+
+        var controller = Console();
+        var result = await controller.Speak(_shared, new AiVoiceSpeakRequest("""
+            Aaj desk ne **₹2,22,414** net kamaye (`get_runs`, 15:31 IST).
+            | Run | Net |
+            |-----|-----|
+            | 339 | -1,10,132.75 |
+            """, answer), CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("audio/mpeg", file.ContentType);
+        Assert.Equal(Mp3, file.FileContents);
+        Assert.Equal(("mp3", "Aaj desk ne ₹2,22,414 net kamaye. Full details are in the text above.", "Kajal", "neural", "en-IN"),
+            PollyBody(Assert.Single(aws.Requests).Body));
+        await using var db = NewDb(_dbName);
+        var said = await db.AiCalls.SingleAsync(c => c.AgentKey == AiCatalog.VoiceSpeak);
+        Assert.Equal(said.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), controller.Response.Headers["X-Ai-Call-Id"].ToString());
+        Assert.Equal(("console", "upendra", (long?)1, "c-xyz789"), (said.Source, said.RequestedBy, said.UserId, said.ConversationId));
+        Assert.Equal((AiCallOutcome.Ok, "polly:Kajal/neural"), (said.Outcome, said.Model));
+        Assert.StartsWith("Spoke 69 characters (Kajal, neural)", said.Summary);
+    }
+
+    [Fact]
+    public async Task Polly_without_the_permission_is_a_503_in_words_and_pauses_telegram_too()
+    {
+        var (ai, aws, bot, _, assistant, _) = Setup();
+        await Link(assistant);
+        bot.Sent.Clear();
+        aws.Speech.Enqueue((403, Encoding.UTF8.GetBytes(PollyRefusal)));
+
+        var first = Console();
+        var refused = await first.Speak(_shared, new AiVoiceSpeakRequest("Aaj ka P&L ₹42,000 hai.", null), CancellationToken.None);
+        var again = await Console().Speak(_shared, new AiVoiceSpeakRequest("Aur kal ka ₹31,000.", null), CancellationToken.None);
+
+        string error = Error(refused, StatusCodes.Status503ServiceUnavailable);
+        Assert.StartsWith("Spoken replies are off for now: the server's AWS role may not call Amazon Polly (it needs polly:SynthesizeSpeech;", error);
+        Assert.EndsWith("The desk asks Polly again in 60 min; the answer is above as text.", error);
+        Assert.Equal("3600", first.Response.Headers.RetryAfter.ToString());
+        Assert.DoesNotContain("123456789012", error);
+        Assert.StartsWith("Spoken replies are off for now", Error(again, StatusCodes.Status503ServiceUnavailable));
+
+        // The back-off is the voice's, not the console's: Telegram's next voice note is answered in text, Polly unasked.
+        bot.File = OggOpus(seconds: 1, sampleRate: 48_000, channels: 1);
+        aws.Transcripts.Enqueue((200, Heard("Aaj ka P&L?")));
+        ai.Provider.On(Judge1, Answer("₹42,000."));
+        await assistant.HandleAsync(Voice(Owner, seconds: 1), CancellationToken.None);
+
+        Assert.Single(aws.Requests, r => r.Host.StartsWith("polly.", StringComparison.Ordinal));
+        Assert.Empty(bot.Voices);
+        Assert.Contains(bot.Texts, t => t.Contains("₹42,000."));
+        await using var db = NewDb(_dbName);
+        var said = await db.AiCalls.SingleAsync(c => c.AgentKey == AiCatalog.VoiceSpeak);
+        Assert.Equal((AiCallOutcome.Refused, "console"), (said.Outcome, said.Source));
+        Assert.Contains("polly:SynthesizeSpeech", said.Error);
+    }
+
+    [Fact]
+    public async Task Voice_switched_off_answers_503_and_calls_nothing()
+    {
+        var (_, aws, _, _, _, options) = Setup();
+        options.CurrentValue.Voice.Enabled = false;
+
+        var heard = await Transcribe(Recording(seconds: 1));
+        var spoken = await Console().Speak(_shared, new AiVoiceSpeakRequest("₹42,000.", null), CancellationToken.None);
+        options.CurrentValue.Voice.Enabled = true;
+        options.CurrentValue.Voice.SpeakReplies = false;
+        var quiet = await Console().Speak(_shared, new AiVoiceSpeakRequest("₹42,000.", null), CancellationToken.None);
+
+        Assert.StartsWith("Voice is switched off on this desk", Error(heard, StatusCodes.Status503ServiceUnavailable));
+        Assert.StartsWith("Voice is switched off on this desk", Error(spoken, StatusCodes.Status503ServiceUnavailable));
+        Assert.StartsWith("Spoken replies are switched off on this desk", Error(quiet, StatusCodes.Status503ServiceUnavailable));
+        Assert.Empty(aws.Requests);
+    }
+
+    [Fact]
+    public async Task Speaking_nothing_or_an_unknown_call_is_refused_without_asking_polly()
+    {
+        var (_, aws, _, _, _, _) = Setup();
+
+        var empty = await Console().Speak(_shared, new AiVoiceSpeakRequest("  ", null), CancellationToken.None);
+        var unknown = await Console().Speak(_shared, new AiVoiceSpeakRequest("₹42,000.", 987654), CancellationToken.None);
+        var unsayable = await Console().Speak(_shared, new AiVoiceSpeakRequest("✅ 👍\n---", null), CancellationToken.None);
+
+        Assert.Equal("Nothing to speak: text is empty.", Error(empty, StatusCodes.Status400BadRequest));
+        Assert.Equal("No call #987654.", Error(unknown, StatusCodes.Status404NotFound));
+        Assert.StartsWith("Nothing in this answer can be said aloud", Error(unsayable, StatusCodes.Status422UnprocessableEntity));
+        Assert.Empty(aws.Requests);
+        await using var db = NewDb(_dbName);
+        Assert.Empty(db.AiCalls);
+    }
+
     // ---------- helpers ----------
+
+    /// <summary>
+    /// The console's controller from <see cref="Setup"/>'s services (its rate limit and settings), signed in as upendra
+    /// (user 1), with <paramref name="body"/> as the request's.
+    /// </summary>
+    private AiController Console(byte[]? body = null, string contentType = "audio/wav", long? contentLength = null)
+    {
+        var controller = _ai.Controller();
+        if (body is not null)
+        {
+            controller.Request.Body = new MemoryStream(body);
+            controller.Request.ContentType = contentType;
+            controller.Request.ContentLength = contentLength;
+        }
+
+        return controller;
+    }
+
+    private Task<IActionResult> Transcribe(byte[] wav, string? conversationId = null, string contentType = "audio/wav", long? contentLength = null) =>
+        Console(wav, contentType, contentLength).Transcribe(_shared, conversationId, CancellationToken.None);
+
+    /// <summary>A 440 Hz tone of <paramref name="seconds"/> as the console records it: 16 kHz mono 16-bit WAV.</summary>
+    private static byte[] Recording(double seconds)
+    {
+        var samples = new short[(int)(16_000 * seconds)];
+        for (int i = 0; i < samples.Length; i++) samples[i] = (short)(8000 * Math.Sin(2 * Math.PI * 440 * i / 16_000.0));
+        return OggOpusDecoder.Wav(samples, 16_000);
+    }
+
+    /// <summary>An answer's own call, in a console conversation, for a spoken reply to name.</summary>
+    private async Task<long> AnswerCall(string conversationId)
+    {
+        await using var db = NewDb(_dbName);
+        var row = new AiCall
+        {
+            CreatedUtc = DateTime.UtcNow,
+            AgentKey = AiCatalog.DeskAssistant,
+            Tier = "judge",
+            Source = "console",
+            RequestedBy = "upendra",
+            ConversationId = conversationId,
+            Outcome = AiCallOutcome.Ok,
+        };
+        db.AiCalls.Add(row);
+        await db.SaveChangesAsync();
+        return row.Id;
+    }
+
+    /// <summary>A refusal's words, after checking its status.</summary>
+    private static string Error(IActionResult result, int status)
+    {
+        var refused = Assert.IsAssignableFrom<ObjectResult>(result);
+        Assert.Equal(status, refused.StatusCode);
+        return JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(refused.Value))!["error"]!.GetValue<string>();
+    }
 
     private const string PollyRefusal =
         """{"message":"User: the desk's role in account 123456789012 is not authorized to perform: polly:SynthesizeSpeech because no identity-based policy allows the polly:SynthesizeSpeech action"}""";
@@ -557,14 +854,22 @@ public sealed class AiVoiceTests
             new AiMemoryBook(sp.GetRequiredService<TradingDbContext>(), ai.Client, ai.Options), ai.Options));
         var scopes = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Telegram:BotToken"] = "123:TEST" }).Build();
-        var voice = new TelegramVoice(scopes, new BedrockOpenChatClient(new Factory(aws), ai.Options, signer),
-            new PollySpeechClient(new Factory(aws), ai.Options, signer), ai.Options, log ?? NullLogger<TelegramVoice>.Instance);
+        var shared = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), ai.Options, signer),
+            new PollySpeechClient(new Factory(aws), ai.Options, signer), ai.Options, NullLogger<AiVoiceService>.Instance);
+        var voice = new TelegramVoice(shared, log ?? NullLogger<TelegramVoice>.Instance);
+        _shared = shared;
+        _ai = ai;
         _pairing = new TelegramPairing();
         var assistant = new TelegramAssistant(scopes, new Factory(bot), config, _pairing, ai.Options, NullLogger<TelegramAssistant>.Instance, voice: voice);
         return (ai, aws, bot, signer, assistant, ai.Options);
     }
 
     private TelegramPairing _pairing = new();
+
+    /// <summary>The one voice <see cref="Setup"/> gave Telegram, which the console's endpoints are given too.</summary>
+    private AiVoiceService _shared = null!;
+
+    private Services _ai = null!;
 
     private async Task Link(TelegramAssistant assistant) =>
         await assistant.HandleAsync(Message(Owner, $$"""{"text":"/pair {{_pairing.Create("upendra").Code}}"}"""), CancellationToken.None);

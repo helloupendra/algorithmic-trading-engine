@@ -348,10 +348,10 @@ public static partial class AiCatalog
     /// <summary>The AI's one Telegram message a day (run reviews and the AI Trader's day). A scheduled job, not an agent: it asks no model.</summary>
     public const string DailyDigest = "ai-digest";
 
-    /// <summary>A voice note to the Telegram assistant written down by the audio model (Voxtral on Bedrock): named on each transcription's call.</summary>
+    /// <summary>A spoken question (a Telegram voice note, a console recording) written down by the audio model (Voxtral on Bedrock): named on each transcription's call.</summary>
     public const string VoiceTranscribe = "voice-transcribe";
 
-    /// <summary>A Telegram answer spoken back by Amazon Polly: named on each spoken reply's call.</summary>
+    /// <summary>An answer spoken back by Amazon Polly, on Telegram or the console: named on each spoken reply's call.</summary>
     public const string VoiceSpeak = "voice-speak";
 
     public static readonly IReadOnlyList<AiTierDef> Tiers =
@@ -1011,14 +1011,14 @@ public static partial class AiCatalog
 
     /// <summary>The voice transcription's pseudo-agent: named on its calls.</summary>
     public static readonly AiAgentDef VoiceTranscribeAgent = new(
-        VoiceTranscribe, 0, "Voice transcription", "Writes down a voice note the owner sent the Telegram assistant.",
-        "The owner can ask the desk by voice; the transcript is asked as if typed.", "When a linked owner sends a voice note", "2",
-        Built: true, "", "The voice note, which is not kept; the transcript is.", NoOrders);
+        VoiceTranscribe, 0, "Voice transcription", "Writes down a question the owner spoke: a Telegram voice note, or a recording on AI → Assistant.",
+        "The owner can ask the desk by voice; the transcript is asked as if typed.", "When a linked owner sends a voice note, or the mic on AI → Assistant sends a recording", "2",
+        Built: true, "", "The audio, which is not kept; the transcript is.", NoOrders);
 
     /// <summary>The spoken reply's pseudo-agent: named on its calls.</summary>
     public static readonly AiAgentDef VoiceSpeakAgent = new(
-        VoiceSpeak, 0, "Voice reply", "Speaks a short version of the answer to a voice note (Amazon Polly).",
-        "The answer heard as well as read.", "After the text answer to a voice note", "2",
+        VoiceSpeak, 0, "Voice reply", "Speaks a short version of an answer (Amazon Polly): to a Telegram voice note, or on AI → Assistant with Speak replies on.",
+        "The answer heard as well as read.", "After the text answer to a voice note, or to a console question with Speak replies on", "2",
         Built: true, "", "The answer's text, without tables, links or tool citations.", NoOrders);
 
     public static AiAgentDef? Agent(string? key) =>
