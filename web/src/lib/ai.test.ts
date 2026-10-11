@@ -61,6 +61,7 @@ import {
   readTelegram,
   shortDate,
   sourceLabel,
+  CALL_SOURCES,
   telegramState,
   budgetText,
   istDaysAgo,
@@ -1181,6 +1182,11 @@ describe('telegram and sources', () => {
       'Telegram',
     ])
     expect(sourceLabel('carrier-pigeon')).toBe('carrier-pigeon')
+  })
+
+  it("names Ira's own alerts apart from the voice notes it answers", () => {
+    expect(sourceLabel('alert')).toBe('Ira alert')
+    expect(CALL_SOURCES).toContain('alert')
   })
 })
 
