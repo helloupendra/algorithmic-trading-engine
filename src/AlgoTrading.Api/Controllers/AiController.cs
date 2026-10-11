@@ -829,6 +829,19 @@ public class AiController : ControllerBase
 
     private const string VoiceOff = "Voice is switched off on this desk (Ai:Voice:Enabled). Type the question instead.";
 
+    private const string HandsFreeOff = "Hands-free is switched off on this desk (Ai:Voice:HandsFreePerMinute is 0). Use the mic button, or type the question.";
+
+    /// <summary>
+    /// What AI → Assistant needs to know about the voice: the assistant's name as it is now (set with /name on
+    /// Telegram), whether voice and spoken replies are on, and how many hands-free utterances a minute the desk takes.
+    /// </summary>
+    [HttpGet("voice")]
+    public async Task<IActionResult> GetVoice([FromServices] AiVoiceService voice, CancellationToken cancellationToken)
+    {
+        var s = _settings.CurrentValue.Voice;
+        return Ok(new AiVoiceInfo(await voice.NameAsync(cancellationToken), s.Enabled, s.SpeakReplies, Math.Max(0, s.HandsFreePerMinute)));
+    }
+
     /// <summary>
     /// A question spoken on AI → Assistant, written down by the audio model (<see cref="AiVoiceService"/>, as Telegram's
     /// voice notes are). The body is the recording as <c>audio/wav</c> (the console records 16 kHz mono 16-bit), at
@@ -836,14 +849,24 @@ public class AiController : ControllerBase
     /// as a question does. The audio is not kept: the call's row (agent <c>voice-transcribe</c>, source
     /// <c>console</c>) holds the transcript. The console then asks the transcript exactly as a typed question.
     /// </summary>
+    /// <remarks>
+    /// <c>wake=1</c>: a hands-free utterance, which may not have been said to the assistant at all. The answer adds
+    /// whether it was (<c>addressed</c>: its name first, after an optional greeting) and the <c>question</c> without the
+    /// name; one that was not is still a row, summarised "not addressed: …". These have a budget of their own,
+    /// <c>Ai:Voice:HandsFreePerMinute</c> a minute per user (429 with Retry-After past it), instead of the AI rate limit
+    /// a question counts toward: six a minute would spend that in five minutes of talk at the desk.
+    /// </remarks>
     [HttpPost("voice/transcribe")]
     public async Task<IActionResult> Transcribe(
         [FromServices] AiVoiceService voice,
         [FromQuery] string? conversationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        [FromQuery] string? wake = null)
     {
         var s = _settings.CurrentValue.Voice;
         if (!s.Enabled) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = VoiceOff });
+        bool handsFree = wake?.Trim().ToLowerInvariant() is "1" or "true" or "yes";
+        if (handsFree && s.HandsFreePerMinute <= 0) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = HandsFreeOff });
 
         string type = (Request.ContentType ?? string.Empty).Split(';')[0].Trim().ToLowerInvariant();
         if (!WavTypes.Contains(type))
@@ -884,6 +907,8 @@ public class AiController : ControllerBase
 
         if (seconds < MinVoiceSeconds) return BadRequest(new { error = "That recording is too short to hold a question. Speak a little longer, or type it." });
 
+        if (handsFree) return await HandsFreeAsync(voice, wav, seconds, conversation, cancellationToken);
+
         // The same brake as a typed question's: a stuck button cannot spend the audio model's share either.
         var (lease, refusal) = _limiter.TryAcquire(Actor());
         if (lease is null)
@@ -920,6 +945,49 @@ public class AiController : ControllerBase
         }
 
         return Ok(new AiVoiceTranscript(heard.Text!, heard.CallId, seconds));
+    }
+
+    /// <summary>A hands-free utterance (<c>wake=1</c>), already read and checked: counted on its own budget, written down, and checked for the name.</summary>
+    private async Task<IActionResult> HandsFreeAsync(AiVoiceService voice, byte[] wav, double seconds, string conversation, CancellationToken cancellationToken)
+    {
+        if (!voice.TryStartHandsFree(Actor(), out int wait))
+        {
+            Response.Headers.RetryAfter = wait.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            int cap = _settings.CurrentValue.Voice.HandsFreePerMinute;
+            return StatusCode(StatusCodes.Status429TooManyRequests, new
+            {
+                error = $"Hands-free has sent {cap} utterances to be written down in the last minute, the most the desk takes " +
+                        "(Ai:Voice:HandsFreePerMinute): too much speech. It listens again shortly.",
+                retryAfterSeconds = wait,
+            });
+        }
+
+        VoiceTranscript heard;
+        try
+        {
+            heard = await voice.TranscribeAsync(
+                new VoiceAudio(wav, "wav", seconds, seconds, "hands-free utterance", wav.Length),
+                new VoiceCaller(AiVoiceService.Console, Actor(), User.GetUserId(), conversation),
+                wake: true,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+
+        if (heard.Failure is not null)
+        {
+            _logger?.LogInformation("Console voice: call {CallId} could not write a hands-free utterance down: {Outcome}", heard.CallId, heard.Failure);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                error = $"The audio model could not make out what was said: {heard.Failure} (call #{heard.CallId}).",
+                callId = heard.CallId,
+            });
+        }
+
+        var wake = heard.Wake ?? VoiceWake.NotAddressed;
+        return Ok(new AiVoiceWakeTranscript(heard.Text!, wake.Addressed, wake.Question, heard.CallId, seconds));
     }
 
     /// <summary>
@@ -1613,6 +1681,15 @@ public sealed record AiAskRequest(
 
 /// <summary>A console recording written down: the transcript, its <c>voice-transcribe</c> call, and the recording's length.</summary>
 public sealed record AiVoiceTranscript(string Text, long CallId, double Seconds);
+
+/// <summary>
+/// A hands-free utterance written down: what was heard, whether it was said to the assistant, the question without the
+/// name (empty when not addressed, or when only the name was said), its <c>voice-transcribe</c> call and its length.
+/// </summary>
+public sealed record AiVoiceWakeTranscript(string Text, bool Addressed, string Question, long CallId, double Seconds);
+
+/// <summary>The voice as AI → Assistant shows it: the assistant's name, the desk's switches, and the hands-free budget.</summary>
+public sealed record AiVoiceInfo(string Name, bool Enabled, bool SpeakReplies, int HandsFreePerMinute);
 
 /// <summary>An answer to speak; <c>callId</c>, the answer's own call, puts the spoken reply's row in its conversation.</summary>
 public sealed record AiVoiceSpeakRequest(string? Text, long? CallId);

@@ -412,6 +412,21 @@ public sealed class AiVoiceSettings
     /// empty, no line.
     /// </summary>
     public string Name { get; set; } = "Ira";
+
+    /// <summary>
+    /// Other spellings that count as the name in a hands-free utterance, beyond what the matcher already hears as it
+    /// (case, punctuation, Devanagari, a misheard vowel or a trailing h): for example a nickname, or a mishearing seen on
+    /// the Calls tab. Empty by default.
+    /// </summary>
+    public List<string> NameAliases { get; set; } = [];
+
+    /// <summary>
+    /// Hands-free utterances one user may have written down in any minute (console, AI → Assistant). Each is one
+    /// Voxtral call, whether or not it was said to the assistant; past this the API answers 429 with Retry-After.
+    /// They have this budget of their own instead of <see cref="AiSettings.PerUserPer10Min"/>, which six a minute would
+    /// spend in five minutes of talk at the desk. 0 switches hands-free off.
+    /// </summary>
+    public int HandsFreePerMinute { get; set; } = 6;
 }
 
 /// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>
