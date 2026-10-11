@@ -599,6 +599,49 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-voice-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .ai-voice-problem > span { flex: 1 1 260px; min-width: 0; }
 .ai-q__heard { font-size: 11.5px; color: var(--text-2); }
+
+/* --- hands-free: the switch, and the listening line while it is on ---------------------- */
+.ai-hands { gap: 6px; }
+.ai-hands svg { width: 15px; height: 15px; }
+.ai-hands[aria-pressed='true'],
+.ai-hands[aria-pressed='true']:hover:not(:disabled) {
+  color: var(--brand-hi);
+  background: var(--brand-soft);
+}
+.ai-hf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--live);
+  border-radius: var(--radius-sm);
+}
+.ai-hf.is-paused { border-left-color: var(--line-strong); }
+.ai-hf__what { color: var(--text); font-weight: 550; }
+.ai-hf.is-paused .ai-hf__what { color: var(--text-2); font-weight: 500; }
+.ai-hf__dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 50%, transparent);
+  animation: pill-pulse 2.4s infinite;
+}
+.ai-hf.is-paused .ai-hf__dot { background: var(--text-3); box-shadow: none; animation: none; }
+.ai-hf__meter { width: 48px; }
+.ai-hf__wait { font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ai-hf__doing, .ai-hf__hint { font-size: 11.5px; }
+.ai-hf__hint { margin-left: auto; }
+.ai-hf__note { margin-left: auto; font-size: 11.5px; color: var(--text-3); }
+.ai-hf__note--wake { color: var(--brand-hi); }
+.ai-hf__note--failed { color: var(--warn); }
 .ai-end { height: 1px; margin-top: 0 !important; }
 
 /* --- an answer's text ------------------------------------------------------------ */
@@ -1126,7 +1169,7 @@ a.ai-subject:hover { text-decoration: underline; }
 
 @media (prefers-reduced-motion: reduce) {
   .ai-a__meta--live::before { animation: none; }
-  .ai-rec__dot { animation: none; }
+  .ai-rec__dot, .ai-hf__dot { animation: none; }
   .ai-rec__meter > span { transition: none; }
   .ai-rec__spin { animation-duration: 1.6s; }
   .ai-mini { transition: none; }
@@ -1146,7 +1189,10 @@ a.ai-subject:hover { text-decoration: underline; }
   .ai-composer { position: static; }
   .ai-composer__hint { display: none; }
   /* The speaker alone says it on a phone; its name stays for screen readers (aria-label). */
-  .ai-speak__label { display: none; }
+  .ai-speak__label, .ai-hands__label { display: none; }
+  /* One line while it listens; a moment's note takes a line of its own. */
+  .ai-hf__hint { display: none; }
+  .ai-hf__note { margin-left: 0; flex-basis: 100%; }
   .ai-rec__hint { margin-left: 0; flex-basis: 100%; }
   .ai-chat__facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .ai-chat__facts > div + div > dt { margin-top: 8px; }

@@ -2537,6 +2537,8 @@ interface AttemptMark {
 export interface HeardMark {
   callId: number | null
   seconds: number
+  /** Heard by hands-free listening (its name first), not recorded on the mic. */
+  handsFree?: boolean
 }
 
 /** One question and its answer, as the page shows it while it streams and after. */

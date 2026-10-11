@@ -14,13 +14,18 @@
  * browser: when on, a finished answer is fetched as speech (lib/voice speak)
  * and played. One audio element plays at a time; Stop stops it, and a new
  * question or a new recording stops it too.
+ *
+ * Hands-free is the viewer's choice too, off by default: on, the page listens
+ * without a press and asks whatever starts with the assistant's name
+ * ("Ira, …"); the API decides whether it did (voiceHooks useHandsFree). A
+ * line in the composer says it is listening, with a level, or why it paused.
  */
 
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { IconMic, IconSpeaker, IconStop } from '../../components/icons'
+import { IconHandsFree, IconMic, IconSpeaker, IconStop } from '../../components/icons'
 import { HOLD_MS, VOICE_MAX_SECONDS, clockText } from '../../lib/voice'
-import type { SpokenReplies, VoiceRecorder } from './voiceHooks'
+import type { HandsFree, HandsFreePause, SpokenReplies, VoiceRecorder } from './voiceHooks'
 
 /**
  * The mic beside Ask. A press that is held is push-to-talk: letting go sends.
@@ -161,6 +166,145 @@ export function SpeakToggle({ on, onChange }: { on: boolean; onChange: (on: bool
       <IconSpeaker />
       <span className="ai-speak__label">Speak replies</span>
     </button>
+  )
+}
+
+/**
+ * "Hands-free": the viewer's own switch, off by default and kept in this
+ * browser. On, the page listens for the assistant's name without a press.
+ * `why` says why it cannot be turned on here (voice off on the desk, an API
+ * without it); null when it can.
+ */
+export function HandsFreeToggle({
+  handsFree,
+  name,
+  why,
+  onTurnOn,
+}: {
+  handsFree: HandsFree
+  name: string
+  why: string | null
+  /** Called inside the click that turns it on: a gesture, for playback later. */
+  onTurnOn: () => void
+}) {
+  const on = handsFree.on && handsFree.available
+  const title = why ?? (on ? `Listening for "${name}" (in this browser). Click to stop and let go of the microphone.` : `Listen for "${name}, …" without pressing anything (in this browser)`)
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost btn--sm ai-hands"
+      aria-pressed={on}
+      aria-label="Hands-free"
+      title={title}
+      disabled={why != null && !on}
+      onClick={() => {
+        if (on) handsFree.toggle(false)
+        else {
+          onTurnOn()
+          handsFree.toggle(true)
+        }
+      }}
+    >
+      <IconHandsFree />
+      <span className="ai-hands__label">Hands-free</span>
+    </button>
+  )
+}
+
+/** The microphone's level, redrawn ten times a second from the hook's reading, without rendering the page. */
+function LiveMeter({ read }: { read: () => number }) {
+  const bar = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (bar.current) bar.current.style.transform = `scaleX(${read().toFixed(3)})`
+    }, 100)
+    return () => window.clearInterval(id)
+  }, [read])
+  return (
+    <span className="ai-rec__meter ai-hf__meter" aria-hidden="true">
+      <span ref={bar} style={{ transform: 'scaleX(0)' }} />
+    </span>
+  )
+}
+
+/** Seconds until `at`, as a clock, kept current. */
+function Countdown({ at }: { at: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(id)
+  }, [])
+  return <>{clockText(Math.ceil(Math.max(0, at - now) / 1000))}</>
+}
+
+function pausedText(pause: HandsFreePause, name: string): string {
+  switch (pause) {
+    case 'speaking':
+      return `Paused while ${name} speaks`
+    case 'answering':
+      return 'Paused while the answer comes'
+    case 'recording':
+      return 'Paused while you use the mic'
+    case 'blocked':
+      return 'Paused: this agent cannot be asked right now'
+    case 'hidden':
+      return 'Paused while this tab is hidden'
+    case 'cap':
+      return 'Paused: too much speech'
+    case 'resuming':
+      return `Listening for ${name}`
+  }
+}
+
+/**
+ * Hands-free's line in the composer while it is on: what it is doing, in
+ * words a screen reader is told (aria-live), and the microphone's level. A
+ * moment's note when something was heard but not said to the assistant. Off,
+ * it shows only why it turned itself off, if it did.
+ */
+export function HandsFreeStrip({ handsFree, name }: { handsFree: HandsFree; name: string }) {
+  const { status, pause, note } = handsFree
+  if (status === 'off') {
+    if (!handsFree.problem) return null
+    return (
+      <p className="small-note warn ai-flush ai-voice-problem" role="alert">
+        <span>{handsFree.problem}</span>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={handsFree.dismiss}>
+          Dismiss
+        </button>
+      </p>
+    )
+  }
+
+  const live = status === 'listening' || status === 'hearing' || status === 'checking' || pause === 'resuming'
+  const what =
+    status === 'starting'
+      ? 'Waiting for the microphone…'
+      : status === 'gesture'
+        ? 'The browser holds the microphone until you click'
+        : pause
+          ? pausedText(pause, name)
+          : `Listening for ${name}`
+  const doing = status === 'hearing' ? 'hearing you…' : status === 'checking' ? `checking for “${name}”…` : null
+  return (
+    <div className={`ai-hf ${live ? 'is-live' : 'is-paused'}`} role="status" aria-live="polite">
+      <span className="ai-hf__dot" aria-hidden="true" />
+      <span className="ai-hf__what">{what}</span>
+      {pause === 'cap' && handsFree.resumeAt != null && (
+        <span className="ai-hf__wait faint" aria-hidden="true">
+          · back in <Countdown at={handsFree.resumeAt} />
+        </span>
+      )}
+      {status === 'gesture' && (
+        <button type="button" className="btn btn--sm" onClick={handsFree.resume}>
+          Start listening
+        </button>
+      )}
+      {live && <LiveMeter read={handsFree.readLevel} />}
+      {doing && <span className="ai-hf__doing faint">{doing}</span>}
+      {note && <span className={`ai-hf__note ai-hf__note--${note.kind}`}>{note.text}</span>}
+      {!note && status === 'listening' && <span className="ai-hf__hint faint">Say “{name}, …”</span>}
+    </div>
   )
 }
 
