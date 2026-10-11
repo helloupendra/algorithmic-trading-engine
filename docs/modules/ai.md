@@ -956,9 +956,12 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   talking with, `/memory` lists what it reads, and `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
   those dropped, with nothing to answer. A button pressed by anyone but a linked owner does nothing.
 
-## Voice (Jarvis)
+## Voice (Disha)
 
-The linked owner can ask by voice (owner, 11 Oct 2026): a Telegram voice note in Hinglish, for example "Jarvis, aaj ka
+The owner asked for an assistant "like Iron Man's Jarvis", then for a name of its own: Disha ("direction"), a name that
+suits Kajal's voice.
+
+The linked owner can ask by voice (owner, 11 Oct 2026): a Telegram voice note in Hinglish, for example "Disha, aaj ka
 P&L kya hai?", is answered like a typed question, in text and, when Amazon Polly may be asked, in a short spoken reply
 (`TelegramVoice`).
 
@@ -979,18 +982,18 @@ How one voice note flows:
    (`BedrockOpenChatClient.TranscribeAsync`). The instruction asks for the words verbatim, Hindi in Roman script, then
    lists the desk's words: the strategies' names as said ("Ghost Tangent Crossings", "Fulcrum Straddle Buy"), from the
    strategy catalog, or from the morning plan when the catalog does not answer within 3 s, and NIFTY, BANKNIFTY,
-   SENSEX, P&L and Jarvis. Without them "Fulcrum" came back "Phalacrom" and "Ghost" came back "GOAT". It may still
+   SENSEX, P&L and Disha. Without them "Fulcrum" came back "Phalacrom" and "Ghost" came back "GOAT". It may still
    answer in Devanagari; the answering model reads it. Voxtral Mini answered the question instead of writing it down,
    so it is not used.
 5. **Heard.** The bot first sends `🎙 "…"` with the transcript, so a mishearing shows before the answer it led to.
 6. **Asked as typed.** The transcript goes through the same handling as typed text: the chat's agent, its
    conversation, memories, tools and chains, 👍 and 👎, and a voice reply to "What should it have said?" is a
-   correction. A transcript that starts with an agent's prefix word, after an optional "Jarvis", is that prefix:
+   correction. A transcript that starts with an agent's prefix word, after an optional "Disha", is that prefix:
    "Trader, why did you buy?" or "slash trader …" is `/trader why did you buy?`, and "Trader." alone switches to it.
    No other command is ever run by voice: a leading slash is dropped, so "/new" or "/unlink" heard is a question. The
    word must come out in Latin letters; one written in Devanagari is asked as is.
 7. **One line in the prompt.** A voice question's prompt gets one line after the agent's own (`AiAskInput.PromptNote`):
-   it was a voice note written down by machine, so a name may be misheard, and the owner may call it Jarvis
+   it was a voice note written down by machine, so a name may be misheard, and the owner may call it Disha
    (`Ai:Voice:Name`; empty leaves the name out). No persona is rewritten.
 8. **Spoken reply.** After the text, the answer's spoken version goes to Amazon Polly in `ap-south-1` (voice Kajal,
    neural, `en-IN`) and comes back as MP3, sent with `sendVoice`. The spoken version drops tables, code, links, URLs,
@@ -1006,7 +1009,7 @@ How one voice note flows:
 | `PollyUsdPerMillionChars` | 16 | Polly's neural list price, for the cost line |
 | `MaxSeconds`, `MaxBytes` | 120, 2 MB | The longest and largest note listened to |
 | `MaxSpokenChars` | 600 | The longest spoken reply |
-| `Name` | `Jarvis` | What the owner may call the assistant |
+| `Name` | `Disha` | What the owner may call the assistant |
 
 **Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram`, model
 `bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens. The

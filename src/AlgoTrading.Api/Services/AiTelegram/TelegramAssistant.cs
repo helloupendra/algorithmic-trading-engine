@@ -88,7 +88,7 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// correction is the answered call's agent's.
 /// </para>
 /// <para>
-/// A linked owner may also speak ("Jarvis", <see cref="TelegramVoice"/>): a voice
+/// A linked owner may also speak ("Disha", <see cref="TelegramVoice"/>): a voice
 /// note, or an MP3, OGG or WAV audio file, of at most two minutes and 2 MB, is
 /// written down, the bot replies with what it heard, and the transcript is then
 /// handled exactly as typed text, an agent's prefix word included ("Trader, why

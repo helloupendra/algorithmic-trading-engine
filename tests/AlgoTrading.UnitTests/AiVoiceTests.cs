@@ -23,7 +23,7 @@ using static AlgoTrading.UnitTests.AiTestKit;
 namespace AlgoTrading.UnitTests;
 
 /// <summary>
-/// "Jarvis": a linked owner's voice note to the Telegram assistant is decoded, written down by a scripted Bedrock
+/// "Disha": a linked owner's voice note to the Telegram assistant is decoded, written down by a scripted Bedrock
 /// audio model, answered as typed text, and spoken back by a scripted Amazon Polly. Nothing here reaches AWS or
 /// Telegram: the voice notes are made in the test with Concentus's own encoder.
 /// </summary>
@@ -87,23 +87,23 @@ public sealed class AiVoiceTests
     public void Strategy_names_are_given_as_they_are_said_with_the_desks_words()
     {
         var names = VoiceText.SpokenNames(["GhostTangentCrossings", "Fulcrum", "Fulcrum2StraddleBuy20", "Fulcrum3StraddleBuy175", "SmcStructureBreak", "ChainFlowBuy"]);
-        string instruction = VoiceText.Instruction(names, "Jarvis");
+        string instruction = VoiceText.Instruction(names, "Disha");
 
         Assert.Equal(new[] { "Ghost Tangent Crossings", "Fulcrum", "Fulcrum Straddle Buy", "Smc Structure Break", "Chain Flow Buy" }, names);
         Assert.StartsWith(VoiceText.BaseInstruction, instruction);
         Assert.EndsWith(
-            "Words you may hear, spelled as the desk spells them: Ghost Tangent Crossings, Fulcrum, Fulcrum Straddle Buy, Smc Structure Break, Chain Flow Buy, NIFTY, BANKNIFTY, SENSEX, P&L, Jarvis.",
+            "Names the speaker may say, spelled as the desk spells them; write one only if it is actually said: Ghost Tangent Crossings, Fulcrum, Fulcrum Straddle Buy, Smc Structure Break, Chain Flow Buy, NIFTY, BANKNIFTY, SENSEX, P&L, Disha.",
             instruction);
     }
 
     [Theory]
     [InlineData("Trader, why did you buy at 10:20?", "/trader why did you buy at 10:20?")]
     [InlineData("trader why did you buy?", "/trader why did you buy?")]
-    [InlineData("Jarvis, trader: kyun kharida?", "/trader kyun kharida?")]
+    [InlineData("Disha, trader: kyun kharida?", "/trader kyun kharida?")]
     [InlineData("Slash reviewer, run 339 kaisa tha?", "/reviewer run 339 kaisa tha?")]
     [InlineData("/news What moved?", "/news What moved?")]
     [InlineData("Trader.", "/trader")]
-    [InlineData("Jarvis, aaj ka P&L kya hai?", "Jarvis, aaj ka P&L kya hai?")]
+    [InlineData("Disha, aaj ka P&L kya hai?", "Disha, aaj ka P&L kya hai?")]
     [InlineData("Trader's book kya hai?", "Trader's book kya hai?")]
     [InlineData("Option chain mein max pain kya hai?", "Option chain mein max pain kya hai?")]
     [InlineData("/new positions kya hain?", "new positions kya hain?")]
@@ -111,7 +111,7 @@ public sealed class AiVoiceTests
     [InlineData("जार्विस, आज का P&L?", "जार्विस, आज का P&L?")]
     public void A_transcript_is_asked_as_typed_with_an_agents_prefix_word_and_never_another_command(string heard, string asked)
     {
-        Assert.Equal(asked, VoiceText.AsTyped(heard, TelegramAssistant.AgentCommands.Select(c => c.Command), "Jarvis"));
+        Assert.Equal(asked, VoiceText.AsTyped(heard, TelegramAssistant.AgentCommands.Select(c => c.Command), "Disha"));
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public sealed class AiVoiceTests
         await Link(assistant);
         bot.Sent.Clear();
         bot.File = OggOpus(seconds: 2, sampleRate: 48_000, channels: 1);
-        aws.Transcripts.Enqueue((200, Heard("Jarvis, aaj ka P&L kya hai?")));
+        aws.Transcripts.Enqueue((200, Heard("Disha, aaj ka P&L kya hai?")));
         aws.Speech.Enqueue((200, Mp3));
         ai.Provider.On(Judge1, Answer("""
             Aaj desk ne **₹2,22,414** net kamaye (`get_runs`, 15:31 IST).
@@ -259,10 +259,10 @@ public sealed class AiVoiceTests
         var parts = transcription["messages"]![0]!["content"]!.AsArray();
         byte[] sent = Convert.FromBase64String(parts[0]!["input_audio"]!["data"]!.GetValue<string>());
         Assert.Equal(("RIFF", 16_000), (Encoding.ASCII.GetString(sent, 0, 4), BinaryPrimitives.ReadInt32LittleEndian(sent.AsSpan(24))));
-        Assert.EndsWith("NIFTY, BANKNIFTY, SENSEX, P&L, Jarvis.", parts[1]!["text"]!.GetValue<string>());
+        Assert.EndsWith("NIFTY, BANKNIFTY, SENSEX, P&L, Disha.", parts[1]!["text"]!.GetValue<string>());
         Assert.Equal(200, transcription["max_tokens"]!.GetValue<int>());
         // What was heard, then the answer as typed text gets it, then the voice.
-        Assert.Equal("🎙 \"Jarvis, aaj ka P&L kya hai?\"", bot.Texts[0]);
+        Assert.Equal("🎙 \"Disha, aaj ka P&L kya hai?\"", bot.Texts[0]);
         Assert.Contains("<b>₹2,22,414</b>", bot.Texts[1]);
         Assert.Contains("fb:-1:", bot.Sent.Last(s => s["method"] == "sendMessage")["reply_markup"]);
         var spoken = Assert.Single(bot.Voices);
@@ -278,14 +278,14 @@ public sealed class AiVoiceTests
         Assert.All(calls, c => Assert.Equal(("telegram", "upendra", $"tg-{Owner}"), (c.Source, c.RequestedBy, c.ConversationId)));
         var heard = calls[0];
         Assert.Equal((AiCallOutcome.Ok, "bedrock-oss:" + Voxtral, 410, 12, 422), (heard.Outcome, heard.Model, heard.PromptTokens, heard.CompletionTokens, heard.TotalTokens));
-        Assert.Equal(("Jarvis, aaj ka P&L kya hai?", "Jarvis, aaj ka P&L kya hai?"), (heard.Summary, heard.Answer));
+        Assert.Equal(("Disha, aaj ka P&L kya hai?", "Disha, aaj ka P&L kya hai?"), (heard.Summary, heard.Answer));
         // The audio is not kept: only the instruction and a line describing it.
         Assert.Contains("the audio is not kept", heard.MessagesJson);
         Assert.DoesNotContain("UklGR", heard.MessagesJson);
         Assert.True(heard.MessagesJson.Length < 2000);
         // The question is the transcript, asked as typed text is, with the one voice line after the prompt.
-        Assert.Equal("Jarvis, aaj ka P&L kya hai?", calls[1].Summary);
-        Assert.EndsWith(VoiceText.PromptNote("Jarvis"), calls[1].SystemPrompt);
+        Assert.Equal("Disha, aaj ka P&L kya hai?", calls[1].Summary);
+        Assert.EndsWith(VoiceText.PromptNote("Disha"), calls[1].SystemPrompt);
         Assert.StartsWith(AiCatalog.Agent(AiCatalog.DeskAssistant)!.SystemPrompt, calls[1].SystemPrompt);
         var said = calls[2];
         Assert.Equal((AiCallOutcome.Ok, "polly:Kajal/neural"), (said.Outcome, said.Model));
