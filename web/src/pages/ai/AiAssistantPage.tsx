@@ -48,6 +48,10 @@
  * marked "🎙 heard". A voice question never runs /remember. With Speak replies
  * on (this browser's choice, off by default), the newest answer is read aloud
  * when it finishes; Stop, a new question or a new recording stops it.
+ * Hands-free (also this browser's choice, off by default) keeps the mic open
+ * and asks whatever is said to the assistant by name ("Ira, …"), marked
+ * "🎙 heard hands-free"; it pauses while Ira speaks, while an answer comes,
+ * while the mic button is in use and while the tab is hidden.
  */
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -92,8 +96,9 @@ import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
 import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
 import { DocsSearchCard, TelegramCard } from './AssistantSide'
-import { MicButton, PlaybackBar, RecordingStrip, SpeakToggle } from './AssistantVoice'
-import { useSpokenReplies, useVoiceRecorder } from './voiceHooks'
+import { HandsFreeStrip, HandsFreeToggle, MicButton, PlaybackBar, RecordingStrip, SpeakToggle } from './AssistantVoice'
+import { useAiVoice, useHandsFree, useSpokenReplies, useVoiceRecorder } from './voiceHooks'
+import type { HandsFreeHold } from './voiceHooks'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -410,9 +415,13 @@ function Turn({ turn, now, agentKey, agentName }: { turn: ChatTurn; now: number;
           {turn.heard && (
             <span
               className="ai-q__heard"
-              title={`Spoken (${formatSeconds(turn.heard.seconds)}) and written down by the audio model; the words below were asked as typed`}
+              title={
+                turn.heard.handsFree
+                  ? `Heard hands-free (${formatSeconds(turn.heard.seconds)}), said to the assistant by name and written down by the audio model; the words below were asked as typed`
+                  : `Spoken (${formatSeconds(turn.heard.seconds)}) and written down by the audio model; the words below were asked as typed`
+              }
             >
-              <span aria-hidden="true">🎙</span> heard
+              <span aria-hidden="true">🎙</span> heard{turn.heard.handsFree ? ' hands-free' : ''}
               {turn.heard.callId != null && (
                 <>
                   {' · '}
@@ -683,6 +692,42 @@ export function AiAssistantPage() {
   )
   const recording = recorder.state !== 'idle'
 
+  // Hands-free: quiet while Ira speaks (it must not hear itself), while an answer comes, while the mic is in use,
+  // and while there is nobody to ask.
+  const voice = useAiVoice()
+  const voiceName = voice.data?.name ?? 'Ira'
+  const handsFreeHold: HandsFreeHold | null =
+    replies.state === 'fetching' || replies.state === 'playing'
+      ? 'speaking'
+      : busy != null
+        ? 'answering'
+        : recording || hearing
+          ? 'recording'
+          : blocked
+            ? 'blocked'
+            : null
+  const handsFree = useHandsFree({
+    info: voice.data ?? null,
+    hold: handsFreeHold,
+    conversationId: chat.conversationId,
+    // A question said to the assistant is asked as the mic's are; when it cannot be asked now, it waits in the box.
+    onQuestion: (question, mark) => {
+      if (askNow.current(question, mark)) return
+      setDraft((d) => (d.trim() ? d : question))
+      setComposerNote('Heard, but it cannot be asked yet: the words are in the box. Ask when the answer above finishes.')
+    },
+  })
+  // Why hands-free cannot be turned on here, for its title; null when it can.
+  const handsFreeWhy = voice.isError
+    ? 'Hands-free needs the latest API build: restart the API to pick up the code'
+    : !voice.data
+      ? "Checking the desk's voice…"
+      : !voice.data.enabled
+        ? 'Voice is switched off on this desk (Ai:Voice:Enabled)'
+        : voice.data.handsFreePerMinute <= 0
+          ? 'Hands-free is switched off on this desk (Ai:Voice:HandsFreePerMinute is 0)'
+          : null
+
   // The press that starts a recording: whatever is being read aloud stops (the mic would hear it), and the press
   // itself unlocks playback for the answer, where a browser wants a gesture first.
   const onMicPress = () => {
@@ -922,6 +967,7 @@ export function AiAssistantPage() {
           onKeyDown={onKeyDown}
         />
         <RecordingStrip recorder={recorder} hearing={hearing} onStopHearing={() => hearAbort.current?.abort()} keyboard={finePointer} />
+        <HandsFreeStrip handsFree={handsFree} name={voiceName} />
         {composerNote && (
           <p className="small-note warn ai-flush" role="alert">
             {composerNote}
@@ -961,6 +1007,16 @@ export function AiAssistantPage() {
           </span>
           <div className="ai-composer__send">
             <SpeakToggle on={speakOn} onChange={toggleSpeak} />
+            <HandsFreeToggle
+              handsFree={handsFree}
+              name={voiceName}
+              why={handsFreeWhy}
+              onTurnOn={() => {
+                // The click is the gesture a spoken reply may need later, when nothing else is pressed.
+                replies.unlock()
+                setComposerNote(null)
+              }}
+            />
             <MicButton recorder={recorder} disabled={micBlocked != null} why={micBlocked} onStart={onMicPress} />
             {streaming && !recording && (
               <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={stop}>

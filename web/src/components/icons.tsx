@@ -164,6 +164,15 @@ export const IconMic = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+/** A small mic with sound reaching it from both sides: hands-free listening. */
+export const IconHandsFree = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="9.5" y="4" width="5" height="9" rx="2.5" />
+    <path d="M7.5 11a4.5 4.5 0 009 0M12 15.5V19M9.5 19h5" />
+    <path d="M5 7a8 8 0 000 7M19 7a8 8 0 010 7" />
+  </Icon>
+)
+
 /** A speaker with sound coming out: answers read aloud. */
 export const IconSpeaker = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
