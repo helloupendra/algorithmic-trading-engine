@@ -176,12 +176,23 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
 
     private const int MaxFlaw = 300;
 
-    /// <summary>Whether <paramref name="quote"/> is in <paramref name="source"/>, ignoring case, spacing and the quote marks around it.</summary>
+    /// <summary>
+    /// Whether <paramref name="quote"/> is in <paramref name="source"/>, ignoring case, spacing and the quote marks around
+    /// it. A quote stitched from several passages ("a … b", "a; b", "a | b", or "a", "b") passes when every passage of
+    /// four characters or more is in the source word for word and they hold twelve characters between them: on 11 Oct
+    /// 2026, 40 of 60 rehearsed REJECTs quoted the brief this way and went uncounted.
+    /// </summary>
     public static bool Quotes(string source, string quote)
     {
-        string q = Normal(quote.Trim().Trim('"', '“', '”', '\'', '‘', '’').Trim());
-        return q.Length >= 4 && Normal(source).Contains(q, StringComparison.Ordinal);
+        string text = Normal(source);
+        var parts = QuoteJoins.Split(quote)
+            .Select(p => Normal(p.Trim().Trim('"', '“', '”', '\'', '‘', '’', ',', ';', ' ').Trim()))
+            .Where(p => p.Length >= 4)
+            .ToList();
+        return parts.Count > 0 && parts.Sum(p => p.Length) >= 12 && parts.All(p => text.Contains(p, StringComparison.Ordinal));
     }
+
+    private static readonly Regex QuoteJoins = new(@"\.\.\.|…|\s\|\s|;\s|""\s*,\s*""", RegexOptions.Compiled);
 
     private static string Normal(string text) => Regex.Replace(text.ToLowerInvariant(), @"\s+", " ");
 

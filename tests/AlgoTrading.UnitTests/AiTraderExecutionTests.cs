@@ -133,6 +133,20 @@ public sealed class AiTraderExecutionTests : IDisposable
         Assert.Contains("refused (validator)", AiTraderAgent.LastLooks([row]));
     }
 
+    [Theory]
+    [InlineData("NIFTY 22,612 above EMA20 and EMA50", true)]
+    [InlineData("NIFTY 22,612 above EMA20...direction.logit p 0.41", true)]
+    [InlineData("NIFTY 22,612 above EMA20 | direction.logit p 0.41", true)]
+    [InlineData("\"NIFTY 22,612 above EMA20\", \"direction.logit p 0.41\"", true)]
+    [InlineData("NIFTY 22,612 above EMA20...the RBI cut rates at noon", false)]
+    [InlineData("NIFTY ... EMA20", false)]
+    public void A_quote_stitched_from_passages_counts_only_when_each_is_word_for_word(string quote, bool counts)
+    {
+        const string brief = "NIFTY 22,612 above EMA20 and EMA50; trend.logit p 0.62; direction.logit p 0.41; 225 minutes left.";
+
+        Assert.Equal(counts, AiTraderValidator.Quotes(brief, quote));
+    }
+
     [Fact]
     public async Task A_reject_whose_quote_is_not_in_the_brief_is_not_counted()
     {
