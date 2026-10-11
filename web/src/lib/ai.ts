@@ -2361,12 +2361,13 @@ const field = (body: unknown, key: string): unknown =>
   body && typeof body === 'object' ? (body as Record<string, unknown>)[key] : undefined
 
 /** A refusal body's { retryAfterSeconds }, rounded up; the header wins when both are sent. */
-function bodyRetryAfter(body: unknown): number | null {
+export function bodyRetryAfter(body: unknown): number | null {
   const v = num(field(body, 'retryAfterSeconds'))
   return v == null ? null : Math.max(0, Math.ceil(v))
 }
 
-function bodyCallId(body: unknown): number | null {
+/** A refusal body's { callId }: the refusal is logged as a call too. */
+export function bodyCallId(body: unknown): number | null {
   return num(field(body, 'callId'))
 }
 
@@ -2379,7 +2380,8 @@ export function retryAfterSeconds(header: string | null | undefined, nowMs: numb
   return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - nowMs) / 1000))
 }
 
-function serverText(body: unknown): string {
+/** What a refusal's body says in words ({ error } and the like, or plain text), never an HTML page. */
+export function serverText(body: unknown): string {
   if (typeof body === 'string') return body.trim().startsWith('<') ? '' : body.trim()
   if (body && typeof body === 'object') {
     for (const key of ['error', 'message', 'title', 'detail']) {
@@ -2529,10 +2531,18 @@ interface AttemptMark {
   tools: number
 }
 
+/** A question that was spoken, not typed: its transcription's call and the recording's length. */
+export interface HeardMark {
+  callId: number | null
+  seconds: number
+}
+
 /** One question and its answer, as the page shows it while it streams and after. */
 export interface ChatTurn {
   id: string
   question: string
+  /** Spoken on the mic and written down (🎙): asked exactly as typed, marked as heard. Null for a typed question. */
+  heard: HeardMark | null
   tier: AskTier
   status: TurnStatus
   callId: number | null
@@ -2571,7 +2581,7 @@ export interface ChatState {
 }
 
 export type ChatAction =
-  | { type: 'ask'; id: string; question: string; tier: AskTier; now: number }
+  | { type: 'ask'; id: string; question: string; tier: AskTier; now: number; heard?: HeardMark | null }
   | { type: 'event'; id: string; event: AiStreamEvent }
   | { type: 'refused'; id: string; message: string; status: number | null; callId?: number | null }
   | { type: 'stopped'; id: string }
@@ -2703,6 +2713,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     const turn: ChatTurn = {
       id: action.id,
       question: action.question,
+      heard: action.heard ?? null,
       tier: action.tier,
       status: 'streaming',
       callId: null,

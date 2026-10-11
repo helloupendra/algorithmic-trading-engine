@@ -515,7 +515,90 @@ a.ai-call-link:hover { text-decoration: underline; }
   line-height: 1.5;
 }
 .ai-composer__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.ai-composer__hint { margin-left: auto; font-size: 11.5px; }
+/* The hint takes the room between the models and the buttons, and wraps before the buttons do. */
+.ai-composer__hint { flex: 1 1 180px; min-width: 0; text-align: right; font-size: 11.5px; }
+.ai-composer__send { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* --- voice ("Ira"): the mic, the recording line, spoken replies ----------------------- */
+.ai-mic {
+  padding: 4px 8px;
+  /* A held press is push-to-talk: no scrolling, selecting or long-press menu under the finger. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.ai-mic svg, .ai-speak svg { width: 15px; height: 15px; }
+.ai-mic[aria-pressed='true'],
+.ai-mic[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--neg-soft);
+  border-color: color-mix(in srgb, var(--neg) 45%, transparent);
+  color: var(--neg);
+}
+.ai-speak { gap: 6px; }
+.ai-speak[aria-pressed='true'],
+.ai-speak[aria-pressed='true']:hover:not(:disabled) {
+  color: var(--brand-hi);
+  background: var(--brand-soft);
+}
+.ai-rec,
+.ai-playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--neg);
+  border-radius: var(--radius-sm);
+}
+.ai-rec__what { color: var(--text); font-weight: 550; }
+.ai-rec__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--neg);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--neg) 50%, transparent);
+  animation: pill-pulse 1.6s infinite;
+}
+.ai-rec__time { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); }
+.ai-rec__meter {
+  position: relative;
+  width: 64px;
+  height: 4px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+.ai-rec__meter > span {
+  position: absolute;
+  inset: 0;
+  background: var(--live);
+  transform-origin: left center;
+  transition: transform 0.1s linear;
+}
+.ai-rec__hint { margin-left: auto; font-size: 11.5px; }
+.ai-rec--hearing, .ai-playback { border-left-color: var(--brand); }
+.ai-rec__spin {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.ai-rec__end, .ai-playback__stop { margin-left: auto; }
+.ai-playback > svg { width: 14px; height: 14px; flex: none; color: var(--brand-hi); }
+.ai-voice-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.ai-voice-problem > span { flex: 1 1 260px; min-width: 0; }
+.ai-q__heard { font-size: 11.5px; color: var(--text-2); }
 .ai-end { height: 1px; margin-top: 0 !important; }
 
 /* --- an answer's text ------------------------------------------------------------ */
@@ -1043,6 +1126,9 @@ a.ai-subject:hover { text-decoration: underline; }
 
 @media (prefers-reduced-motion: reduce) {
   .ai-a__meta--live::before { animation: none; }
+  .ai-rec__dot { animation: none; }
+  .ai-rec__meter > span { transition: none; }
+  .ai-rec__spin { animation-duration: 1.6s; }
   .ai-mini { transition: none; }
 }
 
@@ -1059,7 +1145,9 @@ a.ai-subject:hover { text-decoration: underline; }
      screen for the answer. The page follows the answer down to it instead. */
   .ai-composer { position: static; }
   .ai-composer__hint { display: none; }
-  .ai-composer__go { margin-left: auto; }
+  /* The speaker alone says it on a phone; its name stays for screen readers (aria-label). */
+  .ai-speak__label { display: none; }
+  .ai-rec__hint { margin-left: 0; flex-basis: 100%; }
   .ai-chat__facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .ai-chat__facts > div + div > dt { margin-top: 8px; }
   .ai-a { padding: 8px 11px 11px; }
