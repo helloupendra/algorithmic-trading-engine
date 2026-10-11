@@ -17,6 +17,8 @@
 		<PackageReference Include="Anthropic" Version="12.54.0" />
 		<PackageReference Include="Anthropic.Bedrock" Version="0.13.7" />
 		<PackageReference Include="AWSSDK.BedrockRuntime" Version="4.0.101.9" />
+		<PackageReference Include="Concentus" Version="2.2.2" />
+		<PackageReference Include="Concentus.Oggfile" Version="1.0.7" />
 		<PackageReference Include="fyers-api-v3" Version="1.2.0" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
