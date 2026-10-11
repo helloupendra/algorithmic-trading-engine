@@ -412,6 +412,32 @@ public sealed class AiVoiceSettings
     /// empty, no line.
     /// </summary>
     public string Name { get; set; } = "Ira";
+
+    /// <summary>Ira speaking first: alerts and the two briefings to the linked owners' private chats (<c>Ai:Voice:Alerts</c>).</summary>
+    public AiVoiceAlertsSettings Alerts { get; set; } = new();
+}
+
+/// <summary>
+/// The <c>Ai:Voice:Alerts</c> section: what Ira tells the linked owners without being asked (the AI Trader acting live,
+/// a run's risk rules stopping it or closing a group, a high or critical Sentinel incident) and the two spoken
+/// briefings of an NSE trading day. Each owner can turn them off for himself with <c>/alerts off</c>.
+/// </summary>
+public sealed class AiVoiceAlertsSettings
+{
+    /// <summary>The desk-wide switch: off, Ira tells nobody anything first, whatever each owner chose.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>The morning briefing's time, IST (HH:mm), on NSE trading days.</summary>
+    public string MorningAt { get; set; } = "09:10";
+
+    /// <summary>
+    /// The close briefing's time, IST (HH:mm), on NSE trading days; on a day the session closes later (a special
+    /// session), ten minutes after that close.
+    /// </summary>
+    public string CloseAt { get; set; } = "15:40";
+
+    /// <summary>Event messages one owner gets in an hour at most; past it they fold into one "and N more" line. Briefings are not counted.</summary>
+    public int MaxPerHour { get; set; } = 8;
 }
 
 /// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>

@@ -232,6 +232,10 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.AiVoice.AiVoiceService>()
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramVoice>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
+// Ira speaks first (Ai:Voice:Alerts): the AI Trader acting live, risk stops, high and critical incidents, and the 09:10
+// and 15:40 IST briefings, to the linked owners' private chats as text and a voice note; one pass a minute.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiVoice.IIraDesk, AlgoTrading.Api.Services.AiVoice.IraDesk>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.AiVoice.IraAlertService>();
 // The agents' memory: the owner's notes, verdicts and corrections, and the check's lessons (AI → Memory).
 builder.Services.AddScoped<AlgoTrading.Api.Services.AgentMemory.AiMemoryService>();
 // The owner's one page (Today): trading, agents, learning, system and decisions at a glance.

@@ -946,6 +946,9 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   `/technical`, `/options`, `/macro`, `/fundamental`, `/data`, `/compliance` or `/research` before a question asks
   that agent instead ([Talking to the agents](#talking-to-the-agents)). A voice note is written down and asked the
   same way, and answered by voice too ([Voice](#voice-jarvis)).
+- **Alerts.** Ira also speaks first: the AI Trader acting live, risk stops, high and critical incidents, and two
+  briefings a trading day ([Ira speaks first](#ira-speaks-first)). `/alerts on`, `/alerts off` and `/alerts` set and
+  show them for that owner.
 - **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
   monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
   the call number go under each answer.
@@ -1092,6 +1095,96 @@ tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder
 scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing. The
 console's endpoints are tested the same way, on WAV recordings made in the test, with the same scripted Mantle and
 Polly; the browser's WAV encoder and voice client are tested in `web/src/lib/wav.test.ts` and `voice.test.ts`.
+
+### Ira speaks first
+
+Step 3a (11 Oct 2026): when something matters, Ira does not wait to be asked. Each alert is one short message in the
+private chat of every linked owner (the Telegram assistant's owners), followed by the same words as a Polly voice note.
+Code writes every word from the desk's own records (`IraDesk`, `IraAlertText`). No model is asked, so every number is
+the desk's.
+
+**What is told.**
+
+| Event | Told when | Example |
+| --- | --- | --- |
+| The AI Trader acted live | An `ai_trader_decisions` row in `live` mode, not in a replay, with `Executed`: a buy, an exit, a strategy started or stopped. A buy or start waiting for the Validator and the Risk Memo is told once it is placed. Shadow and replay decisions, refusals and "none" are never told. Its reason is its own stored words, cut to the first sentence and 140 characters. | "The AI Trader bought 2 lots of NIFTY 25100 CE at ₹120.50, with a stop at ₹95 and a target at ₹170. Its reason: NIFTY broke above the morning high with call OI building." |
+| Risk rules stopped a run | A live run's `RUN_STOPPED` signal signed `risk-guard`: its overall stop loss, trailing stop or target ([the stop pipeline](strategies_module.md)). Recaps, backtests and replays are not told. The net is the run's after charges (`RunPnl`, as the run page shows it). | "Risk rules stopped Ghost Tangent Crossings on NIFTY in admin's account: its overall stop loss was hit. The run ended ₹5,068 down after charges." |
+| Risk rules closed a group | A live run's `CLOSE_GROUP` signed `risk-guard` whose reason is a group rule's. A leg's own stop is not told. | "Risk rules closed group G1 of Fulcrum on BANKNIFTY in coderforchange's account: its group target was hit. The run is ₹1,240 up after charges so far." |
+| A Sentinel incident | An incident at `high` or `critical` when Ira first sees it: its title and the first line of its summary. One that opens at medium and rises later is not told. A reopened one keeps its row and is not told again. | "Sentinel opened a critical incident: Dhan feed silent. No tick for 5 minutes since 10:52 IST." |
+
+The other wordings: "The AI Trader exited 2 lots of NIFTY 25100 CE at ₹88.50. Its reason: …", "The AI Trader started
+Ghost Tangent Crossings on BANKNIFTY with 1 lot, run 512. Its reason: …", "The AI Trader stopped run 512, Ghost Tangent
+Crossings on BANKNIFTY, and squared off 2 positions. Its reason: …".
+
+**The two briefings**, on NSE trading days only (the exchange calendar through `IMarketSessionService`: never on a
+weekend or a holiday). Neither counts toward the hourly cap.
+
+- **Morning, `MorningAt` (09:10 IST).** The Macro Analyst's band and size, the Technical Analyst's grade per index, and
+  the Options Analyst's stance per index: the latest `ok` report of the day written by then, as the AI Trader's brief
+  reads them (`DeskAnalysts.LatestOkAsync`). Then the runs the morning plan started per account (`DeskPlanBuilder`, the
+  Desk's own count). What is missing is said plainly. "Good morning. Macro: lean bullish, size 0.80. Technical: NIFTY
+  bullish B, BANKNIFTY neutral C; SENSEX not graded. Options: NIFTY range-bound, BANKNIFTY bearish, SENSEX neutral.
+  Morning plan: 1 of 3 runs started for admin, 0 of 2 for coderforchange." With nothing written yet: "No Macro report
+  yet today." and so on.
+- **Close, `CloseAt` (15:40 IST).** On a day whose session closes later, ten minutes after that close. Each account's
+  day net after charges, the best and the worst run, and the AI Trader's day, through the same calls Today makes
+  (`TodayBuilder.TradingAsync` and `AiTraderAsync`), so the two never differ. "The market has closed. Day net after
+  charges: admin ₹81,804 down, coderforchange ₹1,200 up. Best run: Ghost on NIFTY for admin, ₹5,000 up. Worst run:
+  Fulcrum on BANKNIFTY for admin, ₹86,804 down. The AI Trader acted twice; its book is ₹1,240 up after charges." The AI
+  Trader's part may also be "made no trade", "in shadow mode, made 3 paper trades, …" or "was off".
+- A briefing missed by more than 30 minutes (the API down at its time) is not sent late.
+
+**How it runs.** `IraAlertService`, a hosted service, makes one pass a minute, starting 90 s after a start, as the
+scheduled agents do. It runs only where they run (`Ai:SchedulerEnabled`), while `Ai:Voice:Alerts:Enabled` is on and
+the bot has its token. It asks no model.
+
+**The high-water mark.** One `system_settings` row, `ai.voice.alerts.marks`, keeps a cursor for each source
+(decisions, run signals, incidents):
+- `through`: every row at or below it is dealt with;
+- `told`: the rows above it already told;
+- `seen`: the newest row the last pass saw.
+
+A pass reads only the rows after `through`. It moves `through` to the previous pass's `seen`, so a row whose insert was
+still committing while a newer one was read is never stepped over. It never moves past a buy or start still waiting
+for its checks. The row also keeps the day each briefing last went and each owner's sends in the last hour.
+
+- **Nothing twice.** The row is saved before anything is sent. A crash between the two loses a message rather than
+  sending one twice.
+- **Nothing missed across a restart.** The marks carry on where they were. Anything first seen more than 30 minutes
+  before the pass is passed over, not told: after a restart Ira tells the last half hour, never older history.
+- **The very first pass** starts the marks at the newest rows, so nothing already in the tables is told.
+
+**Not too much.** At most `MaxPerHour` (8) event messages go to one owner in a rolling hour. Past that, events fold,
+and the next message he gets ends with "And 3 more alerts since 10:59 IST: see Today on the console." That message is
+the next event, the next briefing, or, once the hour has room again, the line on its own.
+
+**`/alerts`.** `/alerts off` stops the events and the briefings for that owner only; `/alerts on` brings them back;
+`/alerts` alone says where they stand. Each owner's choice is kept in `system_settings` as
+`ai.voice.alerts.owner.<Telegram user id>` (`on` or `off`), and is on until he turns it off. Only the command writes
+it. While the desk-wide switch is off, `/alerts` says so.
+
+**Voice.** The text goes first. The same words then go through the assistant's one voice (`AiVoiceService`, Polly's
+Kajal), once per distinct message, and reach each owner as a voice note. Each is a `voice-speak` row with source
+`alert`, which the Calls tab shows as "Ira alert". The voice's one-hour back-off after a Polly refusal applies here
+too. If Polly cannot speak, the text has already gone. A message is kept under 350 characters, cut after its last
+whole sentence, so it is about 25 seconds aloud.
+
+**Quiet.** Each alert sent is logged at Information ("Ira: told upendra (risk, text and voice): …"). Every failure is
+logged at Information too, so Sentinel never raises an incident for an alert. Nothing changes in the trades and system
+channels, the AI daily digest, or what the AI Trader does.
+
+| `Ai:Voice:Alerts` | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | `true` | The desk-wide switch: off, Ira tells nobody anything first |
+| `MorningAt` | `09:10` | The morning briefing, IST, on NSE trading days |
+| `CloseAt` | `15:40` | The close briefing, IST; ten minutes after a later close |
+| `MaxPerHour` | `8` | Event messages per owner per hour; briefings are not counted |
+
+**Tests** (`IraAlertTests`, no AWS and no Telegram: a scripted Polly and a scripted bot): the exact words of each event
+and briefing; shadow, replay, refused and older decisions, recaps, backtests and a leg's own stop told nothing; a buy
+waiting for its checks told once placed; the mark across a restart, with history older than 30 minutes passed over;
+the cap's "and N more"; `/alerts off` for one owner only; no briefing on a weekend or a holiday; Polly refusing with the
+text still sent.
 
 ## Talking to the agents
 

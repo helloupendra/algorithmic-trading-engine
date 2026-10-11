@@ -453,7 +453,7 @@ export interface AiCallFilters {
   agent?: string
   outcome?: string
   model?: string
-  /** console, api, schedule, check, health, index or telegram. */
+  /** console, api, schedule, check, health, index, telegram or alert (Ira speaking first). */
   source?: string
   take?: number
 }
@@ -752,6 +752,7 @@ const SOURCES: Record<string, string> = {
   index: 'Docs index',
   telegram: 'Telegram',
   preview: 'AI Trader look now',
+  alert: 'Ira alert',
 }
 
 export const CALL_SOURCES = Object.keys(SOURCES)

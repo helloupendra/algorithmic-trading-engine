@@ -409,13 +409,7 @@ public static class DeskAnalysts
     {
         var asOf = DateTime.SpecifyKind(asOfUtc, DateTimeKind.Utc);
         var day = IstTime.DateOf(asOf);
-        var keys = SlotKeys.ToList();
-        var rows = await db.AiReports.AsNoTracking()
-            .Where(r => keys.Contains(r.AgentKey) && r.SubjectType == AiReportSubject.Check && r.SessionDate == day
-                        && r.Status == AiReportStatus.Ok && r.UpdatedUtc <= asOf)
-            .Select(r => new { r.Id, r.AgentKey, r.UpdatedUtc, r.DataJson })
-            .ToListAsync(cancellationToken);
-        var latest = rows.GroupBy(r => r.AgentKey).ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.UpdatedUtc).ThenByDescending(r => r.Id).First());
+        var latest = await LatestOkAsync(db, asOf, cancellationToken);
         if (latest.Count == 0)
         {
             return replay
@@ -453,6 +447,29 @@ public static class DeskAnalysts
         }
 
         return lines.Count == 0 ? "None written yet today." : string.Join('\n', lines);
+    }
+
+    /// <summary>One slot analyst's latest checked report of a day: when it was written and what it said.</summary>
+    public sealed record LatestReport(long Id, DateTime UpdatedUtc, string DataJson);
+
+    /// <summary>
+    /// The latest <c>ok</c> report of the IST day of <paramref name="asOfUtc"/> of each slot analyst (Macro, Technical,
+    /// Options/OI), written at or before that moment; an analyst with none that day is not in it. The brief's section
+    /// and Ira's morning briefing read the same reports through it.
+    /// </summary>
+    public static async Task<Dictionary<string, LatestReport>> LatestOkAsync(TradingDbContext db, DateTime asOfUtc, CancellationToken cancellationToken)
+    {
+        var asOf = DateTime.SpecifyKind(asOfUtc, DateTimeKind.Utc);
+        var day = IstTime.DateOf(asOf);
+        var keys = SlotKeys.ToList();
+        var rows = await db.AiReports.AsNoTracking()
+            .Where(r => keys.Contains(r.AgentKey) && r.SubjectType == AiReportSubject.Check && r.SessionDate == day
+                        && r.Status == AiReportStatus.Ok && r.UpdatedUtc <= asOf)
+            .Select(r => new { r.Id, r.AgentKey, r.UpdatedUtc, r.DataJson })
+            .ToListAsync(cancellationToken);
+        return rows.GroupBy(r => r.AgentKey).ToDictionary(
+            g => g.Key,
+            g => g.OrderByDescending(r => r.UpdatedUtc).ThenByDescending(r => r.Id).Select(r => new LatestReport(r.Id, r.UpdatedUtc, r.DataJson)).First());
     }
 
     /// <summary>
