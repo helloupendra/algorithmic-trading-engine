@@ -2,7 +2,8 @@
  * The AI workspace: the desk's hosted language models, the agents that use
  * them, and every call they made (api/Ai, admin-only on the server).
  *
- * The models are NVIDIA-hosted (build.nvidia.com, the free NIM API), grouped
+ * The models are open models on Amazon Bedrock (NVIDIA's free NIM API while
+ * Bedrock's are off, and Claude on Bedrock once AWS allows it), grouped
  * into tiers. A tier is an ordered chain: the first model answers, and the
  * next is asked only when it fails or times out. An agent uses its tier's
  * chain unless the owner gave it one of its own. The key never leaves the
@@ -2835,7 +2836,7 @@ export const CHAT_AGENTS: readonly ChatAgentMeta[] = [
   {
     key: DESK_ASSISTANT,
     label: 'Desk Assistant',
-    lead: "Ask the desk's AI. It reads the desk through read-only tools, answers stream from the NVIDIA-hosted models of the tier you pick, and every question is logged in the Calls tab.",
+    lead: "Ask the desk's AI. It reads the desk through read-only tools, answers stream from the models of the tier you pick (open models on Amazon Bedrock), and every question is logged in the Calls tab. The mic asks it by voice.",
     starters: [
       'How did the runs do today?',
       'Why did the worst run today lose money?',
