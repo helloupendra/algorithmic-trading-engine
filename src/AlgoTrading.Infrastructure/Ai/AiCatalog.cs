@@ -269,9 +269,22 @@ public static partial class AiCatalog
     /// <summary>Served by Amazon Bedrock, Claude or an open model: AWS bills every call.</summary>
     public static bool OnBedrock(string model) => IsBedrock(model) || IsBedrockOpen(model);
 
+    /// <summary>A call's model that starts with this is an Amazon Polly voice (<c>polly:Kajal/neural</c>): a spoken reply, not a chat model.</summary>
+    public const string PollyPrefix = "polly:";
+
+    public const string PollyProviderName = "Amazon Polly";
+
+    public static bool IsPolly(string model) => model.StartsWith(PollyPrefix, StringComparison.Ordinal);
+
+    /// <summary>Polly's SynthesizeSpeech, in <paramref name="region"/>.</summary>
+    public static string PollyEndpoint(string region) => $"https://polly.{region}.amazonaws.com/v1/speech";
+
     /// <summary>Who serves <paramref name="model"/>, as the console names it.</summary>
     public static string ProviderOf(string model) =>
-        IsBedrock(model) ? BedrockProviderName : IsBedrockOpen(model) ? BedrockOpenProviderName : ProviderName;
+        IsBedrock(model) ? BedrockProviderName
+        : IsBedrockOpen(model) ? BedrockOpenProviderName
+        : IsPolly(model) ? PollyProviderName
+        : ProviderName;
 
     /// <summary>The console's chat. The one agent built in Phase 1.</summary>
     public const string DeskAssistant = "desk-assistant";
@@ -334,6 +347,12 @@ public static partial class AiCatalog
 
     /// <summary>The AI's one Telegram message a day (run reviews and the AI Trader's day). A scheduled job, not an agent: it asks no model.</summary>
     public const string DailyDigest = "ai-digest";
+
+    /// <summary>A voice note to the Telegram assistant written down by the audio model (Voxtral on Bedrock): named on each transcription's call.</summary>
+    public const string VoiceTranscribe = "voice-transcribe";
+
+    /// <summary>A Telegram answer spoken back by Amazon Polly: named on each spoken reply's call.</summary>
+    public const string VoiceSpeak = "voice-speak";
 
     public static readonly IReadOnlyList<AiTierDef> Tiers =
     [
@@ -990,9 +1009,23 @@ public static partial class AiCatalog
         "Moves search and memory off NVIDIA in one step: nothing changes unless every vector is made.", "Once, when the owner asks", "2",
         Built: true, "embed", "The memories' and the docs' own text.", NoOrders);
 
+    /// <summary>The voice transcription's pseudo-agent: named on its calls.</summary>
+    public static readonly AiAgentDef VoiceTranscribeAgent = new(
+        VoiceTranscribe, 0, "Voice transcription", "Writes down a voice note the owner sent the Telegram assistant.",
+        "The owner can ask the desk by voice; the transcript is asked as if typed.", "When a linked owner sends a voice note", "2",
+        Built: true, "", "The voice note, which is not kept; the transcript is.", NoOrders);
+
+    /// <summary>The spoken reply's pseudo-agent: named on its calls.</summary>
+    public static readonly AiAgentDef VoiceSpeakAgent = new(
+        VoiceSpeak, 0, "Voice reply", "Speaks a short version of the answer to a voice note (Amazon Polly).",
+        "The answer heard as well as read.", "After the text answer to a voice note", "2",
+        Built: true, "", "The answer's text, without tables, links or tool citations.", NoOrders);
+
     public static AiAgentDef? Agent(string? key) =>
         string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase) ? ModelTestAgent
         : string.Equals(key, Reembed, StringComparison.OrdinalIgnoreCase) ? ReembedAgent
+        : string.Equals(key, VoiceTranscribe, StringComparison.OrdinalIgnoreCase) ? VoiceTranscribeAgent
+        : string.Equals(key, VoiceSpeak, StringComparison.OrdinalIgnoreCase) ? VoiceSpeakAgent
         : string.Equals(key, AssistantCheck, StringComparison.OrdinalIgnoreCase) ? AssistantCheckAgent
         : string.Equals(key, AssistantExam, StringComparison.OrdinalIgnoreCase) ? AssistantExamAgent
         : string.Equals(key, DocIndex, StringComparison.OrdinalIgnoreCase) ? DocIndexAgent

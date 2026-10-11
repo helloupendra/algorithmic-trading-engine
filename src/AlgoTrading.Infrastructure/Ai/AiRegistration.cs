@@ -36,6 +36,11 @@ public static class AiRegistration
         services.AddHttpClient(BedrockOpenChatClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<IBedrockRequestSigner>(_ => new AwsSigV4BedrockSigner());
         services.AddSingleton<BedrockOpenChatClient>();
+
+        // Amazon Polly for the Telegram assistant's spoken replies (Ai:Voice), signed by the same signer and role. Like
+        // the open models, nothing calls it, or looks for credentials, until an owner's voice note is answered.
+        services.AddHttpClient(PollySpeechClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddSingleton<PollySpeechClient>();
         services.AddSingleton(sp => new AiChatRouter(
             sp.GetRequiredService<NvidiaChatClient>(), sp.GetRequiredService<BedrockClaudeClient>(), sp.GetRequiredService<BedrockOpenChatClient>()));
         services.AddSingleton<IBedrockRuntimeInvoker, AwsBedrockRuntimeInvoker>();

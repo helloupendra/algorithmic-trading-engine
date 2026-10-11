@@ -87,6 +87,15 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// Assistant. <c>/remember</c> and <c>/memory</c> are the chat's agent's, and a
 /// correction is the answered call's agent's.
 /// </para>
+/// <para>
+/// A linked owner may also speak ("Jarvis", <see cref="TelegramVoice"/>): a voice
+/// note, or an MP3, OGG or WAV audio file, of at most two minutes and 2 MB, is
+/// written down, the bot replies with what it heard, and the transcript is then
+/// handled exactly as typed text, an agent's prefix word included ("Trader, why
+/// …?" is <c>/trader why …?</c>). The answer comes as text and, when Amazon Polly
+/// may be asked, as a short voice reply after it. A stranger's voice note gets
+/// nothing, as a stranger's question does.
+/// </para>
 /// </remarks>
 public sealed class TelegramAssistant(
     IServiceScopeFactory scopes,
@@ -95,7 +104,8 @@ public sealed class TelegramAssistant(
     TelegramPairing pairing,
     IOptionsMonitor<AiSettings> settings,
     ILogger<TelegramAssistant> logger,
-    TimeProvider? time = null) : BackgroundService, IAiLessonNotifier
+    TimeProvider? time = null,
+    TelegramVoice? voice = null) : BackgroundService, IAiLessonNotifier
 {
     public const string HttpClientName = "telegram-assistant";
     public const string OffsetKey = "ai.telegram.offset";
@@ -230,7 +240,8 @@ public sealed class TelegramAssistant(
         string text = (message["text"]?.GetValue<string>() ?? string.Empty).Trim();
         string name = message["from"]?["username"]?.GetValue<string>() is { Length: > 0 } handle ? "@" + handle
             : message["from"]?["first_name"]?.GetValue<string>() ?? userId.ToString(CultureInfo.InvariantCulture);
-        if (userId == 0 || text.Length == 0) return;
+        var audio = TelegramAudio.Of(message);
+        if (userId == 0 || (text.Length == 0 && audio is null)) return;
 
         var owners = await OwnersAsync(cancellationToken);
         var owner = owners.FirstOrDefault(o => o.TelegramUserId == userId);
@@ -252,11 +263,26 @@ public sealed class TelegramAssistant(
 
         if (owner is null)
         {
-            // Strangers get one line to /start and nothing else.
+            // Strangers get one line to /start and nothing else; a stranger's voice note gets nothing at all.
             if (text.StartsWith("/start", StringComparison.OrdinalIgnoreCase)) await SendAsync(chatId, "This bot is private.", cancellationToken);
             return;
         }
 
+        if (audio is not null)
+        {
+            await VoiceAsync(message, chatId, userId, owner, audio, cancellationToken);
+            return;
+        }
+
+        await RespondAsync(message, chatId, userId, owner, text, spoken: false, cancellationToken);
+    }
+
+    /// <summary>
+    /// A linked owner's text, typed or heard: a command, a correction, or a question for the chat's agent. A voice
+    /// note's transcript comes here as typed text (<see cref="VoiceText.AsTyped"/>), and its answer is spoken too.
+    /// </summary>
+    private async Task RespondAsync(JsonObject message, long chatId, long userId, TelegramOwner owner, string text, bool spoken, CancellationToken cancellationToken)
+    {
         // "/trader why did you buy?" asks the AI Trader, and the chat stays with it; "/trader" alone switches to it.
         foreach (var (command, agentKey, agentName) in AgentCommands)
         {
@@ -271,7 +297,7 @@ public sealed class TelegramAssistant(
                 return;
             }
 
-            await AskAsync(chatId, owner, agentKey, rest.Length <= 4000 ? rest : rest[..4000], cancellationToken);
+            await AskAsync(chatId, owner, agentKey, rest.Length <= 4000 ? rest : rest[..4000], spoken, cancellationToken);
             return;
         }
 
@@ -347,7 +373,137 @@ public sealed class TelegramAssistant(
             return;
         }
 
-        await AskAsync(chatId, owner, AgentOf(chatId), text.Length <= 4000 ? text : text[..4000], cancellationToken);
+        await AskAsync(chatId, owner, AgentOf(chatId), text.Length <= 4000 ? text : text[..4000], spoken, cancellationToken);
+    }
+
+    /// <summary>
+    /// A linked owner's voice note or audio file: refused politely past the limits, else downloaded, written down,
+    /// shown as heard, and answered as typed text would be.
+    /// </summary>
+    private async Task VoiceAsync(JsonObject message, long chatId, long userId, TelegramOwner owner, TelegramAudio audio, CancellationToken cancellationToken)
+    {
+        var s = settings.CurrentValue.Voice;
+        string? refusal =
+            voice is null || !s.Enabled ? "Voice notes are switched off on this desk. Please type the question."
+            : audio.Format is null ? "I can listen to voice notes, and to MP3, OGG or WAV audio. Please send it as a voice note, or type the question."
+            : audio.Seconds > s.MaxSeconds ? $"That {audio.Kind} is {audio.Seconds} s long; I listen to {s.MaxSeconds} s at most. Please send a shorter one, or type the question."
+            : audio.Bytes > s.MaxBytes ? TooBig(audio.Kind, s.MaxBytes)
+            : null;
+        if (refusal is not null)
+        {
+            await SendAsync(chatId, refusal, cancellationToken);
+            return;
+        }
+
+        VoiceHeard heard;
+        using (var typing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            var typingLoop = TypingAsync(chatId, typing.Token);
+            try
+            {
+                var (bytes, why) = await DownloadAsync(audio, s.MaxBytes, cancellationToken);
+                heard = bytes is null ? VoiceHeard.Failed(why) : await voice!.HearAsync(bytes, audio, owner, chatId, cancellationToken);
+            }
+            finally
+            {
+                await typing.CancelAsync();
+                try { await typingLoop; } catch (OperationCanceledException) { }
+            }
+        }
+
+        if (heard.Text is null)
+        {
+            await SendAsync(chatId, heard.Error ?? $"I could not make out that {audio.Kind}.", cancellationToken);
+            return;
+        }
+
+        // What was heard first, so a mishearing is seen before the answer it led to.
+        await SendAsync(chatId, $"🎙 \"{(heard.Text.Length <= 3500 ? heard.Text : heard.Text[..3500] + "…")}\"", cancellationToken);
+        string asTyped = VoiceText.AsTyped(heard.Text, AgentCommands.Select(c => c.Command), s.Name);
+        if (asTyped.Length == 0) return;
+        await RespondAsync(message, chatId, userId, owner, asTyped, spoken: true, cancellationToken);
+    }
+
+    private static string TooBig(string kind, int maxBytes) =>
+        $"That {kind} is larger than {maxBytes / (1024.0 * 1024.0):0.#} MB, the most I take. Please send a shorter one, or type the question.";
+
+    /// <summary>
+    /// The audio's bytes through the Bot API (getFile, then the file's URL), never more than
+    /// <paramref name="maxBytes"/>; or why not. The URLs carry the bot's token, so neither is ever logged.
+    /// </summary>
+    private async Task<(byte[]? Bytes, string Why)> DownloadAsync(TelegramAudio audio, int maxBytes, CancellationToken cancellationToken)
+    {
+        const string Failed = "I could not download that from Telegram. Please send it again.";
+        var client = http.CreateClient(HttpClientName);
+        try
+        {
+            using var info = await client.GetAsync(
+                $"https://api.telegram.org/bot{Token}/getFile?file_id={Uri.EscapeDataString(audio.FileId)}", cancellationToken);
+            if (!info.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Telegram assistant: getFile was refused (HTTP {Status})", (int)info.StatusCode);
+                return (null, Failed);
+            }
+
+            var file = JsonNode.Parse(await info.Content.ReadAsStringAsync(cancellationToken))?["result"];
+            string? path = file?["file_path"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(path)) return (null, Failed);
+            if (file?["file_size"]?.GetValue<long>() > maxBytes) return (null, TooBig(audio.Kind, maxBytes));
+
+            using var response = await client.GetAsync($"https://api.telegram.org/file/bot{Token}/{path}", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Telegram assistant: a voice note's download was refused (HTTP {Status})", (int)response.StatusCode);
+                return (null, Failed);
+            }
+
+            if (response.Content.Headers.ContentLength > maxBytes) return (null, TooBig(audio.Kind, maxBytes));
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var bytes = new MemoryStream();
+            var buffer = new byte[64 * 1024];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                bytes.Write(buffer, 0, read);
+                if (bytes.Length > maxBytes) return (null, TooBig(audio.Kind, maxBytes));
+            }
+
+            return (bytes.ToArray(), string.Empty);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or InvalidOperationException or FormatException
+            || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogInformation("Telegram assistant: a voice note could not be downloaded ({Type})", ex.GetType().Name);
+            return (null, Failed);
+        }
+    }
+
+    /// <summary>The answer's spoken version as a voice message, and the one-time notice when Polly may not be asked.</summary>
+    private async Task SpeakAsync(long chatId, TelegramOwner owner, string answer, CancellationToken cancellationToken)
+    {
+        if (voice is null) return;
+        var spoken = await voice.SpeakAsync(answer, owner, chatId, cancellationToken);
+        if (spoken.Mp3 is not null) await SendVoiceAsync(chatId, spoken.Mp3, cancellationToken);
+        if (spoken.Notice is not null) await SendAsync(chatId, spoken.Notice, cancellationToken);
+    }
+
+    /// <summary>MP3 bytes as a Telegram voice message (sendVoice takes OGG/Opus, MP3 or M4A).</summary>
+    private async Task SendVoiceAsync(long chatId, byte[] mp3, CancellationToken cancellationToken)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(chatId.ToString(CultureInfo.InvariantCulture)), "chat_id");
+        var file = new ByteArrayContent(mp3);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+        form.Add(file, "voice", "reply.mp3");
+        try
+        {
+            using var response = await http.CreateClient(HttpClientName).PostAsync($"https://api.telegram.org/bot{Token}/sendVoice", form, cancellationToken);
+            if (!response.IsSuccessStatusCode) logger.LogInformation("Telegram assistant: a voice reply was refused (HTTP {Status})", (int)response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogInformation("Telegram assistant: a voice reply failed ({Error})", ex.HttpRequestError);
+        }
     }
 
     /// <summary>The agent a chat is talking with: the one its last question went to, while the conversation lasts; else the Desk Assistant.</summary>
@@ -371,7 +527,8 @@ public sealed class TelegramAssistant(
         return rest.Trim();
     }
 
-    private async Task AskAsync(long chatId, TelegramOwner owner, string agentKey, string question, CancellationToken cancellationToken)
+    /// <param name="spoken">The question came as a voice note: its prompt gets <see cref="VoiceText.PromptNote"/>, and the answer is spoken too.</param>
+    private async Task AskAsync(long chatId, TelegramOwner owner, string agentKey, string question, bool spoken, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
         // A conversation is with one agent: another agent starts its own.
@@ -389,7 +546,8 @@ public sealed class TelegramAssistant(
             long? consoleUserId = await db.AppUsers.AsNoTracking().Where(u => u.UserName == owner.ConsoleUser).Select(u => (long?)u.Id).FirstOrDefaultAsync(cancellationToken);
             var gateway = scope.ServiceProvider.GetRequiredService<AiGateway>();
             result = await gateway.AskAsync(new AiAskInput(
-                agentKey, null, messages, null, 4096, 0.2, $"tg-{chatId}", "telegram", owner.ConsoleUser, consoleUserId),
+                agentKey, null, messages, null, 4096, 0.2, $"tg-{chatId}", "telegram", owner.ConsoleUser, consoleUserId,
+                PromptNote: spoken ? VoiceText.PromptNote(settings.CurrentValue.Voice.Name) : null),
                 NullAiStreamSink.Instance, cancellationToken);
         }
         finally
@@ -418,6 +576,8 @@ public sealed class TelegramAssistant(
             // The verdict buttons go under the last part of the answer.
             await SendAsync(chatId, parts[i], cancellationToken, html: true, markup: i == parts.Count - 1 ? VerdictButtons(result.CallId) : null);
         }
+
+        if (spoken) await SpeakAsync(chatId, owner, result.Text, cancellationToken);
     }
 
     private static JsonObject VerdictButtons(long callId) => Keyboard(("👍", $"fb:1:{callId}"), ("👎", $"fb:-1:{callId}"));
