@@ -13,6 +13,12 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// an implementation takes only query services and returns a projection.
 /// </para>
 /// <para>
+/// The one exception is the Desk Assistant's proposal tools
+/// (<see cref="AiToolNames.Actions"/>): each writes a pending action and
+/// nothing else. It acts on the desk only when code runs it after the owner's
+/// PIN, which never reaches a model.
+/// </para>
+/// <para>
 /// A tool's answer leaves the server (it is sent to the model's provider), so
 /// it is built field by field from what the question needs: never an entity,
 /// never a DTO passed through whole. No tokens, broker client ids, emails or
@@ -40,7 +46,8 @@ public interface IAiTool
 }
 
 /// <summary>Who a tool runs for: the call that asked for it, so a tool that asks a model itself asks as the same person.</summary>
-public sealed record AiToolCaller(string AgentKey, string Source, string RequestedBy, long? UserId, string ConversationId);
+/// <param name="CallId">The asking call's row (<c>ai_calls</c>), so what a tool writes can name the call it came from.</param>
+public sealed record AiToolCaller(string AgentKey, string Source, string RequestedBy, long? UserId, string ConversationId, long? CallId = null);
 
 /// <summary>What a tool found.</summary>
 /// <param name="Data">Serialised as JSON (camelCase) for the model.</param>
@@ -179,4 +186,7 @@ public sealed class AiToolbox
     /// </summary>
     public IReadOnlyList<IAiTool> For(AiAgentDef agent, bool chat) =>
         ((chat ? agent.ChatTools ?? agent.Tools : agent.Tools) ?? []).Select(Find).Where(t => t is not null).Select(t => t!).ToList();
+
+    /// <summary>The Desk Assistant's proposal tools that exist on this build (<see cref="AiToolNames.Actions"/>), in order.</summary>
+    public IReadOnlyList<IAiTool> Actions() => AiToolNames.Actions.Select(Find).Where(t => t is not null).Select(t => t!).ToList();
 }

@@ -130,7 +130,9 @@ public sealed class AiAgentChatTests
 
         await ai.Gateway.AskAsync(Question("Why did you buy on 16 Sep?", AiCatalog.AiTrader) with { Source = "telegram" }, new RecordingSink(), CancellationToken.None);
 
-        Assert.Equal(new AiToolCaller(AiCatalog.AiTrader, "telegram", "upendra", 1, "c-test"), decisions.LastArgs!.Caller);
+        // Its caller names the asking call, so what a tool writes (a proposed action) can point back to it.
+        long callId = (await ai.Db.AiCalls.SingleAsync()).Id;
+        Assert.Equal(new AiToolCaller(AiCatalog.AiTrader, "telegram", "upendra", 1, "c-test", callId), decisions.LastArgs!.Caller);
         Assert.Equal("2026-09-16", decisions.LastArgs.String("day"));
     }
 

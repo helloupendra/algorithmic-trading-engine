@@ -239,6 +239,9 @@ public sealed class AiSettings
     /// <summary>Voice notes to the Telegram assistant and its spoken replies ("Ira"); on unless the owner turns it off.</summary>
     public AiVoiceSettings Voice { get; set; } = new();
 
+    /// <summary>The Desk Assistant's four proposed actions, each run by code after the owner's PIN (<c>Ai:Actions</c>).</summary>
+    public AiActionsSettings Actions { get; set; } = new();
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>
@@ -453,6 +456,20 @@ public sealed class AiVoiceAlertsSettings
 
     /// <summary>Event messages one owner gets in an hour at most; past it they fold into one "and N more" line. Briefings are not counted.</summary>
     public int MaxPerHour { get; set; } = 8;
+}
+
+/// <summary>
+/// The <c>Ai:Actions</c> section: the Desk Assistant may propose four actions on the paper desk (stop or start a
+/// strategy run, square off manual-book positions, switch an AI agent), which code runs only after the owner types his
+/// PIN. The model never acts and never sees the PIN.
+/// </summary>
+public sealed class AiActionsSettings
+{
+    /// <summary>The desk-wide switch: off, no proposal tool is offered to any model.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Seconds a proposed action waits for the owner's PIN before it expires.</summary>
+    public int ConfirmSeconds { get; set; } = 120;
 }
 
 /// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>

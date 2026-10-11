@@ -17,7 +17,12 @@ namespace AlgoTrading.Api.Services;
 
 /// <summary>Who asks for a start: the caller's id and name, and whether they are an admin.</summary>
 /// <param name="UserName">Who pressed the button; recorded on the run as who started it.</param>
-public sealed record StrategyStarter(long UserId, string? UserName, bool IsAdmin);
+/// <param name="AccountName">
+/// The caller's own account name, where it differs from <paramref name="UserName"/>: the owner's start through Ira is
+/// recorded as "upendra via Ira" but runs in upendra's account, which the refusals name. Null for
+/// <paramref name="UserName"/>.
+/// </param>
+public sealed record StrategyStarter(long UserId, string? UserName, bool IsAdmin, string? AccountName = null);
 
 /// <summary>How a start ended: started, or refused (and how an HTTP caller says so).</summary>
 public enum StrategyStartKind
@@ -54,8 +59,9 @@ public sealed record StrategyStartOutcome(
 
 /// <summary>
 /// The one way a live strategy runner starts: the checks, the run row, the runner process and its registration.
-/// <c>POST /api/Strategy/{id}/start</c> (<see cref="Controllers.StrategyController.StartStrategy"/>) and the AI Trader's
-/// strategy starts both come here, so a start the AI asks for is refused exactly where a person's would be.
+/// <c>POST /api/Strategy/{id}/start</c> (<see cref="Controllers.StrategyController.StartStrategy"/>), the AI Trader's
+/// strategy starts and the owner's starts through Ira (<see cref="AiActions.IraDeskHands"/>) all come here, so a start
+/// the AI asks for is refused exactly where a person's would be.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -140,7 +146,7 @@ public sealed class StrategyStartService(
         // every account without holding anyone's password.
         long callerId = caller.UserId;
         long userId = callerId;
-        string ownerName = caller.UserName ?? "unknown";
+        string ownerName = caller.AccountName ?? caller.UserName ?? "unknown";
         if (request.OwnerUserId is long owner && owner != callerId)
         {
             if (!caller.IsAdmin)

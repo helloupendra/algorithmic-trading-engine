@@ -226,6 +226,7 @@ def build_api_settings(env: dict[str, str]) -> dict:
             **build_bedrock_settings(env),
             **build_bedrock_open_settings(env),
             **build_voice_settings(env),
+            **build_actions_settings(env),
         },
     }
 
@@ -269,6 +270,16 @@ def build_voice_settings(env: dict[str, str]) -> dict:
         if switch in ("true", "false"):
             voice[name] = switch == "true"
     return {"Voice": voice} if voice else {}
+
+
+def build_actions_settings(env: dict[str, str]) -> dict:
+    """The Desk Assistant's PIN-confirmed actions: only the desk-wide switch.
+
+    On in code, so the switch is written for true and for false, and left out
+    otherwise. The owner's PIN is never in .env: only its hash, in the database.
+    """
+    switch = env.get("AI_ACTIONS_ENABLED", "").strip().lower()
+    return {"Actions": {"Enabled": switch == "true"}} if switch in ("true", "false") else {}
 
 
 def main() -> int:
