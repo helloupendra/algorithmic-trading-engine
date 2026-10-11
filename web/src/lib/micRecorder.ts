@@ -1,6 +1,7 @@
 /**
- * The microphone, recorded as raw samples with the Web Audio API and handed
- * back as the 16 kHz mono WAV the API takes (wav.ts).
+ * The microphone, as raw samples from the Web Audio API: a recording handed
+ * back as the 16 kHz mono WAV the API takes (startMic, wav.ts), or an open
+ * stream of blocks for hands-free listening (openMic, vad.ts).
  *
  * Not MediaRecorder: it records webm, ogg or mp4 depending on the browser, and
  * the audio model takes WAV or MP3 only. The samples come from an
@@ -9,8 +10,13 @@
  * same job on the main thread. Either way the graph ends in a muted gain, so
  * the browser keeps pulling samples and nothing is played back.
  *
+ * The browser is asked for echo cancellation, noise suppression and automatic
+ * gain: the first keeps a spoken reply coming out of the speakers from being
+ * heard as the owner (hands-free also pauses while it plays).
+ *
  * Browser-only: getUserMedia, AudioContext and a real microphone, which no
- * unit test has. The encoding it hands over to is tested (wav.test.ts).
+ * unit test has. The encoding and the listening it hands over to are tested
+ * (wav.test.ts, vad.test.ts).
  */
 
 import workletUrl from './pcmTap.worklet.js?url&no-inline'
@@ -29,14 +35,36 @@ export interface MicTake {
   cancel(): void
 }
 
+/** The microphone held open, handing each block of mono samples to its listener. */
+export interface MicStream {
+  /** The device's rate, which the blocks are at. */
+  readonly sampleRate: number
+  /** The browser holds the audio back until a click or a key press: the stream was opened without one (a reload with hands-free on). */
+  readonly suspended: boolean
+  /** Tries to let the audio through; true once it flows. Call it from a click or a key press. */
+  resume(): Promise<boolean>
+  /** Lets go of the microphone. */
+  close(): void
+}
+
 type WebkitWindow = Window & { webkitAudioContext?: typeof AudioContext }
 
 /**
- * Asks for the microphone (the browser may ask the viewer first) and starts
- * recording. Rejects with the browser's own error (NotAllowedError,
- * NotFoundError, …) or MicUnavailable; micErrorText words each.
+ * A suspended context resumed, waiting `ms` at most: without a click or key
+ * press behind it, resume() may not settle until there is one.
  */
-export async function startMic(): Promise<MicTake> {
+async function resumeSoon(context: AudioContext, ms = 400): Promise<void> {
+  if (context.state !== 'suspended') return
+  await Promise.race([context.resume().catch(() => undefined), new Promise((r) => window.setTimeout(r, ms))])
+}
+
+/**
+ * Asks for the microphone (the browser may ask the viewer first) and hands
+ * each block it hears to `onBlock`, mono, at the device's rate, until close.
+ * Rejects with the browser's own error (NotAllowedError, NotFoundError, …) or
+ * MicUnavailable; micErrorText words each.
+ */
+export async function openMic(onBlock: (mono: Float32Array) => void): Promise<MicStream> {
   const media = typeof navigator === 'undefined' ? undefined : navigator.mediaDevices
   if (!media?.getUserMedia) throw new MicUnavailable()
   const stream = await media.getUserMedia({
@@ -54,16 +82,10 @@ export async function startMic(): Promise<MicTake> {
     throw error
   }
 
-  const blocks: Float32Array[] = []
-  let frames = 0
-  let loudness = 0
   let closed = false
   const take = (channels: Float32Array[]) => {
     if (closed || channels.length === 0) return
-    const mono = downmix(channels)
-    blocks.push(mono)
-    frames += mono.length
-    loudness = level(mono)
+    onBlock(downmix(channels))
   }
 
   const source = context.createMediaStreamSource(stream)
@@ -88,9 +110,8 @@ export async function startMic(): Promise<MicTake> {
   source.connect(tap)
   tap.connect(mute)
   // A context made after an await may start suspended (Safari): the press that started it was the gesture.
-  if (context.state === 'suspended') await context.resume().catch(() => undefined)
+  await resumeSoon(context)
 
-  const rate = context.sampleRate
   const close = () => {
     if (closed) return
     closed = true
@@ -106,18 +127,46 @@ export async function startMic(): Promise<MicTake> {
   }
 
   return {
+    sampleRate: context.sampleRate,
+    get suspended() {
+      return !closed && context.state === 'suspended'
+    },
+    async resume() {
+      if (closed) return false
+      await resumeSoon(context, 1_000)
+      return context.state === 'running'
+    },
+    close,
+  }
+}
+
+/**
+ * Asks for the microphone and starts recording a question. Rejects as openMic
+ * does.
+ */
+export async function startMic(): Promise<MicTake> {
+  const blocks: Float32Array[] = []
+  let frames = 0
+  let loudness = 0
+  const mic = await openMic((mono) => {
+    blocks.push(mono)
+    frames += mono.length
+    loudness = level(mono)
+  })
+
+  return {
     get seconds() {
-      return frames / rate
+      return frames / mic.sampleRate
     },
     get level() {
       return loudness
     },
     finish() {
-      close()
-      return recordingToWav(blocks, rate)
+      mic.close()
+      return recordingToWav(blocks, mic.sampleRate)
     },
     cancel() {
-      close()
+      mic.close()
       blocks.length = 0
     },
   }
