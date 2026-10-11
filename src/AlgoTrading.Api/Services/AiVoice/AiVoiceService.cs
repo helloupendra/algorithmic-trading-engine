@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Api.Services.AiVoice;
 
 /// <summary>Whose voice call it is, as its <c>ai_calls</c> row records it.</summary>
-/// <param name="Source"><see cref="AiVoiceService.Telegram"/> or <see cref="AiVoiceService.Console"/>.</param>
+/// <param name="Source"><see cref="AiVoiceService.Telegram"/>, <see cref="AiVoiceService.Console"/>, or <see cref="AiVoiceService.Alert"/> for what Ira says first.</param>
 /// <param name="RequestedBy">The console user's name.</param>
 /// <param name="UserId">The console user's id; null, it is looked up by <paramref name="RequestedBy"/>.</param>
 /// <param name="ConversationId">The conversation the call belongs to: <c>tg-&lt;chat&gt;</c> on Telegram, the page's on the console.</param>
@@ -100,6 +100,9 @@ public sealed class AiVoiceService(
 {
     public const string Telegram = "telegram";
     public const string Console = "console";
+
+    /// <summary>The source of a spoken alert or briefing (<see cref="IraAlertService"/>): Ira spoke first, nobody asked.</summary>
+    public const string Alert = "alert";
 
     public const string Tier = "voice";
 
