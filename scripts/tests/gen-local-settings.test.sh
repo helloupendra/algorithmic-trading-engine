@@ -114,4 +114,18 @@ check "both together"                               '{"Enabled": true, "SpeakRep
 check "anything else for a switch is ignored"       "null"                                        "$(voice AI_VOICE_ENABLED=on AI_VOICE_SPEAK_REPLIES=1)"
 check "no AWS credential is carried"                "null"                                        "$(voice AWS_ACCESS_KEY_ID=not-a-key AWS_SECRET_ACCESS_KEY=not-a-secret)"
 
+actions() {  # key=value ... -> the Ai section's Actions part as sorted JSON
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+print(json.dumps(build_api_settings(env)["Ai"].get("Actions"), sort_keys=True))
+PY
+}
+check "actions are left out unless set (on in code)" "null"                                       "$(actions)"
+check "Ira's actions can be switched off"           '{"Enabled": false}'                          "$(actions AI_ACTIONS_ENABLED=false)"
+check "and on, whatever the case"                   '{"Enabled": true}'                           "$(actions AI_ACTIONS_ENABLED=TRUE)"
+check "anything else for the switch is ignored"     "null"                                        "$(actions AI_ACTIONS_ENABLED=yes)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

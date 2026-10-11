@@ -102,6 +102,99 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("activity_log", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiAction", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("CallId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<long?>("ChatId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ConfirmedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("ExecutedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ParamsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ConversationId", "Status" }, "IX_ai_actions_ConversationId_Status");
+
+                    b.HasIndex(new[] { "UserId", "CreatedUtc" }, "IX_ai_actions_UserId_CreatedUtc");
+
+                    b.ToTable("ai_actions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_actions_Channel", "\"Channel\" IN ('console', 'telegram')");
+
+                            t.HasCheckConstraint("CK_ai_actions_Kind", "\"Kind\" IN ('stop_run', 'start_run', 'square_off', 'agent_switch')");
+
+                            t.HasCheckConstraint("CK_ai_actions_Status", "\"Status\" IN ('pending', 'confirmed', 'cancelled', 'expired', 'executed', 'failed')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AiCall", b =>
                 {
                     b.Property<long>("Id")

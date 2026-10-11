@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AgentMemory;
+using AlgoTrading.Api.Services.AiActions;
 using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
@@ -102,6 +103,15 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// go through this bot to each linked owner's chat, and <c>/alerts on</c>,
 /// <c>/alerts off</c> and <c>/alerts</c> set and show the owner's own switch.
 /// </para>
+/// <para>
+/// Ira's actions (<see cref="IraActions"/>): when the Desk Assistant proposes one,
+/// the bot sends the summary code wrote and "Type your PIN to confirm, or /cancel."
+/// A typed message of 4 to 8 digits is handled here, before any model: the bot
+/// deletes it, checks it, carries the chat's pending action out and says what
+/// happened. A voice note never confirms anything: its transcript is a question.
+/// <c>/pin</c> sets or changes the PIN (the message is deleted) and
+/// <c>/cancel</c> drops the action waiting.
+/// </para>
 /// </remarks>
 public sealed class TelegramAssistant(
     IServiceScopeFactory scopes,
@@ -141,6 +151,9 @@ public sealed class TelegramAssistant(
 
     /// <summary>The line about Ira's alerts (<see cref="IraAlertService"/>) in the help the bot gives.</summary>
     private const string AlertsHelp = "/alerts on or /alerts off turns my spoken alerts and briefings on or off for you.";
+
+    /// <summary>The line about Ira's actions (<see cref="IraActions"/>) in the help the bot gives.</summary>
+    private const string ActionsHelp = "I can also stop or start a run, square off manual positions or switch an agent once you confirm with your PIN: /pin 1234 sets it, /cancel drops an action waiting for it.";
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -266,7 +279,7 @@ public sealed class TelegramAssistant(
             }
 
             await LinkAsync(userId, consoleUser, name, cancellationToken);
-            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation. {AgentHelp} {AlertsHelp}", cancellationToken);
+            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation. {AgentHelp} {AlertsHelp} {ActionsHelp}", cancellationToken);
             return;
         }
 
@@ -283,7 +296,122 @@ public sealed class TelegramAssistant(
             return;
         }
 
+        // A typed PIN, /pin or /cancel: handled here, before any model is asked, so a PIN never reaches one.
+        if (IsActionMessage(text))
+        {
+            await ActionMessageAsync(message, chatId, owner, text, cancellationToken);
+            return;
+        }
+
         await RespondAsync(message, chatId, userId, owner, text, spoken: false, cancellationToken);
+    }
+
+    /// <summary>Whether typed text is for Ira's actions: a bare PIN (4 to 8 digits), <c>/pin …</c> or <c>/cancel</c>.</summary>
+    public static bool IsActionMessage(string text) => IraPin.IsShape(text) || IsCommand(text, "/pin") || IsCommand(text, "/cancel");
+
+    /// <summary>
+    /// A typed PIN, <c>/pin …</c> or <c>/cancel</c> from a linked owner. A message that may hold a PIN is deleted from
+    /// the chat first (Telegram lets a bot delete what it was sent in a private chat), whatever comes of it.
+    /// </summary>
+    private async Task ActionMessageAsync(JsonObject message, long chatId, TelegramOwner owner, string text, CancellationToken cancellationToken)
+    {
+        if (!IsCommand(text, "/cancel") && message["message_id"]?.GetValue<long>() is long messageId and > 0)
+        {
+            await CallApiAsync("deleteMessage", new JsonObject { ["chat_id"] = chatId, ["message_id"] = messageId }, cancellationToken);
+        }
+
+        string reply;
+        string? outcome = null;
+        await using (var scope = scopes.CreateAsyncScope())
+        {
+            var actions = scope.ServiceProvider.GetService<IraActions>();
+            var ira = actions is null ? null : await actions.OwnerAsync(owner.ConsoleUser, cancellationToken);
+            if (actions is null)
+            {
+                reply = "Actions are not available on this desk.";
+            }
+            else if (ira is null)
+            {
+                reply = $"Actions are for an active admin's account, and {owner.ConsoleUser} is not one.";
+            }
+            else if (IsCommand(text, "/pin"))
+            {
+                reply = await PinCommandAsync(actions, ira, AfterCommand(text, "/pin"), cancellationToken);
+            }
+            else if (IsCommand(text, "/cancel"))
+            {
+                var pending = await actions.PendingAsync(ActionConversation(chatId), ira.UserId, cancellationToken);
+                reply = pending is null
+                    ? "Nothing is waiting to be confirmed."
+                    : (await actions.CancelAsync(pending.Id, ira, AiActionChannel.Telegram, cancellationToken)).Message;
+            }
+            else
+            {
+                (reply, outcome) = await ConfirmAsync(actions, ira, chatId, text, cancellationToken);
+            }
+        }
+
+        await SendAsync(chatId, reply, cancellationToken);
+
+        // The conversation knows what was done, so a follow-up ("and now?") is answered from it.
+        if (outcome is not null && _history.TryGetValue(chatId, out var h) && h.Turns.Count > 0 && h.Turns[^1].Role == "assistant")
+        {
+            var turns = h.Turns.ToList();
+            turns[^1] = new AiMessage("assistant", turns[^1].Content + "\n\n[" + outcome + "]");
+            _history[chatId] = (h.Agent, turns, h.LastUtc);
+        }
+    }
+
+    /// <summary>The conversation a Telegram chat's actions are kept under: the chat's own, as its questions are.</summary>
+    public static string ActionConversation(long chatId) => $"tg-{chatId}";
+
+    /// <summary>A typed PIN: the chat's pending action confirmed and carried out, or why not. The second value is what was done, for the conversation.</summary>
+    private static async Task<(string Reply, string? Outcome)> ConfirmAsync(IraActions actions, IraOwner ira, long chatId, string pin, CancellationToken cancellationToken)
+    {
+        if (!actions.Enabled) return (IraActions.OffText, null);
+        var pending = await actions.PendingAsync(ActionConversation(chatId), ira.UserId, cancellationToken);
+        if (pending is null)
+        {
+            var latest = await actions.LatestAsync(ActionConversation(chatId), ira.UserId, cancellationToken);
+            return (latest?.Status == AiActionStatus.Expired
+                ? $"No action is waiting for a PIN: {IraActionText.Expired(latest)} I deleted your message."
+                : "No action is waiting for a PIN. I deleted your message.", null);
+        }
+
+        var result = await actions.ConfirmAsync(pending.Id, ira, pin, AiActionChannel.Telegram, cancellationToken);
+        return result.Kind is IraConfirmKind.Executed or IraConfirmKind.Failed
+            ? (result.Message, $"Action #{pending.Id}: {result.Message}")
+            : (result.Message, null);
+    }
+
+    /// <summary><c>/pin</c>, <c>/pin 1234</c> or <c>/pin old new</c>: whether a PIN is set, set one, or change it.</summary>
+    private static async Task<string> PinCommandAsync(IraActions actions, IraOwner ira, string argument, CancellationToken cancellationToken)
+    {
+        string[] parts = argument.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool has = await actions.HasPinAsync(ira.UserId, cancellationToken);
+        if (parts.Length == 0)
+        {
+            return has
+                ? "Your Action PIN is set. Change it with /pin <old> <new>; I delete the message."
+                : "No Action PIN yet. Set one with /pin 1234 (4 to 8 digits): I ask for it before I stop or start a run, square off or switch an agent.";
+        }
+
+        if (parts.Length > 2) return IraActionText.PinUsage;
+        if (parts.Length == 1 && has) return "A PIN is already set: change it with /pin <old> <new>. I deleted your message.";
+        if (parts.Length == 2 && !has) return "No PIN is set yet: set one with /pin 1234. I deleted your message.";
+
+        var (change, left, lockedUntil) = parts.Length == 1
+            ? await actions.SetPinAsync(ira, parts[0], null, requireCurrent: true, "Telegram", cancellationToken)
+            : await actions.SetPinAsync(ira, parts[1], parts[0], requireCurrent: true, "Telegram", cancellationToken);
+        return change switch
+        {
+            IraPinChange.Set => "PIN set, and your message deleted. I ask for it before I act on the desk.",
+            IraPinChange.Changed => "PIN changed, and your message deleted.",
+            IraPinChange.WrongCurrent => IraActionText.WrongPin(left, lockedUntil).Replace("Nothing was done.", "The PIN is unchanged.", StringComparison.Ordinal),
+            IraPinChange.Locked => IraActionText.Locked(lockedUntil ?? DateTime.UtcNow) + " The PIN is unchanged.",
+            IraPinChange.NeedCurrent => "A PIN is already set: change it with /pin <old> <new>.",
+            _ => IraActionText.PinUsage,
+        };
     }
 
     /// <summary>
@@ -313,7 +441,7 @@ public sealed class TelegramAssistant(
         if (IsCommand(text, "/new") || IsCommand(text, "/start"))
         {
             _history.TryRemove(chatId, out _);
-            await SendAsync(chatId, $"New conversation. Ask about the desk. {AgentHelp} {AlertsHelp}", cancellationToken);
+            await SendAsync(chatId, $"New conversation. Ask about the desk. {AgentHelp} {AlertsHelp} {ActionsHelp}", cancellationToken);
             return;
         }
 
@@ -697,7 +825,23 @@ public sealed class TelegramAssistant(
             await SendAsync(chatId, parts[i], cancellationToken, html: true, markup: i == parts.Count - 1 ? VerdictButtons(result.CallId) : null);
         }
 
+        await OfferConfirmAsync(chatId, result, cancellationToken);
         if (spoken) await SpeakAsync(chatId, owner, result.Text, cancellationToken);
+    }
+
+    /// <summary>
+    /// After an answer whose model proposed an action: the summary code wrote, when it expires, and "Type your PIN to
+    /// confirm, or /cancel." The model's own words are not what the owner confirms.
+    /// </summary>
+    private async Task OfferConfirmAsync(long chatId, AiAskResult result, CancellationToken cancellationToken)
+    {
+        if (!result.Tools.Any(t => t.Ok && AiToolNames.Actions.Contains(t.Name))) return;
+        await using var scope = scopes.CreateAsyncScope();
+        if (scope.ServiceProvider.GetService<IraActions>() is not { } actions) return;
+        if (await actions.ProposedByAsync(result.CallId, cancellationToken) is { } action)
+        {
+            await SendAsync(chatId, IraActionText.AskPin(action), cancellationToken);
+        }
     }
 
     private static JsonObject VerdictButtons(long callId) => Keyboard(("👍", $"fb:1:{callId}"), ("👎", $"fb:-1:{callId}"));

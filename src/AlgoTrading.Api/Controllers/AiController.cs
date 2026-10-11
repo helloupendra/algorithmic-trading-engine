@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Api.Services.AiActions;
 using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
@@ -815,6 +816,102 @@ public class AiController : ControllerBase
 
         return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
     }
+
+    // ---------- actions (Ira, with a PIN) -----------------------------------
+
+    /// <summary>
+    /// The signed-in admin's Action PIN as AI → Assistant shows it: whether actions are on, whether a PIN is set (never
+    /// the PIN), when a lock after wrong PINs ends, and how long an action waits.
+    /// </summary>
+    [HttpGet("actions/pin")]
+    public async Task<IActionResult> ActionPin([FromServices] IraActions actions, CancellationToken cancellationToken)
+    {
+        var owner = await actions.OwnerAsync(User.GetUserId(), cancellationToken);
+        if (owner is null) return StatusCode(StatusCodes.Status403Forbidden, new { error = NotAnOwner });
+        return Ok(await PinStatusAsync(actions, owner, cancellationToken));
+    }
+
+    /// <summary>
+    /// Sets or resets the signed-in admin's Action PIN, 4 to 8 digits. Signed in already, the console needs no old PIN
+    /// (Telegram's <c>/pin old new</c> does). Only a salted hash is kept; the request body is never logged.
+    /// </summary>
+    [HttpPut("actions/pin")]
+    public async Task<IActionResult> SetActionPin([FromBody] AiActionPinRequest? body, [FromServices] IraActions actions, CancellationToken cancellationToken)
+    {
+        var owner = await actions.OwnerAsync(User.GetUserId(), cancellationToken);
+        if (owner is null) return StatusCode(StatusCodes.Status403Forbidden, new { error = NotAnOwner });
+        if (!IraPin.IsShape(body?.Pin)) return BadRequest(new { error = "A PIN is 4 to 8 digits." });
+
+        var (change, _, _) = await actions.SetPinAsync(owner, body!.Pin!, null, requireCurrent: false, "the console", cancellationToken);
+        HttpContext.Describe(change == IraPinChange.Changed ? "Reset the Action PIN for Ira's actions." : "Set the Action PIN for Ira's actions.", "pin");
+        return Ok(await PinStatusAsync(actions, owner, cancellationToken));
+    }
+
+    /// <summary>
+    /// Confirms an action the Desk Assistant proposed on the console with the owner's PIN, and carries it out once:
+    /// 200 with how it ended (executed or failed); 403 a wrong PIN (<c>attemptsLeft</c>); 423 locked after three
+    /// (<c>lockedUntilUtc</c>); 409 no longer waiting (expired, cancelled, already done) or no PIN set; 404 not this
+    /// admin's console action; 503 actions switched off.
+    /// </summary>
+    [HttpPost("actions/{id:long}/confirm")]
+    public async Task<IActionResult> ConfirmAction(long id, [FromBody] AiActionConfirmRequest? body, [FromServices] IraActions actions, CancellationToken cancellationToken)
+    {
+        var owner = await actions.OwnerAsync(User.GetUserId(), cancellationToken);
+        if (owner is null) return StatusCode(StatusCodes.Status403Forbidden, new { error = NotAnOwner });
+
+        var result = await actions.ConfirmAsync(id, owner, body?.Pin, AiActionChannel.Console, cancellationToken);
+        HttpContext.Describe($"Ira's action #{id}: {ActionOutcomeWord(result.Kind)}.", "ai-action", id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return ActionResult(result);
+    }
+
+    /// <summary>Cancels an action the Desk Assistant proposed on the console while it waits: 200, or 409 when it no longer waits.</summary>
+    [HttpPost("actions/{id:long}/cancel")]
+    public async Task<IActionResult> CancelAction(long id, [FromServices] IraActions actions, CancellationToken cancellationToken)
+    {
+        var owner = await actions.OwnerAsync(User.GetUserId(), cancellationToken);
+        if (owner is null) return StatusCode(StatusCodes.Status403Forbidden, new { error = NotAnOwner });
+
+        var result = await actions.CancelAsync(id, owner, AiActionChannel.Console, cancellationToken);
+        HttpContext.Describe($"Ira's action #{id}: {ActionOutcomeWord(result.Kind)}.", "ai-action", id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return ActionResult(result);
+    }
+
+    private const string NotAnOwner = "Ira's actions are for an active admin's account.";
+
+    private static async Task<AiActionPinStatus> PinStatusAsync(IraActions actions, IraOwner owner, CancellationToken cancellationToken) =>
+        new(actions.Enabled, await actions.HasPinAsync(owner.UserId, cancellationToken), Utc(actions.LockedUntil(owner.UserId)), actions.ConfirmSeconds);
+
+    private IActionResult ActionResult(IraConfirmResult result)
+    {
+        var view = result.Action is { } a ? ToActionView(a) : null;
+        return result.Kind switch
+        {
+            IraConfirmKind.Executed or IraConfirmKind.Failed or IraConfirmKind.Cancelled => Ok(new { message = result.Message, action = view }),
+            IraConfirmKind.WrongPin => StatusCode(StatusCodes.Status403Forbidden, new { error = result.Message, attemptsLeft = result.AttemptsLeft, action = view }),
+            IraConfirmKind.Locked => StatusCode(StatusCodes.Status423Locked, new { error = result.Message, lockedUntilUtc = Utc(result.LockedUntilUtc), action = view }),
+            IraConfirmKind.NotFound => NotFound(new { error = result.Message }),
+            IraConfirmKind.Off => StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = result.Message }),
+            _ => Conflict(new { error = result.Message, action = view }),
+        };
+    }
+
+    private static string ActionOutcomeWord(IraConfirmKind kind) => kind switch
+    {
+        IraConfirmKind.Executed => "executed",
+        IraConfirmKind.Failed => "not done",
+        IraConfirmKind.WrongPin => "wrong PIN",
+        IraConfirmKind.Locked => "locked after wrong PINs",
+        IraConfirmKind.Expired => "expired",
+        IraConfirmKind.Cancelled => "cancelled",
+        IraConfirmKind.NoPin => "no PIN set",
+        IraConfirmKind.Off => "actions switched off",
+        IraConfirmKind.NotFound => "not found",
+        _ => "no longer waiting",
+    };
+
+    private static AiActionView ToActionView(AiAction a) => new(
+        a.Id, a.Kind, a.Status, a.Summary, a.Channel, Utc(a.CreatedUtc)!.Value, Utc(a.ExpiresUtc)!.Value, Utc(a.ConfirmedUtc), Utc(a.ExecutedUtc),
+        IraActions.ResultMessage(a), a.Error.Length > 0 ? a.Error : null, a.CallId);
 
     // ---------- voice ("Ira" on the console) --------------------------------
 
@@ -1690,6 +1787,20 @@ public sealed record AiVoiceWakeTranscript(string Text, bool Addressed, string Q
 
 /// <summary>The voice as AI → Assistant shows it: the assistant's name, the desk's switches, and the hands-free budget.</summary>
 public sealed record AiVoiceInfo(string Name, bool Enabled, bool SpeakReplies, int HandsFreePerMinute);
+
+/// <summary>The signed-in admin's Action PIN: whether actions are on, whether a PIN is set (never the PIN), a lock's end, an action's wait.</summary>
+public sealed record AiActionPinStatus(bool Enabled, bool Set, DateTime? LockedUntilUtc, int ConfirmSeconds);
+
+/// <summary>A new Action PIN, 4 to 8 digits.</summary>
+public sealed record AiActionPinRequest(string? Pin);
+
+/// <summary>The PIN that confirms an action.</summary>
+public sealed record AiActionConfirmRequest(string? Pin);
+
+/// <summary>An action as the console's confirm card shows it once it has an answer: its state, and what was done.</summary>
+public sealed record AiActionView(
+    long Id, string Kind, string Status, string Summary, string Channel, DateTime CreatedUtc, DateTime ExpiresUtc,
+    DateTime? ConfirmedUtc, DateTime? ExecutedUtc, string? Result, string? Error, long? CallId);
 
 /// <summary>An answer to speak; <c>callId</c>, the answer's own call, puts the spoken reply's row in its conversation.</summary>
 public sealed record AiVoiceSpeakRequest(string? Text, long? CallId);
