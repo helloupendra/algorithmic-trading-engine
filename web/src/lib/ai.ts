@@ -3161,6 +3161,10 @@ const TOOL_NAMES: Record<string, string> = {
   get_trade_reviews: 'Its reviews',
   get_news_events: 'Its news records',
   get_incident_explanations: 'Its explanations',
+  propose_stop_run: 'Stop a run',
+  propose_start_run: 'Start a run',
+  propose_square_off: 'Square off',
+  propose_agent_switch: 'Switch an agent',
 }
 
 /** Tools whose main argument names the thing read, so it joins the label: "Run #412", "Option chain NIFTY". */
@@ -3177,6 +3181,8 @@ const TOOL_SUBJECTS: Record<string, { keys: string[]; label: (value: string) => 
   get_data_checks: { keys: ['reportId'], label: (v) => `Data check #${v}`, bare: 'Its data checks' },
   get_circulars: { keys: ['id'], label: (v) => `Circular #${v}`, bare: 'Circulars' },
   get_research_notes: { keys: ['reportId', 'week'], label: (v) => `Research note ${v}`, bare: 'Its research notes' },
+  propose_stop_run: { keys: ['run_id'], label: (v) => `Stop run #${v}`, bare: 'Stop a run' },
+  propose_agent_switch: { keys: ['agent'], label: (v) => `Switch ${v}`, bare: 'Switch an agent' },
 }
 
 /** The arguments the model wrote, when they are a JSON object; null otherwise. */

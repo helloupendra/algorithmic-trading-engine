@@ -206,6 +206,12 @@ public sealed record AiAskResult(
 /// (<see cref="AiAgentDef.ChatTools"/>), with its memories as any call; the
 /// same agent's scheduled work keeps its task prompt and tools.
 /// </para>
+/// <para>
+/// The Desk Assistant, asked by an admin in a console or Telegram chat, is also offered the proposal tools
+/// (<see cref="AiToolNames.Actions"/>, <see cref="AiCatalog.ActionsPrompt"/>) while <c>Ai:Actions:Enabled</c> is on.
+/// A proposal only stores a pending action; code runs it after the owner's PIN, which is handled before this gateway
+/// and never reaches a model.
+/// </para>
 /// </remarks>
 public sealed class AiGateway
 {
@@ -343,12 +349,17 @@ public sealed class AiGateway
         // tools that read its own work; its scheduled work keeps its task prompt and tools. A health test asks one
         // model one thing, with nothing to read.
         bool chat = input.SystemPrompt is null && input.Chain is null && AiCatalog.ChatsAs(agent, input.Source);
-        var tools = input.Chain is null ? _toolbox.For(agent, chat) : [];
+        IReadOnlyList<IAiTool> tools = input.Chain is null ? _toolbox.For(agent, chat) : [];
+
+        // Ira's actions: the Desk Assistant, in the owner's chat, asked by an admin, may also propose; code runs a
+        // proposal only after the owner's PIN. Every other call reads only.
+        var actions = await OffersActionsAsync(input, agent, s, cancellationToken) ? _toolbox.Actions() : [];
+        if (actions.Count > 0) tools = [.. tools, .. actions];
         var specs = tools.Select(t => new AiToolSpec(t.Name, t.Description, t.Parameters)).ToList();
-        var caller = new AiToolCaller(agent.Key, input.Source, input.RequestedBy, input.UserId, input.ConversationId);
 
         // The agent's own prompt is the same on every call; the memories and the time after it are not.
         string systemPrompt = input.SystemPrompt ?? (chat ? agent.ChatPrompt : agent.SystemPrompt);
+        if (actions.Count > 0) systemPrompt += "\n\n" + AiCatalog.ActionsPrompt;
         int stableChars = systemPrompt.Length;
         var recalled = input.SystemPrompt is null && input.Chain is null
             ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, input.CountMemoryUses, cancellationToken)
@@ -371,6 +382,7 @@ public sealed class AiGateway
             : recalled.Select(r => r.Id).ToList());
         _db.AiCalls.Add(row);
         await _db.SaveChangesAsync(cancellationToken);
+        var caller = new AiToolCaller(agent.Key, input.Source, input.RequestedBy, input.UserId, input.ConversationId, row.Id);
 
         var conversation = new List<AiMessage>(input.Messages);
         var attempts = new List<AiAttempt>();
@@ -562,6 +574,18 @@ public sealed class AiGateway
                 await SaveFinalAsync(row);
             }
         }
+    }
+
+    /// <summary>
+    /// Whether this call is offered the proposal tools (<see cref="AiCatalog.ActionsOffered"/>): the asker must be an
+    /// active admin as the account reads now, not as a token or a Telegram link said when it was made.
+    /// </summary>
+    private async Task<bool> OffersActionsAsync(AiAskInput input, AiAgentDef agent, AiSettings s, CancellationToken cancellationToken)
+    {
+        if (input.Chain is not null || input.UserId is not long userId) return false;
+        if (!AiCatalog.ActionsOffered(s.Actions.Enabled, agent.Key, input.Source, input.SystemPrompt is null, askerIsAdmin: true)) return false;
+        return await _db.AppUsers.AsNoTracking()
+            .AnyAsync(u => u.Id == userId && u.IsActive && u.Role == AlgoTrading.Domain.Constants.UserRoles.Admin, cancellationToken);
     }
 
     /// <summary>

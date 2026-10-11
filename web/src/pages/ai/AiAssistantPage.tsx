@@ -20,8 +20,13 @@
  * took, the tokens and tool calls it cost, and links to its call. Stop aborts
  * the request, which also cancels the call on the server.
  *
- * No tool places, changes or cancels an order; the page says so from the
- * agent's own record.
+ * No tool places, changes or cancels a broker order; the page says so from
+ * the agent's own record. The Desk Assistant may propose one of four actions
+ * on the paper desk (stop or start a run, square off manual positions, switch
+ * an agent): the answer that proposed it ends in a confirm card (AssistantActions)
+ * with the summary code wrote and a PIN field, and only that PIN, sent to the
+ * API's confirm endpoint, lets code carry it out. The PIN never joins the
+ * conversation. The side panel sets the PIN.
  *
  * Every agent can be talked with, not only the Desk Assistant: a picker above
  * the conversation chooses the AI Trader, the Trade Reviewer, the News Analyst
@@ -96,6 +101,9 @@ import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
 import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
 import { DocsSearchCard, TelegramCard } from './AssistantSide'
+import { ActionCard, ActionPinCard } from './AssistantActions'
+import { proposalsOf } from '../../lib/aiActions'
+import type { ActionOutcome } from '../../lib/aiActions'
 import { HandsFreeStrip, HandsFreeToggle, MicButton, PlaybackBar, RecordingStrip, SpeakToggle } from './AssistantVoice'
 import { useAiVoice, useHandsFree, useSpokenReplies, useVoiceRecorder } from './voiceHooks'
 import type { HandsFreeHold } from './voiceHooks'
@@ -401,7 +409,54 @@ function RememberNote({ line, agentName }: { line: RememberLine; agentName: stri
   )
 }
 
-function Turn({ turn, now, agentKey, agentName }: { turn: ChatTurn; now: number; agentKey: string; agentName: string }) {
+/** The actions an answer proposed, each with its confirm card, once the answer has finished streaming. */
+function TurnActions({
+  turn,
+  newest,
+  outcomes,
+  onOutcome,
+}: {
+  turn: ChatTurn
+  newest: boolean
+  outcomes: Readonly<Record<number, ActionOutcome>>
+  onOutcome: (id: number, outcome: ActionOutcome) => void
+}) {
+  if (turn.status === 'streaming') return null
+  const proposals = proposalsOf(turn.rounds)
+  if (proposals.length === 0) return null
+  return (
+    <div className="ai-actions">
+      {proposals.map(({ action, replaced }, i) => (
+        <ActionCard
+          key={action.id}
+          action={action}
+          replaced={replaced}
+          outcome={outcomes[action.id] ?? null}
+          onOutcome={(o) => onOutcome(action.id, o)}
+          focus={newest && i === proposals.length - 1}
+        />
+      ))}
+    </div>
+  )
+}
+
+function Turn({
+  turn,
+  now,
+  agentKey,
+  agentName,
+  newest,
+  outcomes,
+  onOutcome,
+}: {
+  turn: ChatTurn
+  now: number
+  agentKey: string
+  agentName: string
+  newest: boolean
+  outcomes: Readonly<Record<number, ActionOutcome>>
+  onOutcome: (id: number, outcome: ActionOutcome) => void
+}) {
   const streaming = turn.status === 'streaming'
   // Rounds are worth numbering once there is more than one.
   const many = turn.rounds.length > 1 || (turn.roundCount ?? 1) > 1
@@ -464,6 +519,7 @@ function Turn({ turn, now, agentKey, agentName }: { turn: ChatTurn; now: number;
         {turn.status === 'done' && turn.finishReason === 'length' && (
           <p className="small-note warn ai-flush">The answer was cut at the token limit.</p>
         )}
+        <TurnActions turn={turn} newest={newest} outcomes={outcomes} onOutcome={onOutcome} />
         {turn.status === 'done' && (turn.callId != null || turn.memoryIds != null) && (
           <div className="ai-a__foot">
             {turn.callId != null && <AnswerVotes callId={turn.callId} agentName={agentName} />}
@@ -498,6 +554,9 @@ export function AiAssistantPage() {
   const [draft, setDraft] = useState(() => readStored(DRAFT_KEY) ?? '')
   const [tier, setTier] = useState<AskTier>(() => parseAskTier(readStored(TIER_KEY)))
   const [remembered, setRemembered] = useState<RememberLine[]>([])
+  // What became of each proposed action, by its id: the cards keep it across a switch of conversation.
+  const [outcomes, setOutcomes] = useState<Record<number, ActionOutcome>>({})
+  const onOutcome = (id: number, outcome: ActionOutcome) => setOutcomes((o) => ({ ...o, [id]: outcome }))
   const [composerNote, setComposerNote] = useState<string | null>(null)
   const [speakOn, setSpeakOn] = useState(() => readSpeakReplies())
   const [hearing, setHearing] = useState(false)
@@ -869,9 +928,11 @@ export function AiAssistantPage() {
           <div className="ai-chat__empty">
             {agentKey === DESK_ASSISTANT ? (
               <p className="ai-chat__lead">
-                It can read the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news
-                and strategy specs, read-only: it never places or changes an order. Numbers it takes from the desk are cited
-                like <span className="mono">(get_runs, 15:30 IST)</span>.
+                It reads the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news and
+                strategy specs. Asked to, it can also propose to stop or start a strategy run, square off manual positions or
+                switch an agent: nothing happens until you confirm with your Action PIN, and then code does it, as your own
+                click would. It never places a broker order. Numbers it takes from the desk are cited like{' '}
+                <span className="mono">(get_runs, 15:30 IST)</span>.
               </p>
             ) : (
               <p className="ai-chat__lead">
@@ -944,7 +1005,15 @@ export function AiAssistantPage() {
           chat.turns.map((turn, i) => (
             <Fragment key={turn.id}>
               {notesAt(i)}
-              <Turn turn={turn} now={now} agentKey={agentKey} agentName={agentName} />
+              <Turn
+                turn={turn}
+                now={now}
+                agentKey={agentKey}
+                agentName={agentName}
+                newest={i === chat.turns.length - 1}
+                outcomes={outcomes}
+                onOutcome={onOutcome}
+              />
             </Fragment>
           ))
         )}
@@ -1048,8 +1117,9 @@ export function AiAssistantPage() {
       </form>
       <div ref={endRef} className="ai-end" aria-hidden="true" />
       </div>
-      <aside className="ai-assistant__side" aria-label="Telegram and docs search">
+      <aside className="ai-assistant__side" aria-label="Telegram, Action PIN and docs search">
         <TelegramCard />
+        <ActionPinCard />
         <DocsSearchCard />
       </aside>
       </div>
