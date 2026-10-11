@@ -48,6 +48,15 @@ public class AiOfflineAgentsTests
     }
 
     [Fact]
+    public void A_span_of_years_is_read_as_two_years()
+    {
+        const string given = "Backtests from 2024-01-01 to 2025-12-31; the holdout is 2020-09-01 to 2023-12-31.";
+
+        Assert.Empty(AiFactCheck.Unsupported("Every setting lost in 2024-25 and on the 2020-23 holdout.", given));
+        Assert.Equal(new[] { "2026", "2026-27" }, AiFactCheck.Unsupported("It may hold in 2026-27.", given));
+    }
+
+    [Fact]
     public void A_quote_matches_whatever_its_case_spacing_and_typographic_marks()
     {
         const string source = "Display of “investor awareness message(s)” by stock brokers on their trading apps";
@@ -470,6 +479,43 @@ public class AiOfflineAgentsTests
         Assert.Equal(AiReportStatus.Ok, note!.Status);
         Assert.Contains("no backtest and no paper run", note.Title);
         Assert.Empty(empty.Provider.Requests);
+    }
+
+    [Fact]
+    public async Task A_note_that_fails_its_check_is_asked_once_more_and_kept_when_the_second_passes()
+    {
+        var ai = BuildOnAll();
+        var sunday = new DateTime(2026, 10, 11, 6, 0, 0, DateTimeKind.Utc);   // 11:30 IST
+        var paper = new FakePaper(new LiveRunSummaryResponse { RunId = 1, StrategyName = "Ghost", StartedUtc = sunday.AddDays(-2), NetPnl = -1234.5m, Charges = 100m, Trades = 10 });
+        ai.Provider.On(Judge1,
+            Answer("""{"strategies":[{"strategy":"Ghost","checks":[],"summary":"It lost ₹1.2 thousand, about 9,999 a week."}],"ideas":[],"summary":"x"}"""),
+            Answer("""{"strategies":[{"strategy":"Ghost","checks":[],"summary":"It lost ₹1,234.5 on 10 trades."}],"ideas":[],"summary":"No backtest this week."}"""));
+
+        var note = await Researcher(ai, sunday, paper).RunForAsync(null, CancellationToken.None);
+
+        Assert.Equal(AiReportStatus.Ok, note!.Status);
+        Assert.Equal(2, ai.Provider.Requests.Count);
+        var retry = System.Text.Json.Nodes.JsonNode.Parse(ai.Provider.Requests[1].Body)!["messages"]!.AsArray();
+        Assert.Contains("failed the desk's check", retry[^1]!["content"]!.GetValue<string>());
+        Assert.Contains("9,999", retry[^1]!["content"]!.GetValue<string>());
+        Assert.Contains("repairedFrom", note.DataJson);
+    }
+
+    [Fact]
+    public async Task A_note_that_fails_twice_is_kept_invalid_with_the_second_answer_s_problems()
+    {
+        var ai = BuildOnAll();
+        var sunday = new DateTime(2026, 10, 11, 6, 0, 0, DateTimeKind.Utc);
+        var paper = new FakePaper(new LiveRunSummaryResponse { RunId = 1, StrategyName = "Ghost", StartedUtc = sunday.AddDays(-2), NetPnl = -1234.5m, Charges = 100m, Trades = 10 });
+        ai.Provider.On(Judge1,
+            Answer("""{"strategies":[{"strategy":"Ghost","checks":[],"summary":"About 9,999 a week."}],"ideas":[],"summary":"x"}"""),
+            Answer("""{"strategies":[{"strategy":"Ghost","checks":[],"summary":"About 8,888 a week."}],"ideas":[],"summary":"x"}"""));
+
+        var note = await Researcher(ai, sunday, paper).RunForAsync(null, CancellationToken.None);
+
+        Assert.Equal(AiReportStatus.Invalid, note!.Status);
+        Assert.Contains("8,888", note.Error);
+        Assert.DoesNotContain("9,999", note.Error);
     }
 
     // ---------- what each reads in a chat ----------
