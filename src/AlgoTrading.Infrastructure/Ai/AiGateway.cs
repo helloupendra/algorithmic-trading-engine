@@ -60,6 +60,14 @@ public sealed class NullAiStreamSink : IAiStreamSink
 /// are: the AI Trader picks its lessons by the day it decides on, which the gateway's recall does not know. Ignored
 /// without a system prompt of its own.
 /// </param>
+/// <param name="ForcedChain">
+/// Walk these models in place of the agent's (or the tier's) chain, and in every other way as the agent's own call:
+/// its switch, its tools and memories, the health order and the tier. Unlike <paramref name="Chain"/>, which is a
+/// model's health test. A rehearsal of the AI Trader's checks on a chain the admin chose; null otherwise.
+/// </param>
+/// <param name="CountMemoryUses">
+/// False for a rehearsal: the agent's memories are read into its prompt as for its own call, but not counted as used.
+/// </param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -73,7 +81,9 @@ public sealed record AiAskInput(
     long? UserId,
     IReadOnlyList<string>? Chain = null,
     IReadOnlyList<long>? TrialMemoryIds = null,
-    IReadOnlyList<long>? GivenMemoryIds = null);
+    IReadOnlyList<long>? GivenMemoryIds = null,
+    IReadOnlyList<string>? ForcedChain = null,
+    bool CountMemoryUses = true);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
 public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
@@ -287,7 +297,9 @@ public sealed class AiGateway
                 return await RefuseAsync(input, agentState.Chain, $"{agent.Name} is switched off on the AI page{why}.", 409, 0);
             }
 
-            chain = input.Tier is { Length: > 0 } tier ? state.Tier(tier).Chain : agentState.Chain;
+            chain = input.ForcedChain is { Count: > 0 } forced ? forced
+                : input.Tier is { Length: > 0 } tier ? state.Tier(tier).Chain
+                : agentState.Chain;
         }
 
         // Nothing in the chain can be asked: NVIDIA without its key, Bedrock switched off.
@@ -334,7 +346,7 @@ public sealed class AiGateway
         string systemPrompt = input.SystemPrompt ?? (chat ? agent.ChatPrompt : agent.SystemPrompt);
         int stableChars = systemPrompt.Length;
         var recalled = input.SystemPrompt is null && input.Chain is null
-            ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, cancellationToken)
+            ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, input.CountMemoryUses, cancellationToken)
             : [];
         if (recalled.Count > 0) systemPrompt += "\n\n" + AiMemoryBook.Block(recalled);
 
@@ -793,12 +805,12 @@ public sealed class AiGateway
     /// dependency: a failure to read it is logged and the call goes on without.
     /// </summary>
     private async Task<IReadOnlyList<AiRecalled>> RecallAsync(
-        string agentKey, IReadOnlyList<AiMessage> messages, IReadOnlyList<long>? trial, CancellationToken cancellationToken)
+        string agentKey, IReadOnlyList<AiMessage> messages, IReadOnlyList<long>? trial, bool count, CancellationToken cancellationToken)
     {
         try
         {
             string question = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty;
-            return await _memory.RecallAsync(agentKey, question, cancellationToken, trial);
+            return await _memory.RecallAsync(agentKey, question, cancellationToken, trial, count);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
