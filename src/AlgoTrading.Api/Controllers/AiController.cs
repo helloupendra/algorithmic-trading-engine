@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -815,6 +816,197 @@ public class AiController : ControllerBase
         return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
     }
 
+    // ---------- voice ("Ira" on the console) --------------------------------
+
+    /// <summary>The types a console recording may come as: WAV, which is what the console records.</summary>
+    private static readonly string[] WavTypes = ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"];
+
+    /// <summary>A recording shorter than this holds no question.</summary>
+    private const double MinVoiceSeconds = 0.3;
+
+    /// <summary>The longest text a spoken reply is made from (only its first sentences are ever said).</summary>
+    private const int MaxSpeakChars = 100_000;
+
+    private const string VoiceOff = "Voice is switched off on this desk (Ai:Voice:Enabled). Type the question instead.";
+
+    /// <summary>
+    /// A question spoken on AI → Assistant, written down by the audio model (<see cref="AiVoiceService"/>, as Telegram's
+    /// voice notes are). The body is the recording as <c>audio/wav</c> (the console records 16 kHz mono 16-bit), at
+    /// most <c>Ai:Voice:ConsoleMaxBytes</c> and <c>Ai:Voice:MaxSeconds</c>; it counts toward the asker's AI rate limit
+    /// as a question does. The audio is not kept: the call's row (agent <c>voice-transcribe</c>, source
+    /// <c>console</c>) holds the transcript. The console then asks the transcript exactly as a typed question.
+    /// </summary>
+    [HttpPost("voice/transcribe")]
+    public async Task<IActionResult> Transcribe(
+        [FromServices] AiVoiceService voice,
+        [FromQuery] string? conversationId,
+        CancellationToken cancellationToken)
+    {
+        var s = _settings.CurrentValue.Voice;
+        if (!s.Enabled) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = VoiceOff });
+
+        string type = (Request.ContentType ?? string.Empty).Split(';')[0].Trim().ToLowerInvariant();
+        if (!WavTypes.Contains(type))
+        {
+            return StatusCode(StatusCodes.Status415UnsupportedMediaType, new
+            {
+                error = $"Send the recording as audio/wav{(type.Length > 0 ? $", not {type}" : string.Empty)}: the console records WAV, and the audio model takes WAV or MP3.",
+            });
+        }
+
+        string conversation = conversationId?.Trim() ?? string.Empty;
+        if (conversation.Length > 0 && !ConversationIdShape.IsMatch(conversation)) return BadRequest(new { error = "conversationId is up to 64 letters, digits, - or _." });
+
+        string tooLarge = $"That recording is larger than {s.ConsoleMaxBytes / (1024.0 * 1024.0):0.#} MB, the most the desk takes. Record a shorter question, or type it.";
+        if (Request.ContentLength > s.ConsoleMaxBytes) return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = tooLarge });
+        byte[]? wav = await ReadUpToAsync(Request.Body, s.ConsoleMaxBytes, cancellationToken);
+        if (wav is null) return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = tooLarge });
+        if (wav.Length == 0) return BadRequest(new { error = "Nothing was recorded: the request had no audio." });
+
+        WavHeader header;
+        try
+        {
+            header = WavHeader.Read(wav);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BadRequest(new { error = $"That recording could not be read: {ex.Message}. Record it again, or type the question." });
+        }
+
+        double seconds = Math.Round(header.Seconds, 2);
+        if (seconds > s.MaxSeconds)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+            {
+                error = $"That recording is {Math.Ceiling(seconds):0} s long; the desk listens to {s.MaxSeconds} s at most. Record a shorter question, or type it.",
+            });
+        }
+
+        if (seconds < MinVoiceSeconds) return BadRequest(new { error = "That recording is too short to hold a question. Speak a little longer, or type it." });
+
+        // The same brake as a typed question's: a stuck button cannot spend the audio model's share either.
+        var (lease, refusal) = _limiter.TryAcquire(Actor());
+        if (lease is null)
+        {
+            Response.Headers.RetryAfter = refusal!.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = refusal.Error, retryAfterSeconds = refusal.RetryAfterSeconds });
+        }
+
+        VoiceTranscript heard;
+        using (lease)
+        {
+            try
+            {
+                heard = await voice.TranscribeAsync(
+                    new VoiceAudio(wav, "wav", seconds, seconds, "recording", wav.Length),
+                    new VoiceCaller(AiVoiceService.Console, Actor(), User.GetUserId(), conversation),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new EmptyResult();
+            }
+        }
+
+        if (heard.Failure is not null)
+        {
+            // A provider's trouble, not the desk's: Information, as every AI call's failure is.
+            _logger?.LogInformation("Console voice: call {CallId} could not write a recording down: {Outcome}", heard.CallId, heard.Failure);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                error = $"The audio model could not make out that recording: {heard.Failure} (call #{heard.CallId}). Try again, or type the question.",
+                callId = heard.CallId,
+            });
+        }
+
+        return Ok(new AiVoiceTranscript(heard.Text!, heard.CallId, seconds));
+    }
+
+    /// <summary>
+    /// An answer spoken, as <c>audio/mpeg</c>: its spoken version (<see cref="VoiceText.Spoken"/>: no tables, links or
+    /// citations, cut at a sentence to <c>Ai:Voice:MaxSpokenChars</c>) by Amazon Polly, logged as agent
+    /// <c>voice-speak</c>, source <c>console</c>, in the conversation of <c>callId</c> when one is given. Polly
+    /// without the role's permission is a 503 in words, and is not asked again for an hour, from here or Telegram.
+    /// </summary>
+    [HttpPost("voice/speak")]
+    public async Task<IActionResult> Speak(
+        [FromServices] AiVoiceService voice,
+        [FromBody] AiVoiceSpeakRequest? body,
+        CancellationToken cancellationToken)
+    {
+        if (!_settings.CurrentValue.Voice.Enabled) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = VoiceOff });
+
+        string text = body?.Text ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) return BadRequest(new { error = "Nothing to speak: text is empty." });
+        if (text.Length > MaxSpeakChars) return BadRequest(new { error = $"The text is over {MaxSpeakChars:N0} characters." });
+
+        string conversation = string.Empty;
+        if (body!.CallId is long answered)
+        {
+            string? of = await _db.AiCalls.AsNoTracking().Where(c => c.Id == answered).Select(c => c.ConversationId).FirstOrDefaultAsync(cancellationToken);
+            if (of is null) return NotFound(new { error = $"No call #{answered}." });
+            conversation = of;
+        }
+
+        VoiceSpeech spoken;
+        try
+        {
+            spoken = await voice.SpeakAsync(text, new VoiceCaller(AiVoiceService.Console, Actor(), User.GetUserId(), conversation), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+
+        switch (spoken.Status)
+        {
+            case VoiceSpeechStatus.Spoken:
+                Response.Headers["X-Ai-Call-Id"] = spoken.CallId!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return File(spoken.Mp3!, "audio/mpeg");
+            case VoiceSpeechStatus.Off:
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Spoken replies are switched off on this desk (Ai:Voice:SpeakReplies)." });
+            case VoiceSpeechStatus.NothingToSay:
+                return UnprocessableEntity(new { error = "Nothing in this answer can be said aloud: it is all table or code." });
+            case VoiceSpeechStatus.Refused or VoiceSpeechStatus.Paused:
+                if (spoken.Status == VoiceSpeechStatus.Refused)
+                {
+                    _logger?.LogInformation("Console voice: Amazon Polly refused call {CallId} ({Why}); not asked again for an hour", spoken.CallId, spoken.Error);
+                }
+
+                int wait = Math.Max(1, (int)Math.Ceiling(((spoken.RetryAfterUtc ?? Now()) - Now()).TotalSeconds));
+                Response.Headers.RetryAfter = wait.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    error = $"Spoken replies are off for now: the server's AWS role may not call Amazon Polly (it needs {PollySpeechClient.Permission}; " +
+                            $"docs/modules/ai.md, Voice). The desk asks Polly again in {Math.Max(1, (int)Math.Ceiling(wait / 60.0))} min; the answer is above as text.",
+                    callId = spoken.CallId,
+                    retryAfterSeconds = wait,
+                });
+            default:
+                _logger?.LogInformation("Console voice: call {CallId} could not speak the answer: {Outcome}", spoken.CallId, spoken.Error);
+                return StatusCode(StatusCodes.Status502BadGateway, new
+                {
+                    error = $"Amazon Polly could not speak the answer: {spoken.Error} (call #{spoken.CallId}). The answer is above as text.",
+                    callId = spoken.CallId,
+                });
+        }
+    }
+
+    /// <summary>The request's body, or null when it runs past <paramref name="max"/> bytes (read no further).</summary>
+    private static async Task<byte[]?> ReadUpToAsync(Stream body, int max, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+        int read;
+        while ((read = await body.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > max) return null;
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
+    }
+
     // ---------- shaping -----------------------------------------------------
 
     /// <summary>Checks a question's shape and turns it into the gateway's input, or answers 400.</summary>
@@ -1418,6 +1610,12 @@ public sealed record AiAskMessage(string? Role, string? Content);
 
 public sealed record AiAskRequest(
     List<AiAskMessage>? Messages, string? Tier, string? System, int? MaxTokens, double? Temperature, string? ConversationId, string? Agent);
+
+/// <summary>A console recording written down: the transcript, its <c>voice-transcribe</c> call, and the recording's length.</summary>
+public sealed record AiVoiceTranscript(string Text, long CallId, double Seconds);
+
+/// <summary>An answer to speak; <c>callId</c>, the answer's own call, puts the spoken reply's row in its conversation.</summary>
+public sealed record AiVoiceSpeakRequest(string? Text, long? CallId);
 
 public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? TotalTokens)
 {

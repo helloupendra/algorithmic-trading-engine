@@ -2,11 +2,12 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace AlgoTrading.Api.Services.AiTelegram;
+namespace AlgoTrading.Api.Services.AiVoice;
 
 /// <summary>
-/// The words around a Telegram voice note: the instruction the audio model is given, what a transcript is asked as,
-/// the line a voice question's prompt gets, and the spoken version of an answer.
+/// The words around a question asked by voice, on Telegram or the console: the instruction the audio model is given,
+/// what a Telegram transcript is asked as, the line a Telegram voice question's prompt gets, and the spoken version of
+/// an answer.
 /// </summary>
 public static partial class VoiceText
 {

@@ -156,6 +156,22 @@ export const IconStop = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+/** A microphone: ask by voice (AI → Assistant). */
+export const IconMic = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7" />
+  </Icon>
+)
+
+/** A speaker with sound coming out: answers read aloud. */
+export const IconSpeaker = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+    <path d="M15.5 9.2a4 4 0 010 5.6M18.2 6.5a7.8 7.8 0 010 11" />
+  </Icon>
+)
+
 export const IconTrash = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M4 6.5h16M9.5 6.5V4.75A1.25 1.25 0 0110.75 3.5h2.5a1.25 1.25 0 011.25 1.25V6.5" />

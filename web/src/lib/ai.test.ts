@@ -410,6 +410,22 @@ const ev = (id: string, event: AiStreamEvent): ChatAction => ({ type: 'event', i
 const run = (actions: ChatAction[], start: ChatState = initialChat('c-test')) => actions.reduce(chatReducer, start)
 
 describe('chatReducer', () => {
+  it('marks a spoken question as heard and keeps it in the history as typed text', () => {
+    const s = run([
+      { type: 'ask', id: 't1', question: 'Ira, aaj ka P&L kya hai?', tier: 'judge', now: 1_000, heard: { callId: 40, seconds: 2.4 } },
+      ev('t1', { type: 'delta', text: '₹42,000.' }),
+      ev('t1', { type: 'done', callId: 41, model: 'm', seconds: 2, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1, memoryIds: [] }),
+      ask('t2'),
+    ])
+    expect(s.turns[0].heard).toEqual({ callId: 40, seconds: 2.4 })
+    expect(s.turns[1].heard).toBeNull()
+    expect(historyFor(s.turns.slice(0, 1), 'Aur kal?')).toEqual([
+      { role: 'user', content: 'Ira, aaj ka P&L kya hai?' },
+      { role: 'assistant', content: '₹42,000.' },
+      { role: 'user', content: 'Aur kal?' },
+    ])
+  })
+
   it('streams reasoning and the answer into the turn, and labels it when done', () => {
     const s = run([
       ask('t1'),

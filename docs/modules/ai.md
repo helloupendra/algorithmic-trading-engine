@@ -458,6 +458,8 @@ All under `api/Ai`, admin only.
 | `GET calls?agent=&outcome=&model=&take=&beforeId=` | The log, newest first, paged by id |
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
+| `POST voice/transcribe?conversationId=` | A spoken question written down: the body is the recording as `audio/wav`; returns `{ text, callId, seconds }` ([Voice](#voice-ira)) |
+| `POST voice/speak` | `{ text, callId? }`: the answer's spoken version as `audio/mpeg` ([Voice](#voice-ira)) |
 
 Since memory (1 Oct):
 - A row of `GET calls` also carries `feedback` (1, -1 or null) and `memoryCount`.
@@ -964,7 +966,14 @@ any time with `/name <name>` on Telegram (2 to 20 letters), kept in `system_sett
 
 The linked owner can ask by voice (owner, 11 Oct 2026): a Telegram voice note in Hinglish, for example "Ira, aaj ka
 P&L kya hai?", is answered like a typed question, in text and, when Amazon Polly may be asked, in a short spoken reply
-(`TelegramVoice`).
+(`TelegramVoice`). The same voice answers on the console's AI → Assistant ([On the console](#on-the-console)).
+
+Both go through one shared service, `AiVoiceService`: the instruction with the desk's words and the assistant's name,
+the Voxtral call, the spoken-text shortening (`VoiceText.Spoken`), the Polly call with its one-hour back-off, and the
+`voice-transcribe` and `voice-speak` rows. Each side brings its own audio and words its own replies: Telegram downloads
+and decodes its voice notes; the console records WAV in the browser. The name (`ai.voice.name` over `Ai:Voice:Name`)
+and the back-off are the service's, so they are the same on both: a name set with `/name` is heard on the console
+from its next recording, and a Polly refusal seen on either side pauses spoken replies on both.
 
 How one voice note flows:
 
@@ -1001,20 +1010,67 @@ How one voice note flows:
    tool citations and Markdown, keeps numbers as written, and is cut at a sentence to `MaxSpokenChars` (600). When the
    answer had a table or code, or was cut, it ends with "Full details are in the text above."
 
+### On the console
+
+The same voice on the web console (step 2, 11 Oct 2026): a mic beside Ask, and a "Speak replies" switch.
+
+**Talk.** The browser records the question with the Web Audio API and makes 16 kHz mono 16-bit WAV itself
+(`web/src/lib/wav.ts`, `micRecorder.ts`): MediaRecorder would give webm, ogg or mp4 depending on the browser, and
+Voxtral takes WAV or MP3 only. The samples come from an AudioWorklet (`pcmTap.worklet.js`, served from the console's
+own origin, as the content-security policy requires), or from a ScriptProcessor where a browser has no worklet.
+
+- Hold the mic and speak: letting go sends. Or click it (Enter or Space from the keyboard): it records until Send;
+  the mic again, or Esc, cancels. It stops at two minutes and sends what it has.
+- The composer shows the clock and a level meter while it records, then "Writing it down…".
+- A refused or missing microphone is said in words, with what to do (allow it in the address bar; connect one; close
+  the app holding it; the console must be on https).
+- The transcript is then asked **exactly as a typed question**: the same agent picker, conversation, tools, memory
+  and rendering. It shows as a sent question marked "🎙 heard", with a link to its transcription's call. It gets no
+  prompt line of its own (Telegram's voice line is Telegram's), and it never runs a command: "/remember …" heard is
+  asked, not saved. If the transcript arrives while another answer is still streaming, it waits in the box.
+
+**Speak replies.** Off by default; the choice is the viewer's, kept in this browser (`localStorage`, where allowed).
+When on, the newest answer is read aloud once it finishes: the page asks the API for its spoken version and plays it
+through one audio element, with a Stop control. A new question, a new recording or Stop stops it. When the API answers
+503 (Polly not permitted, or spoken replies switched off), the page says so once and stops asking until the wait the
+API gave (ten minutes without one); switching Speak replies off and on again asks at once.
+
+**The endpoints** (`api/Ai`, admin only like every AI endpoint):
+
+- `POST voice/transcribe?conversationId=c-…`: the body is the recording, `Content-Type: audio/wav`. At most
+  `ConsoleMaxBytes` (4 MB, a separate limit from Telegram's 2 MB: two minutes of this WAV is 3.75 MB) and `MaxSeconds`
+  (120), read from the WAV's own header. It counts toward the asker's AI rate limit as a typed question does (429 with
+  Retry-After). Returns `{ text, callId, seconds }`. Refusals are words in `{ error }`: 400 not WAV, empty or too short;
+  413 too large or too long; 415 another type (webm, ogg); 429 the limit; 502 the model could not make it out (with its
+  `callId`); 503 voice switched off. A refusal before the model is asked writes no row.
+- `POST voice/speak`: `{ text, callId? }` returns `audio/mpeg` (header `X-Ai-Call-Id`: the spoken reply's row). The
+  text is shortened as Telegram's is (no tables, code, links or citations; cut at a sentence to 600 characters; "Full
+  details are in the text above."). `callId`, the answer's own call, puts the row in its conversation (404 for a call
+  that does not exist). Polly without the role's permission is a 503 saying so, with Retry-After, and Polly is not
+  asked again for an hour, from the console or Telegram. 503 too when `Enabled` or `SpeakReplies` is off; 422 when
+  nothing in the answer can be said aloud; 502 for any other Polly failure.
+
+The console's rows are the same agents with source `console`, the signed-in user as `RequestedBy` and `UserId`, and
+the page's conversation id, so the Calls tab shows a spoken question next to the answer it led to.
+
+The server lets the console's own pages use the microphone (`Permissions-Policy: microphone=(self)`; the browser
+still asks the viewer) and play a `blob:` audio URL (`media-src 'self' blob:`).
+
 | `Ai:Voice` | Default | Meaning |
 | --- | --- | --- |
-| `Enabled` | `true` | Off: a voice note gets one line asking for the question typed, and nothing calls AWS. `.env`: `AI_VOICE_ENABLED=false` |
+| `Enabled` | `true` | Off: a voice note gets one line asking for the question typed, the console's voice endpoints answer 503, and nothing calls AWS. `.env`: `AI_VOICE_ENABLED=false` |
 | `TranscribeModel` | `mistral.voxtral-small-24b-2507` | The audio model, by Bedrock's id |
-| `SpeakReplies` | `true` | Off: answers to voice notes are text only. `.env`: `AI_VOICE_SPEAK_REPLIES=false` |
+| `SpeakReplies` | `true` | Off: answers are text only, on Telegram and on the console (whatever the viewer's switch). `.env`: `AI_VOICE_SPEAK_REPLIES=false` |
 | `PollyVoice`, `PollyEngine`, `PollyLanguage`, `PollyRegion` | `Kajal`, `neural`, `en-IN`, `ap-south-1` | The spoken reply's voice |
 | `PollyUsdPerMillionChars` | 16 | Polly's neural list price, for the cost line |
-| `MaxSeconds`, `MaxBytes` | 120, 2 MB | The longest and largest note listened to |
+| `MaxSeconds`, `MaxBytes` | 120, 2 MB | The longest note or recording listened to, and the largest Telegram note |
+| `ConsoleMaxBytes` | 4 MB | The largest console recording (uncompressed WAV) |
 | `MaxSpokenChars` | 600 | The longest spoken reply |
 | `Name` | `Ira` | What the owner may call the assistant |
 
-**Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram`, model
-`bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens. The
-audio is never stored, only a line describing it (length, size, format). The answer is the Assistant's own row, as
+**Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram` or `console`,
+model `bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens.
+The audio is never stored, only a line describing it (length, size, format). The answer is the agent's own row, as
 for a typed question. Each spoken reply is a row too (agent `voice-speak`, model `polly:Kajal/neural`) with the text
 spoken and its characters priced at Polly's neural list price, $16 per million characters (a list price; AWS bills per
 its own page). Voxtral's price is not in the desk's tables, so its cost shows in tokens only.
@@ -1027,12 +1083,15 @@ statement to its policy:
 ```
 
 Until then Polly answers 403. That is not a desk incident: the answer stays text, the owner is told once (per API
-start) what is missing, Polly is not asked again for an hour, the row is `refused`, not `failed`, and the log line is
-Information. Once the permission is added, spoken replies start within the hour, with no deploy.
+start) what is missing on Telegram and by a 503 in words on the console, Polly is not asked again for an hour (from
+either), the row is `refused`, not `failed`, and the log line is Information. Once the permission is added, spoken
+replies start within the hour, with no deploy. (Added 11 Oct 2026: Polly now speaks from the server.)
 
 **Nothing calls AWS by itself.** No test, CI job, health probe or startup check reaches Bedrock, Polly or Telegram: the
 tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder, and answer from a scripted Mantle, a
-scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing.
+scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing. The
+console's endpoints are tested the same way, on WAV recordings made in the test, with the same scripted Mantle and
+Polly; the browser's WAV encoder and voice client are tested in `web/src/lib/wav.test.ts` and `voice.test.ts`.
 
 ## Talking to the agents
 

@@ -40,6 +40,14 @@
  * Text sent as "/remember …" is not asked: it is saved as a note for the
  * agent being talked with, read from the next question, and a line in the
  * conversation says under which id.
+ *
+ * Voice ("Ira", the assistant Telegram's voice notes reach too): the mic
+ * beside Ask records the question in the browser as 16 kHz WAV
+ * (AssistantVoice, lib/voice), the API writes it down with the same audio
+ * model and words, and the transcript is asked exactly as a typed question,
+ * marked "🎙 heard". A voice question never runs /remember. With Speak replies
+ * on (this browser's choice, off by default), the newest answer is read aloud
+ * when it finishes; Stop, a new question or a new recording stops it.
  */
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -78,11 +86,14 @@ import {
   useAiOverview,
   useCallFeedback,
 } from '../../lib/ai'
-import type { AskTier, ChatAction, ChatTurn, FeedbackScore, TurnRound } from '../../lib/ai'
+import type { AskTier, ChatAction, ChatTurn, FeedbackScore, HeardMark, TurnRound } from '../../lib/ai'
+import { readSpeakReplies, transcribe, voiceFailureText, writeSpeakReplies } from '../../lib/voice'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
 import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
 import { DocsSearchCard, TelegramCard } from './AssistantSide'
+import { MicButton, PlaybackBar, RecordingStrip, SpeakToggle } from './AssistantVoice'
+import { useSpokenReplies, useVoiceRecorder } from './voiceHooks'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -396,6 +407,20 @@ function Turn({ turn, now, agentKey, agentName }: { turn: ChatTurn; now: number;
       <div className="ai-q">
         <div className="ai-turn__head">
           <span className="ai-who">You</span>
+          {turn.heard && (
+            <span
+              className="ai-q__heard"
+              title={`Spoken (${formatSeconds(turn.heard.seconds)}) and written down by the audio model; the words below were asked as typed`}
+            >
+              <span aria-hidden="true">🎙</span> heard
+              {turn.heard.callId != null && (
+                <>
+                  {' · '}
+                  <CallLink id={turn.heard.callId} />
+                </>
+              )}
+            </span>
+          )}
           <span className="faint ai-q__tier">{tierLabel(turn.tier)}</span>
         </div>
         <p className="ai-q__text">{turn.question}</p>
@@ -465,6 +490,12 @@ export function AiAssistantPage() {
   const [tier, setTier] = useState<AskTier>(() => parseAskTier(readStored(TIER_KEY)))
   const [remembered, setRemembered] = useState<RememberLine[]>([])
   const [composerNote, setComposerNote] = useState<string | null>(null)
+  const [speakOn, setSpeakOn] = useState(() => readSpeakReplies())
+  const [hearing, setHearing] = useState(false)
+  const hearAbort = useRef<AbortController | null>(null)
+  // The newest question's turn: its answer is read aloud when it finishes, if Speak replies is on by then.
+  const speakNext = useRef<string | null>(null)
+  const replies = useSpokenReplies()
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -487,8 +518,15 @@ export function AiAssistantPage() {
   useEffect(() => {
     if (linked) dispatch({ type: 'pick', agent: linked })
   }, [linked])
-  // Leaving the page stops the answer, which cancels the call on the server.
-  useEffect(() => () => abortRef.current?.abort(), [])
+  // Leaving the page stops the answer, which cancels the call on the server, and any recording still being written down.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+      hearAbort.current?.abort()
+    },
+    [],
+  )
+  useEffect(() => writeSpeakReplies(speakOn), [speakOn])
 
   // Keep the newest words in view while the reader is at the bottom; leave them be once they scroll up to read.
   useEffect(() => {
@@ -525,17 +563,29 @@ export function AiAssistantPage() {
     }
   }, [])
 
-  const ask = async () => {
-    const question = draft.trim()
-    if (!question || busy != null || blocked) return
+  /**
+   * Asks `question` (typed, or a recording's transcript with `heard`) and
+   * streams the answer; false when it cannot be asked now (another answer is
+   * streaming, or the agent is blocked).
+   */
+  const ask = (question: string, heard: HeardMark | null = null): boolean => {
+    if (!question || busy != null || blocked) return false
+    void run(question, heard)
+    return true
+  }
+
+  const run = async (question: string, heard: HeardMark | null) => {
     // The answer belongs to the agent asked, wherever the page is when it arrives.
     const asking = agentKey
     const send = (action: ChatAction) => dispatch({ type: 'chat', agent: asking, action })
     const id = `t-${Date.now().toString(36)}-${chat.turns.length}`
     const messages = historyFor(chat.turns, question)
     follow.current = true
-    send({ type: 'ask', id, question, tier, now: Date.now() })
-    setDraft('')
+    // A new question stops the last answer's voice; this one is read aloud when it finishes, if Speak replies is on then.
+    replies.stop()
+    speakNext.current = id
+    send({ type: 'ask', id, question, tier, now: Date.now(), heard })
+    if (!heard) setDraft('')
     const controller = new AbortController()
     abortRef.current = controller
     try {
@@ -585,9 +635,83 @@ export function AiAssistantPage() {
   }
 
   const submit = () => {
+    // Enter or Ask while recording sends the recording.
+    if (recorder.state === 'recording') {
+      recorder.send()
+      return
+    }
     const note = parseRemember(draft)
     if (note != null) remember(note)
-    else void ask()
+    else if (ask(draft.trim())) replies.unlock()
+  }
+
+  // The newest render's ask, for a transcript that arrives after the page has moved on.
+  const askNow = useRef(ask)
+  useEffect(() => {
+    askNow.current = ask
+  })
+
+  /**
+   * A recording, written down and asked as typed. A voice question never runs
+   * a command: "/remember …" heard is asked, not saved. When it cannot be
+   * asked now, the transcript waits in the box.
+   */
+  const hear = async (wav: ArrayBuffer) => {
+    const controller = new AbortController()
+    hearAbort.current = controller
+    setHearing(true)
+    setComposerNote(null)
+    try {
+      const heard = await transcribe(wav, chat.conversationId, controller.signal)
+      const text = heard.text.trim()
+      if (!text) setComposerNote('Nothing was heard in that recording. Try again a little closer to the mic, or type the question.')
+      else if (!askNow.current(text, { callId: heard.callId, seconds: heard.seconds })) {
+        setDraft((d) => (d.trim() ? d : text))
+        setComposerNote('Heard, but it cannot be asked yet: the words are in the box. Ask when the answer above finishes.')
+      }
+    } catch (error) {
+      if (!isAbort(error)) setComposerNote(voiceFailureText('hear', error))
+    } finally {
+      if (hearAbort.current === controller) hearAbort.current = null
+      setHearing(false)
+    }
+  }
+
+  const recorder = useVoiceRecorder(
+    (wav) => void hear(wav),
+    (problem) => setComposerNote(problem),
+  )
+  const recording = recorder.state !== 'idle'
+
+  // The press that starts a recording: whatever is being read aloud stops (the mic would hear it), and the press
+  // itself unlocks playback for the answer, where a browser wants a gesture first.
+  const onMicPress = () => {
+    replies.stop()
+    replies.unlock()
+    setComposerNote(null)
+  }
+
+  // The newest answer is read aloud once it has finished, when Speak replies is on.
+  const say = replies.say
+  useEffect(() => {
+    const id = speakNext.current
+    if (!id) return
+    for (const c of Object.values(state.chats)) {
+      const t = c.turns.find((x) => x.id === id)
+      if (!t) continue
+      if (t.status === 'streaming') return
+      speakNext.current = null
+      if (t.status === 'done' && t.answer.trim() && speakOn) say(t.answer, t.callId)
+      return
+    }
+  }, [state, speakOn, say])
+
+  const toggleSpeak = (on: boolean) => {
+    setSpeakOn(on)
+    if (on) {
+      replies.allow()
+      replies.unlock()
+    } else replies.stop()
   }
 
   const stop = () => abortRef.current?.abort()
@@ -620,6 +744,14 @@ export function AiAssistantPage() {
 
   const questions = chat.turns.length
   const isNote = parseRemember(draft) != null
+  // Why the mic cannot start now, in words for its title; null when it can.
+  const micBlocked = blocked
+    ? `The ${agentName} cannot be asked right now (see above)`
+    : busy != null
+      ? 'One question at a time: the mic is back when the answer finishes'
+      : hearing
+        ? 'Writing the last recording down…'
+        : null
   // This agent's notes sent after the first `k` turns, in the order they were sent.
   const notesAt = (k: number) =>
     remembered.filter((l) => l.agent === agentKey && l.at === k).map((l) => <RememberNote key={l.key} line={l} agentName={agentName} />)
@@ -789,11 +921,13 @@ export function AiAssistantPage() {
           }}
           onKeyDown={onKeyDown}
         />
+        <RecordingStrip recorder={recorder} hearing={hearing} onStopHearing={() => hearAbort.current?.abort()} keyboard={finePointer} />
         {composerNote && (
           <p className="small-note warn ai-flush" role="alert">
             {composerNote}
           </p>
         )}
+        <PlaybackBar replies={replies} />
         {busyElsewhere && !isNote && (
           <p className="small-note ai-flush" role="status">
             The {chatAgentMeta(busy).label} is still answering: one question at a time.{' '}
@@ -825,20 +959,35 @@ export function AiAssistantPage() {
           <span className="faint ai-composer__hint">
             {finePointer ? 'Enter to ask · Shift+Enter for a new line · /remember … saves a note' : 'The button asks; Enter is a new line'}
           </span>
-          {streaming && (
-            <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={stop}>
-              <IconStop /> Stop
-            </button>
-          )}
-          {(!streaming || isNote) && (
-            <button
-              type="submit"
-              className="btn btn--primary btn--sm ai-composer__go"
-              disabled={!draft.trim() || (!isNote && (blocked || busyElsewhere))}
-            >
-              {isNote ? 'Save note' : 'Ask'}
-            </button>
-          )}
+          <div className="ai-composer__send">
+            <SpeakToggle on={speakOn} onChange={toggleSpeak} />
+            <MicButton recorder={recorder} disabled={micBlocked != null} why={micBlocked} onStart={onMicPress} />
+            {streaming && !recording && (
+              <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={stop}>
+                <IconStop /> Stop
+              </button>
+            )}
+            {recording ? (
+              <button
+                type="button"
+                className="btn btn--primary btn--sm ai-composer__go"
+                disabled={recorder.state !== 'recording'}
+                onClick={recorder.send}
+              >
+                Send
+              </button>
+            ) : (
+              (!streaming || isNote) && (
+                <button
+                  type="submit"
+                  className="btn btn--primary btn--sm ai-composer__go"
+                  disabled={!draft.trim() || (!isNote && (blocked || busyElsewhere || hearing))}
+                >
+                  {isNote ? 'Save note' : 'Ask'}
+                </button>
+              )
+            )}
+          </div>
         </div>
       </form>
       <div ref={endRef} className="ai-end" aria-hidden="true" />
