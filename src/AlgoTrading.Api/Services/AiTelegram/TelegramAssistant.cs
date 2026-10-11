@@ -88,7 +88,7 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// correction is the answered call's agent's.
 /// </para>
 /// <para>
-/// A linked owner may also speak ("Disha", <see cref="TelegramVoice"/>): a voice
+/// A linked owner may also speak ("Ira", <see cref="TelegramVoice"/>): a voice
 /// note, or an MP3, OGG or WAV audio file, of at most two minutes and 2 MB, is
 /// written down, the bot replies with what it heard, and the transcript is then
 /// handled exactly as typed text, an agent's prefix word included ("Trader, why
@@ -331,6 +331,26 @@ public sealed class TelegramAssistant(
             return;
         }
 
+        if (IsCommand(text, "/name"))
+        {
+            string wanted = string.Join(' ', AfterCommand(text, "/name").Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            if (wanted.Length == 0)
+            {
+                await SendAsync(chatId, $"My name is {await VoiceNameAsync(cancellationToken)}. Give me another with /name, for example: /name Ira.", cancellationToken);
+            }
+            else if (!VoiceText.IsName(wanted))
+            {
+                await SendAsync(chatId, "A name is 2 to 20 letters, words separated by single spaces: for example /name Ira.", cancellationToken);
+            }
+            else
+            {
+                await SetVoiceNameAsync(wanted, owner.ConsoleUser, cancellationToken);
+                await SendAsync(chatId, $"From now on my name is {wanted}.", cancellationToken);
+            }
+
+            return;
+        }
+
         if (IsCommand(text, "/remember"))
         {
             string note = AfterCommand(text, "/remember");
@@ -402,7 +422,7 @@ public sealed class TelegramAssistant(
             try
             {
                 var (bytes, why) = await DownloadAsync(audio, s.MaxBytes, cancellationToken);
-                heard = bytes is null ? VoiceHeard.Failed(why) : await voice!.HearAsync(bytes, audio, owner, chatId, cancellationToken);
+                heard = bytes is null ? VoiceHeard.Failed(why) : await voice!.HearAsync(bytes, audio, owner, chatId, await VoiceNameAsync(cancellationToken), cancellationToken);
             }
             finally
             {
@@ -419,7 +439,7 @@ public sealed class TelegramAssistant(
 
         // What was heard first, so a mishearing is seen before the answer it led to.
         await SendAsync(chatId, $"🎙 \"{(heard.Text.Length <= 3500 ? heard.Text : heard.Text[..3500] + "…")}\"", cancellationToken);
-        string asTyped = VoiceText.AsTyped(heard.Text, AgentCommands.Select(c => c.Command), s.Name);
+        string asTyped = VoiceText.AsTyped(heard.Text, AgentCommands.Select(c => c.Command), await VoiceNameAsync(cancellationToken));
         if (asTyped.Length == 0) return;
         await RespondAsync(message, chatId, userId, owner, asTyped, spoken: true, cancellationToken);
     }
@@ -514,6 +534,42 @@ public sealed class TelegramAssistant(
     public static string NameOf(string agentKey) =>
         AgentCommands.FirstOrDefault(c => c.Agent == agentKey).Name ?? AiCatalog.AgentName(agentKey);
 
+    private string? _voiceName;
+
+    /// <summary>
+    /// What the owner calls the voice assistant: the name he gave it with /name (<see cref="AiSettingsStore.VoiceNameKey"/>),
+    /// else <c>Ai:Voice:Name</c>. Read once, then kept until /name changes it.
+    /// </summary>
+    private async Task<string> VoiceNameAsync(CancellationToken cancellationToken)
+    {
+        if (_voiceName is { } known) return known;
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        string? saved = await db.SystemSettings.AsNoTracking().Where(s => s.Key == AiSettingsStore.VoiceNameKey).Select(s => s.Value)
+            .FirstOrDefaultAsync(cancellationToken);
+        return _voiceName = VoiceText.IsName(saved) ? saved!.Trim() : settings.CurrentValue.Voice.Name;
+    }
+
+    private async Task SetVoiceNameAsync(string name, string by, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == AiSettingsStore.VoiceNameKey, cancellationToken);
+        if (row is null)
+        {
+            row = new SystemSetting { Key = AiSettingsStore.VoiceNameKey, CreatedUtc = now };
+            db.SystemSettings.Add(row);
+        }
+
+        row.Value = name;
+        row.UpdatedBy = by;
+        row.Reason = "Set from Telegram with /name";
+        row.UpdatedUtc = now;
+        await db.SaveChangesAsync(cancellationToken);
+        _voiceName = name;
+    }
+
     /// <summary>What follows a command: "/trader why?" and "/trader@bot why?" both give "why?".</summary>
     private static string AfterCommand(string text, string command)
     {
@@ -547,7 +603,7 @@ public sealed class TelegramAssistant(
             var gateway = scope.ServiceProvider.GetRequiredService<AiGateway>();
             result = await gateway.AskAsync(new AiAskInput(
                 agentKey, null, messages, null, 4096, 0.2, $"tg-{chatId}", "telegram", owner.ConsoleUser, consoleUserId,
-                PromptNote: spoken ? VoiceText.PromptNote(settings.CurrentValue.Voice.Name) : null),
+                PromptNote: spoken ? VoiceText.PromptNote(await VoiceNameAsync(cancellationToken)) : null),
                 NullAiStreamSink.Instance, cancellationToken);
         }
         finally

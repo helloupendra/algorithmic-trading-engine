@@ -27,6 +27,16 @@ public static partial class VoiceText
     /// <summary>How a spoken reply ends when the answer had a table or was cut short.</summary>
     public const string DetailsAbove = "Full details are in the text above.";
 
+    /// <summary>
+    /// Whether <paramref name="name"/> may be the assistant's name: 2 to 20 letters, single spaces between words, as
+    /// the owner sets it with /name.
+    /// </summary>
+    public static bool IsName(string? name) =>
+        name is not null && NameRx().IsMatch(name.Trim()) && name.Trim().Length is >= 2 and <= 20;
+
+    [GeneratedRegex(@"^\p{L}+(?: \p{L}+)*$")]
+    private static partial Regex NameRx();
+
     /// <summary>Strategy names a vocabulary hint carries at most.</summary>
     public const int MaxNames = 15;
 
@@ -63,7 +73,7 @@ public static partial class VoiceText
 
     /// <summary>
     /// A transcript as it is asked: one that starts with an agent's prefix word, said or written ("Trader, why did you
-    /// buy?", "slash trader …", "/trader …"), after an optional address by <paramref name="name"/> ("Disha, trader,
+    /// buy?", "slash trader …", "/trader …"), after an optional address by <paramref name="name"/> ("Ira, trader,
     /// …"), becomes that typed prefix ("/trader why did you buy?"). Anything else is asked as heard, with any leading
     /// slash dropped: a voice note never runs /new, /unlink, /remember or another command.
     /// </summary>

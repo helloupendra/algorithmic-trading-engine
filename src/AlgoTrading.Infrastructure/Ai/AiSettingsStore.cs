@@ -68,6 +68,9 @@ public sealed class AiSettingsStore
 {
     public const string Prefix = "ai.";
 
+    /// <summary>The voice assistant's name as the owner set it with /name on Telegram, over <c>Ai:Voice:Name</c>.</summary>
+    public const string VoiceNameKey = Prefix + "voice.name";
+
     /// <summary>At most this many models in one chain: past three the wait on a bad day is already long.</summary>
     public const int MaxChainLength = 5;
 

@@ -63,7 +63,7 @@ public sealed record VoiceSpoken(byte[]? Mp3, string? Notice)
 }
 
 /// <summary>
-/// The voice side of the Telegram assistant ("Disha"): a voice note written down, and an answer spoken back.
+/// The voice side of the Telegram assistant ("Ira"): a voice note written down, and an answer spoken back.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -117,7 +117,7 @@ public sealed class TelegramVoice(
     /// Writes <paramref name="audio"/> down. The call is recorded whether or not the model answered; audio that cannot
     /// be read asks no model and records nothing.
     /// </summary>
-    public async Task<VoiceHeard> HearAsync(byte[] audio, TelegramAudio note, TelegramOwner owner, long chatId, CancellationToken cancellationToken)
+    public async Task<VoiceHeard> HearAsync(byte[] audio, TelegramAudio note, TelegramOwner owner, long chatId, string name, CancellationToken cancellationToken)
     {
         var s = Settings;
         byte[] sent;
@@ -133,7 +133,7 @@ public sealed class TelegramVoice(
 
         string format = note.Format == "ogg" ? "wav" : note.Format!;
         double seconds = note.Format == "ogg" ? OggOpusDecoder.Seconds(sent) : note.Seconds;
-        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), s.Name);
+        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), name);
         string model = AiCatalog.BedrockOpenPrefix + s.TranscribeModel;
         int maxTokens = MaxTokens(Math.Max(seconds, note.Seconds));
         var started = _time.GetUtcNow().UtcDateTime;
