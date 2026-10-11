@@ -361,7 +361,9 @@ public class AiController : ControllerBase
             ReadList<string>(x.ChainJson),
             ReadAttempts(x.AttemptsJson),
             ReadTools(x.ToolsJson),
-            new AiRequestDto($"POST {ChatEndpoint(x.Model.Length > 0 ? x.Model : ReadList<string>(x.ChainJson).FirstOrDefault() ?? string.Empty)}", x.MaxTokens, x.Temperature, true))
+            new AiRequestDto($"POST {ChatEndpoint(x.Model.Length > 0 ? x.Model : ReadList<string>(x.ChainJson).FirstOrDefault() ?? string.Empty)}", x.MaxTokens, x.Temperature,
+                // A voice note's transcription and a spoken reply are one request and one answer each.
+                x.AgentKey is not (AiCatalog.VoiceTranscribe or AiCatalog.VoiceSpeak)))
         {
             MemoryIds = AiGateway.MemoryIds(x.MemoryIdsJson),
             Feedback = x.FeedbackScore is int score
@@ -886,13 +888,15 @@ public class AiController : ControllerBase
 
     /// <summary>
     /// Where a call's model was asked: Bedrock's Messages API for a <c>bedrock:</c> model, its OpenAI-compatible endpoint
-    /// for a <c>bedrock-oss:</c> one, else NVIDIA's.
+    /// for a <c>bedrock-oss:</c> one, Amazon Polly for a spoken reply's <c>polly:</c> voice, else NVIDIA's.
     /// </summary>
     private string ChatEndpoint(string model) => AiCatalog.IsBedrock(model)
         ? AiCatalog.BedrockEndpoint(_settings.CurrentValue.Bedrock.Region)
         : AiCatalog.IsBedrockOpen(model)
             ? AiCatalog.BedrockOpenEndpoint(_settings.CurrentValue.Bedrock.Region)
-            : $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
+            : AiCatalog.IsPolly(model)
+                ? AiCatalog.PollyEndpoint(_settings.CurrentValue.Voice.PollyRegion)
+                : $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
 
     private static AiTierDto ToTier(AiTierState t) => new(
         t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);

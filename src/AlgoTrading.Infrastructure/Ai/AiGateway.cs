@@ -68,6 +68,10 @@ public sealed class NullAiStreamSink : IAiStreamSink
 /// <param name="CountMemoryUses">
 /// False for a rehearsal: the agent's memories are read into its prompt as for its own call, but not counted as used.
 /// </param>
+/// <param name="PromptNote">
+/// One line put after the system prompt (and its memories) for this call alone: a Telegram voice note's, that the
+/// question was spoken and the owner may call the assistant by name. The agent's own prompt is not changed.
+/// </param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -83,7 +87,8 @@ public sealed record AiAskInput(
     IReadOnlyList<long>? TrialMemoryIds = null,
     IReadOnlyList<long>? GivenMemoryIds = null,
     IReadOnlyList<string>? ForcedChain = null,
-    bool CountMemoryUses = true);
+    bool CountMemoryUses = true,
+    string? PromptNote = null);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
 public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
@@ -356,6 +361,8 @@ public sealed class AiGateway
             var ist = IstTime.ToIst(_time.GetUtcNow().UtcDateTime);
             systemPrompt += $"\nNow: {ist:dddd d MMMM yyyy, HH:mm} IST.";
         }
+
+        if (input.PromptNote is { Length: > 0 } note) systemPrompt += "\n" + note;
 
         var row = NewRow(input, chain, systemPrompt);
         row.Outcome = AiCallOutcome.Running;

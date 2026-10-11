@@ -287,7 +287,8 @@ sets explicit breakpoints). Tool use, thinking, prompt caching with explicit bre
    and Haiku 5.5, and to Titan Text Embeddings V2.
 2. **The instance role.** The role of the EC2 instance profile allows `bedrock-mantle:CreateInference` (Claude through
    the Messages API) and `bedrock:InvokeModel` on Titan Text Embeddings V2, and nothing else. No access key is made.
-   The open models answered with the role as it was on 10 Oct: nothing more to enable for them.
+   The open models answered with the role as it was on 10 Oct: nothing more to enable for them. Spoken Telegram replies
+   need one more permission, `polly:SynthesizeSpeech` ([Voice](#voice-jarvis)).
 3. **A budget alarm.** An AWS Budgets monthly cost budget with an e-mail alert, so a runaway loop is seen the same day.
 4. Then `AI_BEDROCK_ENABLED=true` in the server's `.env` and a deploy. Test each Claude model once from the Models tab,
    then run the re-embedding.
@@ -941,7 +942,8 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
 - **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns
   for half an hour. `/new` starts over and `/unlink` leaves. `/trader`, `/reviewer`, `/news`, `/incident`,
   `/technical`, `/options`, `/macro`, `/fundamental`, `/data`, `/compliance` or `/research` before a question asks
-  that agent instead ([Talking to the agents](#talking-to-the-agents)).
+  that agent instead ([Talking to the agents](#talking-to-the-agents)). A voice note is written down and asked the
+  same way, and answered by voice too ([Voice](#voice-jarvis)).
 - **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
   monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
   the call number go under each answer.
@@ -953,6 +955,80 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   that message becomes a correction of the agent that answered. `/remember …` saves a note for the agent the chat is
   talking with, `/memory` lists what it reads, and `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
   those dropped, with nothing to answer. A button pressed by anyone but a linked owner does nothing.
+
+## Voice (Jarvis)
+
+The linked owner can ask by voice (owner, 11 Oct 2026): a Telegram voice note in Hinglish, for example "Jarvis, aaj ka
+P&L kya hai?", is answered like a typed question, in text and, when Amazon Polly may be asked, in a short spoken reply
+(`TelegramVoice`).
+
+How one voice note flows:
+
+1. **Who and how long.** Only a linked owner's private chat. A stranger's voice note gets nothing, as a stranger's
+   question does. A note over `MaxSeconds` (120) or `MaxBytes` (2 MB), by Telegram's own figures, gets a polite
+   refusal and is not downloaded. An MP3, OGG or WAV audio file is taken too; other audio is refused in words.
+2. **Download.** `getFile`, then the file's URL, with the bot's token, read to at most `MaxBytes`. Neither URL is
+   logged.
+3. **Decode.** A voice note is OGG/Opus, which Bedrock's endpoint refuses (a 400), so it is decoded in-process to
+   16 kHz mono 16-bit WAV (`OggOpusDecoder`): Concentus decodes it at 48 kHz and its Speex resampler takes it to
+   16 kHz. Concentus asked for 16 kHz directly returned silence for a 48 kHz note at 24 kb/s (Opus's hybrid mode), so
+   it is never asked that. No ffmpeg, no process, nothing on disk. MP3 and WAV go as they are. The packages are pure
+   managed code: Concentus 2.2.2 (BSD-3-Clause, the Opus licence) and Concentus.Oggfile 1.0.7 (MIT).
+4. **Transcribe.** Mistral's Voxtral Small (`Ai:Voice:TranscribeModel`) on Bedrock's OpenAI-compatible endpoint in
+   `Ai:Bedrock:Region`, one request, not streamed, the audio inline as base64, signed like the open models
+   (`BedrockOpenChatClient.TranscribeAsync`). The instruction asks for the words verbatim, Hindi in Roman script, then
+   lists the desk's words: the strategies' names as said ("Ghost Tangent Crossings", "Fulcrum Straddle Buy"), from the
+   strategy catalog, or from the morning plan when the catalog does not answer within 3 s, and NIFTY, BANKNIFTY,
+   SENSEX, P&L and Jarvis. Without them "Fulcrum" came back "Phalacrom" and "Ghost" came back "GOAT". It may still
+   answer in Devanagari; the answering model reads it. Voxtral Mini answered the question instead of writing it down,
+   so it is not used.
+5. **Heard.** The bot first sends `🎙 "…"` with the transcript, so a mishearing shows before the answer it led to.
+6. **Asked as typed.** The transcript goes through the same handling as typed text: the chat's agent, its
+   conversation, memories, tools and chains, 👍 and 👎, and a voice reply to "What should it have said?" is a
+   correction. A transcript that starts with an agent's prefix word, after an optional "Jarvis", is that prefix:
+   "Trader, why did you buy?" or "slash trader …" is `/trader why did you buy?`, and "Trader." alone switches to it.
+   No other command is ever run by voice: a leading slash is dropped, so "/new" or "/unlink" heard is a question. The
+   word must come out in Latin letters; one written in Devanagari is asked as is.
+7. **One line in the prompt.** A voice question's prompt gets one line after the agent's own (`AiAskInput.PromptNote`):
+   it was a voice note written down by machine, so a name may be misheard, and the owner may call it Jarvis
+   (`Ai:Voice:Name`; empty leaves the name out). No persona is rewritten.
+8. **Spoken reply.** After the text, the answer's spoken version goes to Amazon Polly in `ap-south-1` (voice Kajal,
+   neural, `en-IN`) and comes back as MP3, sent with `sendVoice`. The spoken version drops tables, code, links, URLs,
+   tool citations and Markdown, keeps numbers as written, and is cut at a sentence to `MaxSpokenChars` (600). When the
+   answer had a table or code, or was cut, it ends with "Full details are in the text above."
+
+| `Ai:Voice` | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | `true` | Off: a voice note gets one line asking for the question typed, and nothing calls AWS. `.env`: `AI_VOICE_ENABLED=false` |
+| `TranscribeModel` | `mistral.voxtral-small-24b-2507` | The audio model, by Bedrock's id |
+| `SpeakReplies` | `true` | Off: answers to voice notes are text only. `.env`: `AI_VOICE_SPEAK_REPLIES=false` |
+| `PollyVoice`, `PollyEngine`, `PollyLanguage`, `PollyRegion` | `Kajal`, `neural`, `en-IN`, `ap-south-1` | The spoken reply's voice |
+| `PollyUsdPerMillionChars` | 16 | Polly's neural list price, for the cost line |
+| `MaxSeconds`, `MaxBytes` | 120, 2 MB | The longest and largest note listened to |
+| `MaxSpokenChars` | 600 | The longest spoken reply |
+| `Name` | `Jarvis` | What the owner may call the assistant |
+
+**Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram`, model
+`bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens. The
+audio is never stored, only a line describing it (length, size, format). The answer is the Assistant's own row, as
+for a typed question. Each spoken reply is a row too (agent `voice-speak`, model `polly:Kajal/neural`) with the text
+spoken and its characters priced at Polly's neural list price, $16 per million characters (a list price; AWS bills per
+its own page). Voxtral's price is not in the desk's tables, so its cost shows in tokens only.
+
+**The one permission.** Spoken replies need the server's role (`openfno-ec2-bedrock`) to allow Polly. Add this
+statement to its policy:
+
+```json
+{"Effect":"Allow","Action":"polly:SynthesizeSpeech","Resource":"*"}
+```
+
+Until then Polly answers 403. That is not a desk incident: the answer stays text, the owner is told once (per API
+start) what is missing, Polly is not asked again for an hour, the row is `refused`, not `failed`, and the log line is
+Information. Once the permission is added, spoken replies start within the hour, with no deploy.
+
+**Nothing calls AWS by itself.** No test, CI job, health probe or startup check reaches Bedrock, Polly or Telegram: the
+tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder, and answer from a scripted Mantle, a
+scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing.
 
 ## Talking to the agents
 

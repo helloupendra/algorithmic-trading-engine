@@ -174,14 +174,14 @@ internal static class AiTestKit
     /// </summary>
     public sealed class FakeSigner : IBedrockRequestSigner
     {
-        public List<(string Uri, string Region, string Body)> Signed { get; } = [];
+        public List<(string Uri, string Region, string Body, string Service)> Signed { get; } = [];
 
         public AiAttemptFailedException? FailWith { get; set; }
 
-        public Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken)
+        public Task SignAsync(HttpRequestMessage message, byte[] body, string region, string service, CancellationToken cancellationToken)
         {
             if (FailWith is not null) throw FailWith;
-            Signed.Add((message.RequestUri!.ToString(), region, Encoding.UTF8.GetString(body)));
+            Signed.Add((message.RequestUri!.ToString(), region, Encoding.UTF8.GetString(body), service));
             message.Headers.TryAddWithoutValidation("Authorization", $"AWS4-HMAC-SHA256 Credential=TEST/{Signed.Count}");
             return Task.CompletedTask;
         }

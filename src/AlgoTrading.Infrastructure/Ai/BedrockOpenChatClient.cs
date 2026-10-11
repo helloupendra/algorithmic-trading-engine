@@ -1,3 +1,6 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Amazon;
 using Amazon.Runtime;
 using Amazon.Runtime.Credentials;
@@ -13,13 +16,20 @@ public interface IBedrockRequestSigner
     /// Adds the signature's headers to <paramref name="message"/>, whose body is exactly <paramref name="body"/>. Throws
     /// <see cref="AiAttemptFailedException"/> when it cannot sign (no AWS credentials on the machine).
     /// </summary>
-    Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken);
+    Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken) =>
+        SignAsync(message, body, region, AwsSigV4BedrockSigner.Service, cancellationToken);
+
+    /// <summary>
+    /// The same for another AWS service the desk calls with the same role: Amazon Polly (<c>polly</c>), which speaks
+    /// the Telegram answers (<see cref="PollySpeechClient"/>).
+    /// </summary>
+    Task SignAsync(HttpRequestMessage message, byte[] body, string region, string service, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// SigV4 for Bedrock's OpenAI-compatible endpoint (service <c>bedrock-mantle</c>), through AWSSDK.Core's signer, with
-/// the default AWS credential chain: environment, profile, then on the server the EC2 instance profile (IMDSv2). The
-/// desk passes no key and reads none from its settings or <c>.env</c>.
+/// SigV4 for Bedrock's OpenAI-compatible endpoint (service <c>bedrock-mantle</c>) and for Amazon Polly (<c>polly</c>),
+/// through AWSSDK.Core's signer, with the default AWS credential chain: environment, profile, then on the server the EC2
+/// instance profile (IMDSv2). The desk passes no key and reads none from its settings or <c>.env</c>.
 /// </summary>
 /// <remarks>
 /// The credentials are looked up on each request, never at start: a desk that never reaches an open model never looks
@@ -39,7 +49,10 @@ public sealed class AwsSigV4BedrockSigner : IBedrockRequestSigner
         _credentials = credentials ?? DefaultChainAsync;
     }
 
-    public async Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken)
+    public Task SignAsync(HttpRequestMessage message, byte[] body, string region, CancellationToken cancellationToken) =>
+        SignAsync(message, body, region, Service, cancellationToken);
+
+    public async Task SignAsync(HttpRequestMessage message, byte[] body, string region, string service, CancellationToken cancellationToken)
     {
         try
         {
@@ -54,7 +67,7 @@ public sealed class AwsSigV4BedrockSigner : IBedrockRequestSigner
             {
                 Credentials = credentials,
                 Region = RegionEndpoint.GetBySystemName(region),
-                Service = Service,
+                Service = service,
             }, cancellationToken);
 
             // Authorization, X-Amz-Date, X-Amz-Content-Sha256 and, for the role's session, X-Amz-Security-Token: the
@@ -138,4 +151,94 @@ public sealed class BedrockOpenChatClient : OpenAiCompatibleChatClient
     }
 
     protected override string Scrub(string text) => BedrockRefusals.Mask(text);
+
+    /// <summary>The longest a transcription may take: Voxtral Small wrote a voice note down in about 2 s on 11 Oct 2026.</summary>
+    public static readonly TimeSpan TranscribeTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// A voice note written down by an audio model on the same endpoint (Mistral's Voxtral, <see cref="AiVoiceSettings.TranscribeModel"/>):
+    /// one request, not streamed, the audio inline as base64 beside the instruction, signed as every request here is.
+    /// Throws <see cref="AiAttemptFailedException"/> on any failure, its refusals worded as a chat model's.
+    /// </summary>
+    /// <param name="modelId">Bedrock's id for the model, such as <c>mistral.voxtral-small-24b-2507</c>.</param>
+    /// <param name="format"><c>wav</c> or <c>mp3</c>: the endpoint refused <c>ogg</c> with a 400 (11 Oct 2026).</param>
+    public async Task<AiTranscription> TranscribeAsync(
+        string modelId, byte[] audio, string format, string instruction, int maxTokens, CancellationToken cancellationToken)
+    {
+        var s = Settings.CurrentValue;
+        byte[] body = Encoding.UTF8.GetBytes(TranscriptionBody(modelId, audio, format, instruction, maxTokens));
+        using var message = new HttpRequestMessage(HttpMethod.Post, ChatUrl(s)) { Content = JsonContent(body) };
+        using var timer = new CancellationTokenSource(TranscribeTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timer.Token);
+
+        string text;
+        try
+        {
+            await AuthorizeAsync(message, body, s, linked.Token);
+            using var response = await Http().SendAsync(message, linked.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw Refused(modelId, (int)response.StatusCode, await ErrorDetailAsync(response, linked.Token), s);
+            }
+
+            text = await response.Content.ReadAsStringAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AiAttemptFailedException($"timeout: no answer within {TranscribeTimeout.TotalSeconds:0} s");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AiAttemptFailedException($"unreachable ({ex.HttpRequestError})");
+        }
+
+        return ReadTranscription(text);
+    }
+
+    /// <summary>The JSON body of a transcription, as it goes over the wire. Public so a test can pin it.</summary>
+    public static string TranscriptionBody(string modelId, byte[] audio, string format, string instruction, int maxTokens) => new JsonObject
+    {
+        ["model"] = modelId,
+        ["max_tokens"] = maxTokens,
+        ["temperature"] = 0,
+        ["messages"] = new JsonArray(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = new JsonArray(
+                new JsonObject
+                {
+                    ["type"] = "input_audio",
+                    ["input_audio"] = new JsonObject { ["data"] = Convert.ToBase64String(audio), ["format"] = format },
+                },
+                new JsonObject { ["type"] = "text", ["text"] = instruction }),
+        }),
+    }.ToJsonString();
+
+    /// <summary>The words in <c>choices[0].message.content</c> (a string, or text parts), with the finish and the usage.</summary>
+    internal static AiTranscription ReadTranscription(string json)
+    {
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            throw new AiAttemptFailedException("provider error: the answer was not JSON");
+        }
+
+        var choice = root?["choices"] is JsonArray { Count: > 0 } choices ? choices[0] as JsonObject : null;
+        var content = choice?["message"]?["content"];
+        string words = content is JsonArray parts
+            ? string.Concat(parts.OfType<JsonObject>().Select(p => Str(p["text"]) ?? string.Empty))
+            : Str(content) ?? string.Empty;
+        AiUsage? usage = root?["usage"] is JsonObject u
+            ? new AiUsage(Int(u["prompt_tokens"]), Int(u["completion_tokens"]), Int(u["total_tokens"]))
+            : null;
+        if (string.IsNullOrWhiteSpace(words)) throw new AiAttemptFailedException("empty answer");
+        return new AiTranscription(words.Trim(), Str(choice?["finish_reason"]) ?? string.Empty, usage);
+    }
 }
+
+/// <summary>What an audio model wrote down, how it stopped, and the tokens it used.</summary>
+public sealed record AiTranscription(string Text, string FinishReason, AiUsage? Usage);
