@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AgentMemory;
+using AlgoTrading.Api.Services.AiVoice;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -342,9 +343,13 @@ public sealed class TelegramAssistant(
             {
                 await SendAsync(chatId, "A name is 2 to 20 letters, words separated by single spaces: for example /name Ira.", cancellationToken);
             }
+            else if (voice is null)
+            {
+                await SendAsync(chatId, "Voice notes are switched off on this desk, so there is no name to change.", cancellationToken);
+            }
             else
             {
-                await SetVoiceNameAsync(wanted, owner.ConsoleUser, cancellationToken);
+                await voice.Voice.SetNameAsync(wanted, owner.ConsoleUser, "Set from Telegram with /name", cancellationToken);
                 await SendAsync(chatId, $"From now on my name is {wanted}.", cancellationToken);
             }
 
@@ -422,7 +427,7 @@ public sealed class TelegramAssistant(
             try
             {
                 var (bytes, why) = await DownloadAsync(audio, s.MaxBytes, cancellationToken);
-                heard = bytes is null ? VoiceHeard.Failed(why) : await voice!.HearAsync(bytes, audio, owner, chatId, await VoiceNameAsync(cancellationToken), cancellationToken);
+                heard = bytes is null ? VoiceHeard.Failed(why) : await voice!.HearAsync(bytes, audio, owner, chatId, cancellationToken);
             }
             finally
             {
@@ -534,41 +539,12 @@ public sealed class TelegramAssistant(
     public static string NameOf(string agentKey) =>
         AgentCommands.FirstOrDefault(c => c.Agent == agentKey).Name ?? AiCatalog.AgentName(agentKey);
 
-    private string? _voiceName;
-
     /// <summary>
-    /// What the owner calls the voice assistant: the name he gave it with /name (<see cref="AiSettingsStore.VoiceNameKey"/>),
-    /// else <c>Ai:Voice:Name</c>. Read once, then kept until /name changes it.
+    /// What the owner calls the voice assistant, from the assistant's one voice (<see cref="AiVoiceService.NameAsync"/>),
+    /// which the console hears with too; <c>Ai:Voice:Name</c> on a desk without a voice.
     /// </summary>
-    private async Task<string> VoiceNameAsync(CancellationToken cancellationToken)
-    {
-        if (_voiceName is { } known) return known;
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
-        string? saved = await db.SystemSettings.AsNoTracking().Where(s => s.Key == AiSettingsStore.VoiceNameKey).Select(s => s.Value)
-            .FirstOrDefaultAsync(cancellationToken);
-        return _voiceName = VoiceText.IsName(saved) ? saved!.Trim() : settings.CurrentValue.Voice.Name;
-    }
-
-    private async Task SetVoiceNameAsync(string name, string by, CancellationToken cancellationToken)
-    {
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
-        var now = _time.GetUtcNow().UtcDateTime;
-        var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == AiSettingsStore.VoiceNameKey, cancellationToken);
-        if (row is null)
-        {
-            row = new SystemSetting { Key = AiSettingsStore.VoiceNameKey, CreatedUtc = now };
-            db.SystemSettings.Add(row);
-        }
-
-        row.Value = name;
-        row.UpdatedBy = by;
-        row.Reason = "Set from Telegram with /name";
-        row.UpdatedUtc = now;
-        await db.SaveChangesAsync(cancellationToken);
-        _voiceName = name;
-    }
+    private Task<string> VoiceNameAsync(CancellationToken cancellationToken) =>
+        voice is null ? Task.FromResult(settings.CurrentValue.Voice.Name) : voice.Voice.NameAsync(cancellationToken);
 
     /// <summary>What follows a command: "/trader why?" and "/trader@bot why?" both give "why?".</summary>
     private static string AfterCommand(string text, string command)
