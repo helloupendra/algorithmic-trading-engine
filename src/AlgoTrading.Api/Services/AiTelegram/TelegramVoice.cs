@@ -63,7 +63,7 @@ public sealed record VoiceSpoken(byte[]? Mp3, string? Notice)
 }
 
 /// <summary>
-/// The voice side of the Telegram assistant ("Jarvis"): a voice note written down, and an answer spoken back.
+/// The voice side of the Telegram assistant ("Disha"): a voice note written down, and an answer spoken back.
 /// </summary>
 /// <remarks>
 /// <para>

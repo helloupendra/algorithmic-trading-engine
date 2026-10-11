@@ -10,10 +10,16 @@ namespace AlgoTrading.Api.Services.AiTelegram;
 /// </summary>
 public static partial class VoiceText
 {
-    /// <summary>The instruction that wrote Hinglish voice notes down word for word on 11 Oct 2026.</summary>
+    /// <summary>
+    /// What the audio model is told. The owner's first real note (11 Oct 2026) came back translated into English, a
+    /// question turned into a statement, and a strategy name added from the word list that he never said; hence the
+    /// "do not translate, answer or add" and the word list's "only if it is actually said".
+    /// </summary>
     public const string BaseInstruction =
-        "Transcribe this voice message word for word. The speaker is Indian and may mix Hindi and English (Hinglish); " +
-        "write Hindi words in Roman script, as they would be typed in a chat. Output only the transcript.";
+        "Transcribe this voice message exactly as spoken, word for word, in the language it is spoken in. Do not " +
+        "translate it, answer it, summarise it or correct it, and add no word that was not said; a question stays a " +
+        "question. The speaker is Indian and may mix Hindi and English (Hinglish); write Hindi words in Roman script, " +
+        "as they would be typed in a chat. Output only the transcript.";
 
     /// <summary>Words the desk uses that the model would otherwise mishear, whatever the strategies.</summary>
     public static readonly IReadOnlyList<string> DeskWords = ["NIFTY", "BANKNIFTY", "SENSEX", "P&L"];
@@ -22,7 +28,7 @@ public static partial class VoiceText
     public const string DetailsAbove = "Full details are in the text above.";
 
     /// <summary>Strategy names a vocabulary hint carries at most.</summary>
-    public const int MaxNames = 30;
+    public const int MaxNames = 15;
 
     /// <summary>
     /// The audio model's instruction: <see cref="BaseInstruction"/>, then the desk's words. Without them "Fulcrum" came
@@ -32,7 +38,8 @@ public static partial class VoiceText
     {
         var words = strategyNames.Concat(DeskWords).ToList();
         if (!string.IsNullOrWhiteSpace(name)) words.Add(name.Trim());
-        return $"{BaseInstruction} Words you may hear, spelled as the desk spells them: {string.Join(", ", words)}.";
+        return $"{BaseInstruction} Names the speaker may say, spelled as the desk spells them; write one only if it is " +
+               $"actually said: {string.Join(", ", words)}.";
     }
 
     /// <summary>
@@ -56,7 +63,7 @@ public static partial class VoiceText
 
     /// <summary>
     /// A transcript as it is asked: one that starts with an agent's prefix word, said or written ("Trader, why did you
-    /// buy?", "slash trader …", "/trader …"), after an optional address by <paramref name="name"/> ("Jarvis, trader,
+    /// buy?", "slash trader …", "/trader …"), after an optional address by <paramref name="name"/> ("Disha, trader,
     /// …"), becomes that typed prefix ("/trader why did you buy?"). Anything else is asked as heard, with any leading
     /// slash dropped: a voice note never runs /new, /unlink, /remember or another command.
     /// </summary>
