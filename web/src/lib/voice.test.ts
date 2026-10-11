@@ -1,15 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import {
+  HANDS_FREE_WINDOW_MS,
   MicUnavailable,
+  NO_WAKE_CHECK,
   VoiceRefusal,
+  checkWake,
   clockText,
+  handsFreeWait,
   micErrorText,
+  readHandsFree,
   readSpeakReplies,
   readTranscript,
+  readVoiceInfo,
+  recentSends,
   speak,
+  stopsHandsFree,
   transcribe,
   voiceErrorText,
   voiceFailureText,
+  writeHandsFree,
   writeSpeakReplies,
 } from './voice'
 import { encodeWav } from './wav'
@@ -186,5 +195,113 @@ describe('the Speak replies choice', () => {
     expect(readSpeakReplies(broken)).toBe(false)
     expect(() => writeSpeakReplies(true, broken)).not.toThrow()
     expect(readSpeakReplies(null)).toBe(false)
+  })
+})
+
+describe('hands-free: the wake check', () => {
+  it('posts the utterance with wake=1 in its conversation and reads whether it was addressed', async () => {
+    const wav = encodeWav(new Int16Array(16_000))
+    const { send, sent } = sender(() =>
+      json(200, { text: 'Hey Ira, aaj ka P&L kya hai?', addressed: true, question: 'Aaj ka P&L kya hai?', callId: 42, seconds: 1.4 }),
+    )
+
+    const heard = await checkWake(wav, 'c-abc 1', undefined, send)
+
+    expect(heard).toEqual({ text: 'Hey Ira, aaj ka P&L kya hai?', addressed: true, question: 'Aaj ka P&L kya hai?', callId: 42, seconds: 1.4 })
+    expect(sent[0].path).toBe('/api/Ai/voice/transcribe?wake=1&conversationId=c-abc%201')
+    expect(new Headers(sent[0].init.headers).get('Content-Type')).toBe('audio/wav')
+    expect(sent[0].init.body).toBe(wav)
+  })
+
+  it('reads an utterance that was not addressed', async () => {
+    const { send, sent } = sender(() => json(200, { text: 'Haan bhai.', addressed: false, question: '', callId: 43, seconds: 1 }))
+    const heard = await checkWake(new ArrayBuffer(44), '', undefined, send)
+    expect(heard.addressed).toBe(false)
+    expect(heard.question).toBe('')
+    expect(sent[0].path).toBe('/api/Ai/voice/transcribe?wake=1')
+  })
+
+  it('says so when the API answers without a wake check (a build from before hands-free)', async () => {
+    const { send } = sender(() => json(200, { text: 'Ira, P&L?', callId: 44, seconds: 1 }))
+    const error = await checkWake(new ArrayBuffer(44), 'c-1', undefined, send).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(VoiceRefusal)
+    expect((error as VoiceRefusal).status).toBe(404)
+    expect((error as VoiceRefusal).message).toBe(NO_WAKE_CHECK)
+    expect(stopsHandsFree(error)).toBe(true)
+  })
+
+  it('carries the budget refusal with its wait, which pauses hands-free rather than stopping it', async () => {
+    const { send } = sender(() =>
+      json(429, { error: 'Hands-free has sent 6 utterances to be written down in the last minute.', retryAfterSeconds: 40 }, { 'Retry-After': '40' }),
+    )
+    const error = (await checkWake(new ArrayBuffer(44), 'c-1', undefined, send).catch((e: unknown) => e)) as VoiceRefusal
+    expect(error.status).toBe(429)
+    expect(error.retryAfterSeconds).toBe(40)
+    expect(stopsHandsFree(error)).toBe(false)
+  })
+
+  it('stops for voice switched off, a signed-out session or a missing endpoint, and not for a model that could not hear', () => {
+    expect(stopsHandsFree(new VoiceRefusal(503, 'Voice is switched off on this desk.'))).toBe(true)
+    expect(stopsHandsFree(new VoiceRefusal(401, 'x'))).toBe(true)
+    expect(stopsHandsFree(new VoiceRefusal(403, 'x'))).toBe(true)
+    expect(stopsHandsFree(new VoiceRefusal(502, 'The audio model could not make out what was said.'))).toBe(false)
+    expect(stopsHandsFree(new TypeError('Failed to fetch'))).toBe(false)
+  })
+})
+
+describe('hands-free: the voice and the budget', () => {
+  it("reads the API's description of the voice", () => {
+    expect(readVoiceInfo({ name: 'Kavya', enabled: true, speakReplies: false, handsFreePerMinute: 4 })).toEqual({
+      name: 'Kavya',
+      enabled: true,
+      speakReplies: false,
+      handsFreePerMinute: 4,
+    })
+    expect(readVoiceInfo({ name: ' ', enabled: false, speakReplies: true, handsFreePerMinute: -2 })).toEqual({
+      name: 'Ira',
+      enabled: false,
+      speakReplies: true,
+      handsFreePerMinute: 0,
+    })
+    expect(() => readVoiceInfo('<!doctype html>')).toThrow(VoiceRefusal)
+  })
+
+  it('waits only once the last minute holds the budget, and then until the oldest that counts ages out', () => {
+    const now = 1_000_000
+    expect(handsFreeWait([], now, 6)).toBe(0)
+    expect(handsFreeWait([now - 50_000, now - 10_000], now, 3)).toBe(0)
+    expect(handsFreeWait([now - 50_000, now - 20_000, now - 10_000], now, 3)).toBe(10_000)
+    expect(handsFreeWait([now - 61_000, now - 20_000, now - 10_000], now, 3)).toBe(0)
+    expect(handsFreeWait([now - 40_000, now - 30_000, now - 20_000, now - 5_000], now, 3)).toBe(30_000)
+    expect(handsFreeWait([], now, 0)).toBe(HANDS_FREE_WINDOW_MS)
+    expect(recentSends([now - 70_000, now - 30_000, now + 5], now)).toEqual([now - 30_000])
+  })
+
+  it('remembers hands-free per viewer, off by default, and survives storage that throws', () => {
+    const kept = new Map<string, string>()
+    const storage = {
+      getItem: (k: string) => kept.get(k) ?? null,
+      setItem: (k: string, v: string) => void kept.set(k, v),
+      removeItem: (k: string) => void kept.delete(k),
+    }
+    expect(readHandsFree(storage)).toBe(false)
+    writeHandsFree(true, storage)
+    expect(readHandsFree(storage)).toBe(true)
+    expect(readSpeakReplies(storage)).toBe(false)
+    writeHandsFree(false, storage)
+    expect(readHandsFree(storage)).toBe(false)
+    const broken = {
+      getItem: () => {
+        throw new Error('SecurityError')
+      },
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+      removeItem: () => {
+        throw new Error('SecurityError')
+      },
+    }
+    expect(readHandsFree(broken)).toBe(false)
+    expect(() => writeHandsFree(true, broken)).not.toThrow()
   })
 })

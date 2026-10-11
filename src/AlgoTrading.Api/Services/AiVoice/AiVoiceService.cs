@@ -27,7 +27,8 @@ public sealed record VoiceCaller(string Source, string RequestedBy, long? UserId
 public sealed record VoiceAudio(byte[] Sent, string Format, double Seconds, double DeclaredSeconds, string Kind, int ReceivedBytes);
 
 /// <summary>What was heard, and its call; with <see cref="Failure"/> (the provider's reason), nothing was heard.</summary>
-public sealed record VoiceTranscript(string? Text, long CallId, string? Failure);
+/// <param name="Wake">For a hands-free utterance: whether it was said to the assistant, and its question. Null otherwise.</param>
+public sealed record VoiceTranscript(string? Text, long CallId, string? Failure, VoiceWake? Wake = null);
 
 /// <summary>What became of a request to speak an answer.</summary>
 public enum VoiceSpeechStatus
@@ -87,6 +88,14 @@ public sealed record VoiceSpeech(VoiceSpeechStatus Status, byte[]? Mp3, long? Ca
 /// kept until it is set again, so the console's recordings and Telegram's voice notes hear the same name.
 /// </para>
 /// <para>
+/// <b>Hands-free.</b> The console can listen without a press: the browser cuts what the microphone hears into
+/// utterances and sends each to be written down with the wake check on (the <c>wake</c> overload of
+/// <c>TranscribeAsync</c>). The service decides whether it was said to the assistant (<see cref="VoiceText.Wake"/>, by
+/// its current name and <c>Ai:Voice:NameAliases</c>); one that was not is still a <c>voice-transcribe</c> row, its
+/// summary starting "<see cref="NotAddressed"/>". Each user may send <c>Ai:Voice:HandsFreePerMinute</c> of them a
+/// minute (<see cref="TryStartHandsFree"/>), a budget of their own.
+/// </para>
+/// <para>
 /// Nothing here logs above Debug: what a call came to is the caller's to log, in its own words.
 /// </para>
 /// </remarks>
@@ -112,6 +121,12 @@ public sealed class AiVoiceService(
     /// <summary>How long the vocabulary hint is kept before the strategies are read again.</summary>
     public static readonly TimeSpan VocabularyLifetime = TimeSpan.FromMinutes(10);
 
+    /// <summary>The window <c>Ai:Voice:HandsFreePerMinute</c> counts in.</summary>
+    public static readonly TimeSpan HandsFreeWindow = TimeSpan.FromMinutes(1);
+
+    /// <summary>How a hands-free utterance's row is summarised when it was not said to the assistant.</summary>
+    public const string NotAddressed = "not addressed: ";
+
     /// <summary>How long the strategy catalog may take: on a cold start it runs Python for up to 20 s.</summary>
     private static readonly TimeSpan CatalogWait = TimeSpan.FromSeconds(3);
 
@@ -120,6 +135,7 @@ public sealed class AiVoiceService(
     private DateTime _speechBlockedUntilUtc = DateTime.MinValue;
     private volatile Vocabulary? _vocabulary;
     private volatile string? _name;
+    private readonly Dictionary<string, Queue<DateTime>> _handsFree = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed record Vocabulary(IReadOnlyList<string> Names, DateTime ReadUtc);
 
@@ -129,10 +145,19 @@ public sealed class AiVoiceService(
     /// Writes <paramref name="audio"/> down. The call is recorded whether or not the model answered; a request that is
     /// cancelled before the model answers records nothing.
     /// </summary>
-    public async Task<VoiceTranscript> TranscribeAsync(VoiceAudio audio, VoiceCaller caller, CancellationToken cancellationToken)
+    public Task<VoiceTranscript> TranscribeAsync(VoiceAudio audio, VoiceCaller caller, CancellationToken cancellationToken) =>
+        TranscribeAsync(audio, caller, wake: false, cancellationToken);
+
+    /// <summary>
+    /// Writes <paramref name="audio"/> down; with <paramref name="wake"/>, also says whether it was said to the
+    /// assistant (<see cref="VoiceTranscript.Wake"/>), and the row of one that was not is summarised
+    /// "<see cref="NotAddressed"/>…".
+    /// </summary>
+    public async Task<VoiceTranscript> TranscribeAsync(VoiceAudio audio, VoiceCaller caller, bool wake, CancellationToken cancellationToken)
     {
         var s = Settings;
-        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), await NameAsync(cancellationToken));
+        string name = await NameAsync(cancellationToken);
+        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), name);
         string model = AiCatalog.BedrockOpenPrefix + s.TranscribeModel;
         int maxTokens = MaxTokens(Math.Max(audio.Seconds, audio.DeclaredSeconds));
         var started = _time.GetUtcNow().UtcDateTime;
@@ -151,6 +176,8 @@ public sealed class AiVoiceService(
 
         double took = Math.Round(clock.Elapsed.TotalSeconds, 2);
         string described = $"[{audio.Kind}, {audio.Seconds:0.#} s, {audio.ReceivedBytes / 1024.0:0.#} KB, sent as {audio.Format}; the audio is not kept]";
+        VoiceWake? addressed = wake && heard is not null ? VoiceText.Wake(heard.Text, name, s.NameAliases) : null;
+        string prefix = addressed is { Addressed: false } ? NotAddressed : string.Empty;
         var row = new AiCall
         {
             CreatedUtc = started,
@@ -170,7 +197,7 @@ public sealed class AiVoiceService(
             TotalTokens = heard?.Usage?.TotalTokens,
             Rounds = 1,
             MessagesJson = Messages(instruction + "\n" + described),
-            Summary = Cut(heard?.Text ?? $"{Capital(audio.Kind)} of {audio.Seconds:0.#} s: not written down", 200),
+            Summary = Cut(prefix + (heard?.Text ?? $"{Capital(audio.Kind)} of {audio.Seconds:0.#} s: not written down"), 200),
             Answer = heard?.Text ?? string.Empty,
             FinishReason = Cut(heard?.FinishReason ?? string.Empty, 32),
             MaxTokens = maxTokens,
@@ -178,7 +205,33 @@ public sealed class AiVoiceService(
             AttemptsJson = Attempts(model, failure?.Outcome ?? "ok", took, failure?.HttpStatus),
         };
         long callId = await RecordAsync(row, caller, cancellationToken);
-        return failure is null ? new VoiceTranscript(heard!.Text, callId, null) : new VoiceTranscript(null, callId, failure.Outcome);
+        return failure is null ? new VoiceTranscript(heard!.Text, callId, null, addressed) : new VoiceTranscript(null, callId, failure.Outcome);
+    }
+
+    /// <summary>
+    /// Counts one hands-free utterance for <paramref name="user"/> when <c>Ai:Voice:HandsFreePerMinute</c> allows one
+    /// more in the last minute; false, with the seconds until it does, when it does not (or when it is 0).
+    /// </summary>
+    public bool TryStartHandsFree(string user, out int retryAfterSeconds)
+    {
+        int cap = Settings.HandsFreePerMinute;
+        var now = _time.GetUtcNow().UtcDateTime;
+        lock (_gate)
+        {
+            if (!_handsFree.TryGetValue(user, out var mine)) _handsFree[user] = mine = new Queue<DateTime>();
+            while (mine.Count > 0 && mine.Peek() <= now - HandsFreeWindow) mine.Dequeue();
+            if (cap > 0 && mine.Count < cap)
+            {
+                mine.Enqueue(now);
+                retryAfterSeconds = 0;
+                return true;
+            }
+
+            // When enough of the last minute's utterances have aged out for one more under the cap.
+            var frees = cap > 0 ? mine.ElementAt(mine.Count - cap) + HandsFreeWindow : now + HandsFreeWindow;
+            retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((frees - now).TotalSeconds));
+            return false;
+        }
     }
 
     /// <summary>

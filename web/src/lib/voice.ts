@@ -8,6 +8,10 @@
  *     transcript exactly as a typed question.
  *   - speak: an answer to POST /api/Ai/voice/speak, which returns the short
  *     spoken version as MP3 (Amazon Polly).
+ *   - hands-free: checkWake sends one utterance with wake=1, and the API says
+ *     whether it was said to the assistant (its name first) and what it asks;
+ *     readVoiceInfo reads the name and the budget; handsFreeWait keeps the
+ *     page under the budget (Ai:Voice:HandsFreePerMinute).
  *   - the words for every way either can fail, the microphone's included, and
  *     the viewer's "Speak replies" choice, kept in this browser only.
  *
@@ -126,6 +130,99 @@ export async function transcribe(
   return readTranscript(await response.json())
 }
 
+/** A hands-free utterance written down and checked for the assistant's name. */
+export interface WakeTranscript extends VoiceTranscript {
+  /** Said to the assistant: its name first, after an optional "hey", "ok", "suno" or "arre". */
+  addressed: boolean
+  /** The transcript without the greeting and the name; empty when not addressed, or when the name was all that was said. */
+  question: string
+}
+
+/** Said when the API answers a wake check without saying whether it was addressed: a build from before hands-free. */
+export const NO_WAKE_CHECK = 'The running API cannot listen hands-free yet: it does not check for the name. Restart the API to pick up the latest code.'
+
+/** The API's { text, addressed, question, callId, seconds }, or an error when the body is not that. */
+export function readWakeTranscript(raw: unknown): WakeTranscript {
+  const heard = readTranscript(raw)
+  const r = raw as Record<string, unknown>
+  if (typeof r.addressed !== 'boolean') throw new VoiceRefusal(404, NO_WAKE_CHECK)
+  return { ...heard, addressed: r.addressed, question: typeof r.question === 'string' ? r.question : '' }
+}
+
+/**
+ * A hands-free utterance written down with the wake check: POST
+ * /api/Ai/voice/transcribe?wake=1. The API, not the page, decides whether it
+ * was said to the assistant, by the name it has now. A 429 is the hands-free
+ * budget (Ai:Voice:HandsFreePerMinute), with Retry-After.
+ */
+export async function checkWake(
+  wav: ArrayBuffer | Blob,
+  conversationId: string,
+  signal?: AbortSignal,
+  send: Send = fetchWithSession,
+): Promise<WakeTranscript> {
+  const query = `?wake=1${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ''}`
+  const response = await send(`/api/Ai/voice/transcribe${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'audio/wav', Accept: 'application/json' },
+    body: wav,
+    signal,
+  })
+  const type = response.headers.get('Content-Type') ?? ''
+  if (!response.ok || !type.includes('json')) throw await refusal('hear', response)
+  return readWakeTranscript(await response.json())
+}
+
+/** The voice as the API describes it (GET /api/Ai/voice). */
+export interface VoiceInfo {
+  /** What the assistant answers to now: "Ira" unless it was renamed with /name on Telegram. */
+  name: string
+  enabled: boolean
+  speakReplies: boolean
+  /** Hands-free utterances the desk writes down a minute for one user; 0: hands-free is off. */
+  handsFreePerMinute: number
+}
+
+/** GET /api/Ai/voice's body, or an error when it is not that. */
+export function readVoiceInfo(raw: unknown): VoiceInfo {
+  const r = (raw ?? {}) as Record<string, unknown>
+  if (typeof r.name !== 'string' || typeof r.enabled !== 'boolean' || typeof r.handsFreePerMinute !== 'number') {
+    throw new VoiceRefusal(404, 'The running API does not describe its voice yet. Restart the API to pick up the latest code.')
+  }
+  return {
+    name: r.name.trim() || 'Ira',
+    enabled: r.enabled,
+    speakReplies: r.speakReplies !== false,
+    handsFreePerMinute: Math.max(0, Math.floor(r.handsFreePerMinute)),
+  }
+}
+
+/** The window the hands-free budget counts in. */
+export const HANDS_FREE_WINDOW_MS = 60_000
+
+/** The sends still inside the budget's window at `now`. */
+export function recentSends(sentAt: readonly number[], now: number): number[] {
+  return sentAt.filter((t) => t > now - HANDS_FREE_WINDOW_MS && t <= now)
+}
+
+/**
+ * How long until one more utterance may be sent under `perMinute` a minute,
+ * given when the last ones were: 0 when it may go now. The page holds itself
+ * to the API's budget so it pauses ("too much speech") before the API has to
+ * refuse; the API still enforces it.
+ */
+export function handsFreeWait(sentAt: readonly number[], now: number, perMinute: number): number {
+  if (perMinute <= 0) return HANDS_FREE_WINDOW_MS
+  const recent = recentSends(sentAt, now).sort((a, b) => a - b)
+  if (recent.length < perMinute) return 0
+  return recent[recent.length - perMinute] + HANDS_FREE_WINDOW_MS - now
+}
+
+/** A refusal that hands-free cannot listen past: signed out, not allowed, not on this API, or voice switched off. */
+export function stopsHandsFree(error: unknown): boolean {
+  return (error instanceof VoiceRefusal || error instanceof ApiError) && [401, 403, 404, 503].includes(error.status)
+}
+
 /**
  * An answer spoken: POST /api/Ai/voice/speak with its text (and its call, so
  * the spoken reply's row sits in the same conversation). Resolves with the
@@ -208,6 +305,27 @@ export function writeSpeakReplies(on: boolean, storage: Pick<Storage, 'setItem' 
   try {
     if (on) storage?.setItem(SPEAK_KEY, '1')
     else storage?.removeItem(SPEAK_KEY)
+  } catch {
+    /* storage refused: the choice lives as long as the page */
+  }
+}
+
+const HANDS_FREE_KEY = 'openfno.ai.handsfree'
+
+/** Whether this viewer left hands-free on: off unless they turned it on, in this browser. */
+export function readHandsFree(storage: Pick<Storage, 'getItem'> | null = safeStorage()): boolean {
+  try {
+    return storage?.getItem(HANDS_FREE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Remembers hands-free on or off where storage allows; a private window just forgets it. */
+export function writeHandsFree(on: boolean, storage: Pick<Storage, 'setItem' | 'removeItem'> | null = safeStorage()): void {
+  try {
+    if (on) storage?.setItem(HANDS_FREE_KEY, '1')
+    else storage?.removeItem(HANDS_FREE_KEY)
   } catch {
     /* storage refused: the choice lives as long as the page */
   }

@@ -458,7 +458,8 @@ All under `api/Ai`, admin only.
 | `GET calls?agent=&outcome=&model=&take=&beforeId=` | The log, newest first, paged by id |
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
-| `POST voice/transcribe?conversationId=` | A spoken question written down: the body is the recording as `audio/wav`; returns `{ text, callId, seconds }` ([Voice](#voice-ira)) |
+| `GET voice` | `{ name, enabled, speakReplies, handsFreePerMinute }`: the assistant's name as it is now, the switches and the hands-free budget ([Hands-free](#hands-free)) |
+| `POST voice/transcribe?conversationId=&wake=` | A spoken question written down: the body is the recording as `audio/wav`; returns `{ text, callId, seconds }`, and with `wake=1` also `{ addressed, question }` ([Voice](#voice-ira)) |
 | `POST voice/speak` | `{ text, callId? }`: the answer's spoken version as `audio/mpeg` ([Voice](#voice-ira)) |
 
 Since memory (1 Oct):
@@ -1053,8 +1054,83 @@ API gave (ten minutes without one); switching Speak replies off and on again ask
   asked again for an hour, from the console or Telegram. 503 too when `Enabled` or `SpeakReplies` is off; 422 when
   nothing in the answer can be said aloud; 502 for any other Polly failure.
 
+- `POST voice/transcribe?wake=1`: a hands-free utterance ([Hands-free](#hands-free)). The same body, limits and
+  refusals, plus `{ addressed, question }` in the answer; its own budget (429 past `HandsFreePerMinute`) instead of
+  the question limit; 503 when `HandsFreePerMinute` is 0.
+- `GET voice`: `{ name, enabled, speakReplies, handsFreePerMinute }`, for the page's switch and its "Listening for
+  Ira".
+
 The console's rows are the same agents with source `console`, the signed-in user as `RequestedBy` and `UserId`, and
 the page's conversation id, so the Calls tab shows a spoken question next to the answer it led to.
+
+### Hands-free
+
+Step 3b (11 Oct 2026): the owner sits at the desk and says "Ira, …" without touching anything. A **Hands-free** switch
+beside the mic, off by default and kept per viewer in this browser (`localStorage`, where allowed). Turning it on asks
+for the microphone once and keeps it open; a small line in the composer says "Listening for Ira" with a live level
+(`aria-live`, so a screen reader hears the state change). Turning it off, or leaving the page, lets go of the
+microphone. With it left on, a reload opens the microphone again; where the browser holds audio back until a click
+(its autoplay rule), the line says so and the first click or key press anywhere starts it.
+
+**Cutting the stream into utterances** (`web/src/lib/vad.ts`, pure functions, tested in `vad.test.ts`). Frames of
+20 ms; each frame's loudness is its RMS in dBFS against a noise floor that follows the room (down at once to a quieter
+frame, up slowly to a louder one, almost not at all while someone speaks; the first 400 ms only learn it).
+
+| Parameter | Value |
+| --- | --- |
+| Start | 150 ms of frames 10 dB over the floor and over -50 dBFS; a frame within 6 dB of the floor starts the count again |
+| End | 700 ms of frames within 6 dB of the floor |
+| Kept | 300 ms before the start (pre-roll) and 300 ms of the silence after |
+| Shortest | 0.6 s of speech; anything shorter (a cough, a click) is dropped |
+| Longest | 20 s; sent as it is, and the rest of that stretch is ignored until the next silence |
+| Steady noise | a stretch whose frames spread under 2.5 dB (a fan, an air conditioner) is dropped |
+
+**The wake check is the server's.** Each utterance goes to `POST voice/transcribe?wake=1` as 16 kHz WAV. After writing
+it down, the API checks whether it was said to the assistant (`VoiceText.Wake`): the current name (`ai.voice.name`
+over `Ai:Voice:Name`) must come first, starting within the first three words, after any of hey, hi, hello, ok,
+okay, suno, suniye, arre or oye. Words are compared by how they sound (`VoiceText.WakeKey`), for any name:
+
+- case and punctuation do not matter ("IRA!!!");
+- Devanagari is written in Roman letters first (इरा is "iraa", so it is Ira; हे and अरे are greetings);
+- the spellings a speech model mixes up are one: ph/f, an h after a consonant, w/v, z/j, y/e/i, o/u, ai/i, au/u,
+  doubled letters, a final h. So "Eera", "Irah", "Aira", "Ayra", "Era" and "Iraa" are all Ira; "Ara", "Hira", "Iran"
+  and "Are" are not;
+- a name of five or more sounds also matches with one sound wrong ("Jervis" for Jarvis); a shorter one must match
+  exactly;
+- the name may come split over two words ("I ra"), and an "ji" after it is part of the address ("Ira ji, …");
+- `Ai:Voice:NameAliases` adds spellings of its own, for a nickname or a mishearing seen on the Calls tab.
+
+"Ira, aaj ka P&L kya hai?" and "Hey Ira, what is today's P&L?" are addressed; "What is the P&L, Ira?" (name not
+first) and "Hey hey hey Ira" (name fourth) are not. The answer adds `addressed` and `question`: the transcript after
+the name, its first letter capitalised ("Aaj ka P&L kya hai?").
+
+- **Addressed:** the page asks `question` exactly as the mic does, marked "🎙 heard hands-free".
+- **The name alone** ("Ira."): the line says "Yes? Say the question.", and the next utterance within 8 s is written
+  down as a mic recording (no wake check, counted as a question) and asked.
+- **Not addressed:** nothing in the conversation; a faint "Heard something, not addressed" for 2 s. The row is still
+  written (agent `voice-transcribe`, source `console`, outcome `ok`, line `[hands-free utterance, …; the audio is not
+  kept]`), its summary starting "not addressed: ", so the Calls tab shows what hands-free heard and ignored. The audio
+  is never stored.
+
+**Not hearing itself.** The microphone is opened with echo cancellation, noise suppression and automatic gain, and
+listening pauses while a spoken reply is fetched or played, while an answer streams (in any agent's conversation),
+while the mic button is recording or its recording is being written down, and while the agent cannot be asked. It
+resumes 0.6 s after, so the tail of a reply is not taken for the owner. Anything half-heard when a pause starts is
+dropped. It also pauses while the tab is hidden.
+
+**Cost.** Each utterance is one Voxtral call, whether or not it was said to Ira: talk at the desk, a phone call or a TV
+all cost calls. So utterances have a budget, `Ai:Voice:HandsFreePerMinute` (6) per user per minute, enforced by the
+API (429 with Retry-After) and kept by the page itself, which pauses with "Paused: too much speech" and a countdown
+before the API has to refuse. The budget is their own: the question limit (`PerUserPer10Min`, 30 in ten minutes)
+would be spent by six a minute in five minutes of talk, and would then refuse the owner's typed questions too. An
+addressed question still counts toward the question limit when it is asked, as a typed one does. At six a minute, an
+hour of constant talk is at most 360 Voxtral calls of up to 20 s each.
+
+**Graceful states.** A refused microphone, no microphone or an http page turns hands-free off with the reason (and
+what to do). Voice switched off (503), a signed-out session, or an API from before hands-free (no `addressed` in the
+answer) turn it off with the reason. The switch is disabled, with a title saying why, when `GET voice` fails (an
+older API), when the desk has voice off, or when `HandsFreePerMinute` is 0. A check that fails (the model, the
+network) is a faint note for 4 s; three in a row turn it off.
 
 The server lets the console's own pages use the microphone (`Permissions-Policy: microphone=(self)`; the browser
 still asks the viewer) and play a `blob:` audio URL (`media-src 'self' blob:`).
@@ -1070,6 +1146,8 @@ still asks the viewer) and play a `blob:` audio URL (`media-src 'self' blob:`).
 | `ConsoleMaxBytes` | 4 MB | The largest console recording (uncompressed WAV) |
 | `MaxSpokenChars` | 600 | The longest spoken reply |
 | `Name` | `Ira` | What the owner may call the assistant |
+| `NameAliases` | empty | Other spellings that count as the name in a hands-free utterance |
+| `HandsFreePerMinute` | 6 | Hands-free utterances one user may have written down a minute (each is one Voxtral call); 0 switches hands-free off |
 
 **Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram` or `console`,
 model `bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens.
@@ -1095,6 +1173,8 @@ tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder
 scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing. The
 console's endpoints are tested the same way, on WAV recordings made in the test, with the same scripted Mantle and
 Polly; the browser's WAV encoder and voice client are tested in `web/src/lib/wav.test.ts` and `voice.test.ts`.
+Hands-free's wake matcher, budget and endpoints are tested in `AiVoiceHandsFreeTests` (on WAV made in the test and a
+scripted Bedrock), and its voice-activity detector on synthetic speech, coughs and fans in `web/src/lib/vad.test.ts`.
 
 ### Ira speaks first
 
