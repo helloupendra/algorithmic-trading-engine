@@ -29,7 +29,8 @@ namespace AlgoTrading.Api.Services.AiTrader;
 /// </para>
 /// <para>
 /// Each decision it judges is one <c>ai_reports</c> row (agent <c>validator</c>, subject the decision), with every
-/// sample's verdict, flaw, quote and call.
+/// sample's verdict, flaw, quote and call. A rehearsal (<see cref="AiTraderChecksRehearsal"/>) judges the same way and
+/// writes no report.
 /// </para>
 /// </remarks>
 public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports, ILogger<AiTraderValidator> logger)
@@ -55,12 +56,20 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    public Task<AiTraderValidation> JudgeAsync(AiTraderDecision decision, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
+        CancellationToken cancellationToken) =>
+        JudgeAsync(decision, plan, contract, verdict, null, cancellationToken);
+
+    /// <summary>
+    /// The judging above, asked through <paramref name="rehearsal"/> when one is given (<see cref="AiTraderChecksDryRun"/>):
+    /// the same question, the same three asks, reading and tally. Its calls are the rehearsal's, and it writes no report.
+    /// </summary>
     public async Task<AiTraderValidation> JudgeAsync(AiTraderDecision decision, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
-        CancellationToken cancellationToken)
+        AiTraderChecksRehearsal? rehearsal, CancellationToken cancellationToken)
     {
         string facts = Facts(plan, contract, verdict);
         string question = facts + "\nMARKET BRIEF THE PLAN RESTS ON\n" + decision.Brief + "\n\nJudge the plan now: one JSON object.";
-        string source = facts + "\n" + decision.Brief;
+        string source = Source(plan, contract, verdict, decision.Brief);
 
         var samples = new List<AiTraderValidatorSample>();
         AiAskResult? last = null;
@@ -69,9 +78,9 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
             AiAskResult result;
             try
             {
-                result = await gateway.AskAsync(new AiAskInput(
+                result = await AiTraderChecksRehearsal.AskAsync(gateway, new AiAskInput(
                     AiCatalog.Validator, null, [new AiMessage("user", question)], null, 3000, Temperature,
-                    $"validator-decision-{decision.Id}-{n}", "schedule", AiCatalog.Validator, null), NullAiStreamSink.Instance, cancellationToken);
+                    $"validator-decision-{decision.Id}-{n}", "schedule", AiCatalog.Validator, null), rehearsal, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
@@ -87,6 +96,8 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
         }
 
         var validation = Tally(samples);
+        // A rehearsal decided nothing: no report, and no verdict logged against the decision.
+        if (rehearsal is not null) return validation;
         try
         {
             var report = await reports.SaveAsync(AiCatalog.Validator, AiReportSubject.Decision, decision.Id.ToString(CultureInfo.InvariantCulture), decision.Day,
@@ -123,6 +134,10 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
         text.Append("THE RULES' VERDICT: ").Append(verdict.Allowed ? "allowed: " : "refused: ").Append(verdict.Why).Append('\n');
         return text.ToString();
     }
+
+    /// <summary>The text a REJECT's quote must be found in: the facts the Validator was told, and the brief.</summary>
+    public static string Source(AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict, string brief) =>
+        Facts(plan, contract, verdict) + "\n" + brief;
 
     /// <summary>One answer as a sample: its verdict, flaw and quote, or why it does not count.</summary>
     public static AiTraderValidatorSample Read(AiAskResult result, string source)
@@ -280,7 +295,8 @@ public sealed record AiTraderValidation(string Outcome, int Accepts, int Rejects
 /// <remarks>
 /// It never blocks: the veto is the rules' and the Validator's. A memo that cannot be had (no answer, an answer that is
 /// not the JSON asked for) leaves the plan as it was, and says so. Each decision it reads is one <c>ai_reports</c> row
-/// (agent <c>risk-memo</c>, subject the decision). Asked outside <see cref="AiTraderAgent.BookGate"/>, like the Validator.
+/// (agent <c>risk-memo</c>, subject the decision); a rehearsal (<see cref="AiTraderChecksRehearsal"/>) writes none.
+/// Asked outside <see cref="AiTraderAgent.BookGate"/>, like the Validator.
 /// </remarks>
 public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, ILogger<AiTraderRiskMemo> logger)
 {
@@ -290,17 +306,25 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    public Task<AiTraderMemo> ReviewAsync(AiTraderDecision decision, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
+        AiTraderBook book, AiTraderRules rules, CancellationToken cancellationToken) =>
+        ReviewAsync(decision, plan, contract, verdict, book, rules, null, cancellationToken);
+
+    /// <summary>
+    /// The memo above, asked through <paramref name="rehearsal"/> when one is given (<see cref="AiTraderChecksDryRun"/>):
+    /// the same question, reading and tightening. Its call is the rehearsal's, and it writes no report.
+    /// </summary>
     public async Task<AiTraderMemo> ReviewAsync(AiTraderDecision decision, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
-        AiTraderBook book, AiTraderRules rules, CancellationToken cancellationToken)
+        AiTraderBook book, AiTraderRules rules, AiTraderChecksRehearsal? rehearsal, CancellationToken cancellationToken)
     {
         string question = Facts(plan, contract, verdict, book, rules) + "\nWrite the memo now: one JSON object.";
         AiAskResult? result = null;
         AiTraderMemo memo;
         try
         {
-            result = await gateway.AskAsync(new AiAskInput(
+            result = await AiTraderChecksRehearsal.AskAsync(gateway, new AiAskInput(
                 AiCatalog.RiskMemo, null, [new AiMessage("user", question)], null, 3000, 0.2,
-                $"risk-memo-decision-{decision.Id}", "schedule", AiCatalog.RiskMemo, null), NullAiStreamSink.Instance, cancellationToken);
+                $"risk-memo-decision-{decision.Id}", "schedule", AiCatalog.RiskMemo, null), rehearsal, cancellationToken);
             memo = result.Outcome == AiCallOutcome.Ok
                 ? Apply(plan, contract, result.Text)
                 : AiTraderMemo.Unchanged(plan, AiReportStatus.Failed,
@@ -312,6 +336,7 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
             memo = AiTraderMemo.Unchanged(plan, AiReportStatus.Failed, $"The ask failed: {ex.Message}");
         }
 
+        if (rehearsal is not null) return memo;
         try
         {
             var report = await reports.SaveAsync(AiCatalog.RiskMemo, AiReportSubject.Decision, decision.Id.ToString(CultureInfo.InvariantCulture), decision.Day,

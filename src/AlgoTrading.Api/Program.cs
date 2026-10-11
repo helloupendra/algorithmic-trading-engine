@@ -275,6 +275,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderRuns, Algo
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderValidator>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderRiskMemo>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderExecution>();
+// A rehearsal of the Validator and the Risk Memo on past plans, placing and recording nothing (POST api/AiTrader/checks/dry-run).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderChecksDryRun>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
 // The desk analysts (Phase 4): facts computed by code, every number in the answer checked against them. After the AI
 // Trader, so its look never waits on an analyst's call in the same minute (it reads their reports already written).

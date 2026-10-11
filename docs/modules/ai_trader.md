@@ -135,6 +135,39 @@ Execution Reporter (it reads fills after they happen). An exit or a strategy sto
 | Report | One `ai_reports` row per decision (subject `decision`): the memo, what was applied, what was ignored |
 | Never | Blocks a plan, or loosens one |
 
+### A dry run of the checks
+
+`POST /api/AiTrader/checks/dry-run` (admin, `AiTraderChecksDryRun`) asks the Validator and the Risk Memo on past plans
+as a live placement asks them, and places and records nothing. Built on 11 Oct 2026, the day before the first live
+paper orders: if the judge tier's answers cannot be read, every buy fails closed, and this shows it first.
+
+| Part | Rule |
+|---|---|
+| Asked on | `{"decisionIds": [..]}`, or `{"take": N}`: the N most recent decisions (by id) that are a buy or a strategy start the rules allowed, any mode, replays included. At most 20: more ids is a 400, a larger `take` is capped and says so. A decision the checks are never asked on (refused by the rules, an exit, not found) is listed as skipped, with why |
+| Rebuilt | As the live path hands it to the checks: the plan from `PlanJson`, a start's lots as a live start takes them (`AiTraderAgent.ForChecks`); the contract and its price from the result's `contract`; the rules' verdict as recorded (`Allowed`, `Rule`, `Why`); the `Brief` |
+| Asked | Through the checks' own code: the same prompts, three asks at temperature 0.7, the same reading, quote check and tally, the same tightening. Only the sending differs (`AiTraderChecksRehearsal`): source `dry-run`, asked by the admin (their rate limit pays, not the agents'), the agent's memories read but not counted as used. The agent's switch still counts: a check switched off is no verdict, as live |
+| Chain | Optional `"chain": [..]`, checked as a tier's chain is. It replaces the judge tier's chain and nothing else (`AiAskInput.ForcedChain`): the switch, the memories and the health order are the agent's own call's |
+| The memo | Reads the AI Trader's account as it is now, as a live memo does. Asked whatever the Validator said, so its reading is measured on every plan; `askedLive` says whether a live day would have asked it (only after an accept) |
+| Writes | The model calls only, on AI → Calls with source `dry-run`. No order, position, run, `ai_reports` row or change to a decision |
+| Pace | One decision after another, four calls each, waiting its turn under the desk's AI rate limit (30 calls a user in ten minutes) rather than being refused: twenty take about twenty minutes. Cloudflare ends a request at 100 s, so over the public address ask for one or two; more from the server itself |
+
+Each decision comes back with its id, day, IST time, mode, underlying and action (or `skipped`), the `plan` and
+`contract` the checks were told, and:
+
+- `validator`: the `outcome` as a live placement reads the tally (`placed`, `validator` for two REJECTs,
+  `validator-unavailable` for no majority), the counts and the why, and each of the three `answers`: the model that
+  answered, the seconds, the `verdict` (ACCEPT, REJECT, `unreadable` or `no-answer`), whether it was `counted`, the
+  flaw, the quote and `quoteFound`, the reader's error, an `excerpt` of an answer that was not counted, the cost and
+  each model tried.
+- `riskMemo`: the model, the seconds, the `status` (ok, invalid, failed) and `parsed`, the memo, what it `proposed`
+  (lots, stop, target), what code would have `applied` and `ignored` and why, and the lots, stop and target that
+  would go on.
+
+The `summary` gives the share of Validator answers read (`validatorParsedShare`) and counted, the share of decisions
+that would be placed (`wouldPlaceShare`), those blocked or given no verdict, the share of memos read
+(`riskMemoParsedShare`), each model's answers, reads, failed attempts and average seconds, the cost where priced, and
+the seconds taken and waited.
+
 ### The Execution Reporter
 
 `AiTraderExecutionReporter`, agent `execution-reporter` (extract tier), on by default; a scheduled agent, one fill a
@@ -487,6 +520,7 @@ Top refusals: validator (2), validator-unavailable (1)
 | `GET /api/AiTrader/situations` | The similar-moments history: the last day built, the backfill's state and this run's days and rows, each index's rows and days |
 | `POST /api/AiTrader/situations/backfill?from=` | Starts the history over everything stored, or rebuilds it from `from` (yyyy-MM-dd); 202, taken on the builder's next pass |
 | `GET /api/AiTrader/lessons` | Its lessons with their day, their decisions and their test's evidence; the one under test; the limits |
+| `POST /api/AiTrader/checks/dry-run` | The Validator and the Risk Memo asked on past plans, placing and recording nothing ([above](#a-dry-run-of-the-checks)) |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
 | `POST /api/Ai/agents/ai-trader-reflect/run` | One lesson step now (`{ subjectId }`: a replay's id, to reflect on it); never 09:00–15:45 IST on a trading day |
 
