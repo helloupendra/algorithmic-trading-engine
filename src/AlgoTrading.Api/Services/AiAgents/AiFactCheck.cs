@@ -122,6 +122,18 @@ public static partial class AiFactCheck
             Blank(chars, m);
         }
 
+        // A span of years ("the 2024-25 table", "2020-23") is two years, not a year and the number 25.
+        rest = new string(chars);
+        foreach (Match m in YearSpanRx().Matches(rest))
+        {
+            int from = int.Parse(m.Groups["a"].Value, CultureInfo.InvariantCulture);
+            int to = from / 100 * 100 + int.Parse(m.Groups["b"].Value, CultureInfo.InvariantCulture);
+            if (to <= from) continue;
+            found.Add((m.Index, new Token(TokenKind.Number, m.Groups["a"].Value, m.Groups["a"].Value, from, 0)));
+            found.Add((m.Index + 1, new Token(TokenKind.Number, m.Value, $"{to}", to, 0)));
+            Blank(chars, m);
+        }
+
         rest = new string(chars);
         foreach (Match m in NumberRx().Matches(rest))
         {
@@ -148,6 +160,9 @@ public static partial class AiFactCheck
 
     [GeneratedRegex(@"(?<![\d:])(?<h>[01]?\d|2[0-3]):(?<m>[0-5]\d)(?![\d:])")]
     private static partial Regex TimeRx();
+
+    [GeneratedRegex(@"(?<![\d.,-])(?<a>(?:19|20)\d{2})\s*[-–]\s*(?<b>\d{2})(?![\d,-]|\.\d)")]
+    private static partial Regex YearSpanRx();
 
     // A number that stands on its own: not inside a word or a symbol (NIFTY50, INDIA VIX's "NSE:INDIAVIX"), digits
     // with optional Indian or Western grouping and decimals. The sign and the rupee mark are not part of the value.

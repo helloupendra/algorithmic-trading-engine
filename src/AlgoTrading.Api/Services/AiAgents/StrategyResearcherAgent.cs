@@ -147,12 +147,30 @@ public sealed class StrategyResearcherAgent(
                 $"{label}: not written", string.Empty, TablesData(tables).ToJsonString(Json), why, cancellationToken);
         }
 
-        var note = ParseNote(result.Text, tables, AiCatalog.Agent(AgentKey)!.SystemPrompt + "\n" + question);
+        string given = AiCatalog.Agent(AgentKey)!.SystemPrompt + "\n" + question;
+        var note = ParseNote(result.Text, tables, given);
         var dataJson = TablesData(tables);
         if (note.Problems.Count > 0)
         {
-            return await reports.SaveAsync(AgentKey, AiReportSubject.Check, subject, week, AiReportStatus.Invalid, result,
-                $"{label}: the note failed its check", result.Text, dataJson.ToJsonString(Json), string.Join("; ", note.Problems.Take(6)), cancellationToken);
+            // One more try, told exactly what failed (11 Oct 2026: two notes in a row failed on a figure written as
+            // "₹1.7 million"). The check itself stays as strict; only an answer that passes it is kept.
+            var first = note.Problems;
+            var again = await gateway.AskAsync(new AiAskInput(
+                AgentKey, null, [new AiMessage("user", question), new AiMessage("assistant", result.Text), new AiMessage("user", Repair(first))],
+                null, 8000, 0.2, $"research-{subject}", "schedule", AgentKey, null), NullAiStreamSink.Instance, cancellationToken);
+            if (again.Outcome == AiCallOutcome.Ok && ParseNote(again.Text, tables, given) is { Problems.Count: 0 } fixedNote)
+            {
+                result = again;
+                note = fixedNote;
+                dataJson["repairedFrom"] = new JsonArray(first.Take(6).Select(p => (JsonNode)p).ToArray());
+            }
+            else
+            {
+                var last = again.Outcome == AiCallOutcome.Ok ? again : result;
+                var problems = again.Outcome == AiCallOutcome.Ok ? ParseNote(again.Text, tables, given).Problems : first;
+                return await reports.SaveAsync(AgentKey, AiReportSubject.Check, subject, week, AiReportStatus.Invalid, last,
+                    $"{label}: the note failed its check", last.Text, dataJson.ToJsonString(Json), string.Join("; ", problems.Take(6)), cancellationToken);
+            }
         }
 
         dataJson["summary"] = note.Summary;
@@ -164,6 +182,13 @@ public sealed class StrategyResearcherAgent(
         return await reports.SaveAsync(AgentKey, AiReportSubject.Check, subject, week, AiReportStatus.Ok, result,
             title, Body(tables, note), dataJson.ToJsonString(Json), string.Empty, cancellationToken);
     }
+
+    /// <summary>What the second try is told: each problem the check found, and how to write the note so it passes.</summary>
+    public static string Repair(IReadOnlyList<string> problems) =>
+        "Your note failed the desk's check:\n" + string.Join("\n", problems.Take(6).Select(p => "- " + p)) + "\n" +
+        "Write the whole JSON object again. Copy each number exactly as it appears in the tables (rupees with their " +
+        "digits, never in million or crore), compute nothing new, and leave out any figure you cannot copy. Only an " +
+        "idea's \"test\" may hold new numbers.";
 
     /// <summary>Backtest rows handed to the model at most, newest first; the checks count every one.</summary>
     public const int MaxBacktestsListed = 80;
