@@ -29,6 +29,7 @@ import {
   sameChain,
   toolLabel,
 } from '../../lib/ai'
+import { ACTION_TOOLS } from '../../lib/aiActions'
 import type { AiModel, AiModelHealth, AiProvider, AiToolStep, FeedbackScore } from '../../lib/ai'
 import { Badge } from '../../components/ui'
 
@@ -388,7 +389,8 @@ export function ToolStepRow({
     <details className={`ai-tool ${step.ok ? '' : 'ai-tool--err'}`}>
       <summary className="ai-tool__row">
         {showRound && <span className="ai-tool__round">round {step.round}</span>}
-        <span className="ai-tool__verb">Read</span>
+        {/* A proposal reads nothing: it stores an action that waits for the owner's PIN. */}
+        <span className="ai-tool__verb">{ACTION_TOOLS.includes(step.name) ? 'Propose' : 'Read'}</span>
         <span className="ai-tool__label" title={step.name}>
           {label}
         </span>
