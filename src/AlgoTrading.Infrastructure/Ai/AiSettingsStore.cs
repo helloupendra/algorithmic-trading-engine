@@ -60,7 +60,7 @@ public sealed record AiState(IReadOnlyList<AiTierState> Tiers, IReadOnlyList<AiA
 /// <para>
 /// While Claude is off and the open models on Bedrock are on
 /// (<see cref="AiBedrockOpenSettings.Enabled"/>), an untouched tier walks its
-/// <see cref="AiTierDef.OpenChain"/> and then its NVIDIA chain. A chain
+/// <see cref="AiTierDef.OpenChain"/>, and NVIDIA is not asked. A chain
 /// the owner set is walked as set, and may name <c>bedrock-oss:</c> models.
 /// </para>
 /// </remarks>

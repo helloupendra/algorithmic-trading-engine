@@ -313,14 +313,13 @@ export function KeyBadge({ configured }: { configured: boolean }) {
   return <Badge tone={configured ? 'pos' : 'warn'}>{configured ? 'key configured' : 'no key on the server'}</Badge>
 }
 
-/** Where NVIDIA sits in the chains: after Bedrock's open models, first without them, or not asked while Claude is on. */
+/** What NVIDIA still does: every chain while Bedrock is off, else only the embeddings. */
 export function nvidiaRole(provider: AiProvider): string {
-  if (provider.bedrock?.enabled) return 'not asked while Claude is on'
-  return provider.bedrockOpen?.enabled ? "each tier's fallbacks after Bedrock" : 'first in every chain'
+  return provider.bedrock?.enabled || provider.bedrockOpen?.enabled ? 'embeddings only; no chain asks it' : 'every chain'
 }
 
 /**
- * The two providers on Amazon Bedrock, under NVIDIA's line: the open models, first in each tier with NVIDIA's after, and
+ * The two providers on Amazon Bedrock, under NVIDIA's line: the open models, every chat tier while Claude is off, and
  * Claude, which while on answers every chain. The server's AWS role signs both, so no key is held for either.
  */
 export function BedrockLines({ provider }: { provider: AiProvider }) {
@@ -338,7 +337,7 @@ export function BedrockLines({ provider }: { provider: AiProvider }) {
               ? 'Ai:BedrockOpen:Enabled is false'
               : claude?.enabled
                 ? 'not asked while Claude is on'
-                : 'first in every chain'}{' '}
+                : 'every chat tier'}{' '}
             · signed by the server's AWS role, no key
           </span>
         </div>
