@@ -231,6 +231,33 @@ public class AiTraderController(
     }
 
     /// <summary>
+    /// A rehearsal of the checks before a live buy or strategy start (<see cref="AiTraderChecksDryRun"/>): the Validator's
+    /// three asks and the Risk Memo on past plans the rules allowed, as a live placement asks them, with nothing placed or
+    /// recorded but the model calls (source <c>dry-run</c>, by the admin who asked). The decisions are
+    /// <c>decisionIds</c>, or the <c>take</c> most recent buys and starts the rules allowed; at most 20, each four model
+    /// calls, run one after another. <c>chain</c> forces the models asked, checked as a tier's chain is. It runs as long
+    /// as the models take and the desk's AI rate limit allows: minutes for a full twenty.
+    /// </summary>
+    [HttpPost("checks/dry-run")]
+    public async Task<IActionResult> ChecksDryRun([FromBody] AiTraderChecksDryRunRequest? body, [FromServices] AiTraderChecksDryRun dryRun,
+        [FromServices] AiModelCatalog catalog, CancellationToken cancellationToken)
+    {
+        if (body is null) return BadRequest(new { error = "Send { decisionIds: [..] } or { take: N }, and optionally chain." });
+        if (AiTraderChecksDryRun.Problem(body.DecisionIds, body.Take) is string problem) return BadRequest(new { error = problem });
+        if (body.Chain is { Count: > 0 } chain)
+        {
+            var models = await catalog.GetAsync(cancellationToken: cancellationToken);
+            if (AiSettingsStore.ChainProblem(chain, models.KnownIds(), bedrockOnly: settings.CurrentValue.Bedrock.Enabled) is string bad)
+            {
+                return BadRequest(new { error = bad });
+            }
+        }
+
+        string by = User.GetUserName() ?? User.Identity?.Name ?? "admin";
+        return Ok(await dryRun.RunAsync(body.DecisionIds, body.Take, body.Chain, by.Length > 100 ? by[..100] : by, User.GetUserId(), cancellationToken));
+    }
+
+    /// <summary>
     /// The AI Trader's lessons, newest first, whatever their status: each with the day it was learned from, the
     /// decisions it rests on and, once tested, its test's evidence (without it against with it, over its looks); the
     /// lesson under test and how far its test is; the limits.
@@ -345,6 +372,12 @@ public class AiTraderController(
         }
     }
 }
+
+/// <summary>
+/// A checks dry run: <c>DecisionIds</c> to rehearse, or <c>Take</c>, the most recent buys and starts the rules allowed;
+/// <c>Chain</c> forces the models asked (null or empty: each agent's own).
+/// </summary>
+public sealed record AiTraderChecksDryRunRequest(IReadOnlyList<long>? DecisionIds, int? Take, IReadOnlyList<string>? Chain);
 
 public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes, AiTraderRules Rules, AiTraderDay Today,
     IReadOnlyList<AiTraderDecisionSummary> Latest, AiTraderShadowDay Shadow);

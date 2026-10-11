@@ -120,6 +120,43 @@ public sealed class AiRateLimiter
         return (new AiCallLease(() => Release(user)), null);
     }
 
+    /// <summary>
+    /// How long until <paramref name="user"/> may start a call under the per-user and the desk's per-minute windows
+    /// (zero: now). Calls in flight are not counted: they end by themselves. A caller that paces a burst of its own
+    /// (the AI Trader's checks dry run) waits this rather than being refused call after call.
+    /// </summary>
+    public TimeSpan WaitFor(string user)
+    {
+        var s = _settings.CurrentValue;
+        var now = _time.GetUtcNow().UtcDateTime;
+        lock (_gate)
+        {
+            Trim(_global, now - GlobalWindow);
+            var wait = TimeSpan.Zero;
+            if (_global.Count >= s.GlobalPerMinute) wait = Until(_global, s.GlobalPerMinute, GlobalWindow, now);
+            if (_perUser.TryGetValue(user, out var mine))
+            {
+                Trim(mine, now - UserWindow);
+                if (mine.Count >= s.PerUserPer10Min)
+                {
+                    var mineWait = Until(mine, s.PerUserPer10Min, UserWindow, now);
+                    if (mineWait > wait) wait = mineWait;
+                }
+            }
+
+            return wait;
+        }
+    }
+
+    /// <summary>When enough of <paramref name="window"/>'s calls have aged out of it for one more under <paramref name="cap"/>.</summary>
+    private static TimeSpan Until(Queue<DateTime> window, int cap, TimeSpan length, DateTime now)
+    {
+        // A cap of nothing is not waited out: the call is refused, in words.
+        if (cap < 1 || window.Count == 0) return TimeSpan.Zero;
+        var leaves = window.ElementAt(window.Count - cap) + length - now;
+        return leaves > TimeSpan.Zero ? leaves : TimeSpan.Zero;
+    }
+
     private void Release(string user)
     {
         lock (_gate)
