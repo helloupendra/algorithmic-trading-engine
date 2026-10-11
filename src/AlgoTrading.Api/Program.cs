@@ -226,7 +226,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Se
 // The Desk Assistant on the desk's Telegram bot, for linked owners only; long polls with its own client (50 s).
 builder.Services.AddHttpClient(AlgoTrading.Api.Services.AiTelegram.TelegramAssistant.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(75));
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramPairing>();
-// Its voice ("Disha", Ai:Voice): owners' voice notes written down on Bedrock, answers spoken back by Amazon Polly.
+// Its voice ("Ira", Ai:Voice): owners' voice notes written down on Bedrock, answers spoken back by Amazon Polly.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramVoice>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());

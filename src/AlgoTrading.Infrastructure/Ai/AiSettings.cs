@@ -236,7 +236,7 @@ public sealed class AiSettings
     /// <summary>Open models on Amazon Bedrock, the third provider (<see cref="BedrockOpenChatClient"/>); on unless the owner turns it off.</summary>
     public AiBedrockOpenSettings BedrockOpen { get; set; } = new();
 
-    /// <summary>Voice notes to the Telegram assistant and its spoken replies ("Disha"); on unless the owner turns it off.</summary>
+    /// <summary>Voice notes to the Telegram assistant and its spoken replies ("Ira"); on unless the owner turns it off.</summary>
     public AiVoiceSettings Voice { get; set; } = new();
 
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
@@ -393,10 +393,11 @@ public sealed class AiVoiceSettings
     public int MaxSpokenChars { get; set; } = 600;
 
     /// <summary>
-    /// The name the owner may call the assistant in a voice note. A voice question's prompt gets one line saying it
-    /// may answer to it; empty, no line.
+    /// The name the owner may call the assistant in a voice note, until he gives it another with /name on Telegram
+    /// (<see cref="AiSettingsStore.VoiceNameKey"/>). A voice question's prompt gets one line saying it may answer to it;
+    /// empty, no line.
     /// </summary>
-    public string Name { get; set; } = "Disha";
+    public string Name { get; set; } = "Ira";
 }
 
 /// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>
