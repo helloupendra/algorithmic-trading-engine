@@ -1017,8 +1017,8 @@ public static partial class AiCatalog
 
     /// <summary>The spoken reply's pseudo-agent: named on its calls.</summary>
     public static readonly AiAgentDef VoiceSpeakAgent = new(
-        VoiceSpeak, 0, "Voice reply", "Speaks a short version of an answer (Amazon Polly): to a Telegram voice note, or on AI → Assistant with Speak replies on.",
-        "The answer heard as well as read.", "After the text answer to a voice note, or to a console question with Speak replies on", "2",
+        VoiceSpeak, 0, "Voice reply", "Speaks a short version of an answer (Amazon Polly): to a Telegram voice note, or on AI → Assistant with Speak replies on; and Ira's own alerts and briefings (source alert).",
+        "The answer heard as well as read.", "After the text answer to a voice note, or to a console question with Speak replies on; after the text of each of Ira's alerts", "2",
         Built: true, "", "The answer's text, without tables, links or tool citations.", NoOrders);
 
     public static AiAgentDef? Agent(string? key) =>

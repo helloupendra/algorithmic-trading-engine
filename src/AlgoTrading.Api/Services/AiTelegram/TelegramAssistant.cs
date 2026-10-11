@@ -97,6 +97,11 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// may be asked, as a short voice reply after it. A stranger's voice note gets
 /// nothing, as a stranger's question does.
 /// </para>
+/// <para>
+/// Ira also speaks first (<see cref="IraAlertService"/>): its alerts and briefings
+/// go through this bot to each linked owner's chat, and <c>/alerts on</c>,
+/// <c>/alerts off</c> and <c>/alerts</c> set and show the owner's own switch.
+/// </para>
 /// </remarks>
 public sealed class TelegramAssistant(
     IServiceScopeFactory scopes,
@@ -133,6 +138,9 @@ public sealed class TelegramAssistant(
 
     private const string AgentHelp =
         "/trader, /reviewer, /news, /incident, /technical, /options, /macro, /fundamental, /data, /compliance or /research before a question asks that agent; /assistant comes back.";
+
+    /// <summary>The line about Ira's alerts (<see cref="IraAlertService"/>) in the help the bot gives.</summary>
+    private const string AlertsHelp = "/alerts on or /alerts off turns my spoken alerts and briefings on or off for you.";
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -258,7 +266,7 @@ public sealed class TelegramAssistant(
             }
 
             await LinkAsync(userId, consoleUser, name, cancellationToken);
-            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation. {AgentHelp}", cancellationToken);
+            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation. {AgentHelp} {AlertsHelp}", cancellationToken);
             return;
         }
 
@@ -305,7 +313,7 @@ public sealed class TelegramAssistant(
         if (IsCommand(text, "/new") || IsCommand(text, "/start"))
         {
             _history.TryRemove(chatId, out _);
-            await SendAsync(chatId, $"New conversation. Ask about the desk. {AgentHelp}", cancellationToken);
+            await SendAsync(chatId, $"New conversation. Ask about the desk. {AgentHelp} {AlertsHelp}", cancellationToken);
             return;
         }
 
@@ -353,6 +361,12 @@ public sealed class TelegramAssistant(
                 await SendAsync(chatId, $"From now on my name is {wanted}.", cancellationToken);
             }
 
+            return;
+        }
+
+        if (IsCommand(text, "/alerts"))
+        {
+            await SendAsync(chatId, await AlertsAsync(owner, AfterCommand(text, "/alerts").ToLowerInvariant(), cancellationToken), cancellationToken);
             return;
         }
 
@@ -531,6 +545,52 @@ public sealed class TelegramAssistant(
         }
     }
 
+    /// <summary>Whether the bot can send at all, for Ira's alerts (<see cref="IraAlertService"/>): the assistant is on and the bot has its token.</summary>
+    public bool CanSend => settings.CurrentValue.TelegramAssistantEnabled && !string.IsNullOrWhiteSpace(Token);
+
+    /// <summary>
+    /// One of Ira's alerts as plain text to a linked owner's private chat. True when Telegram took it. Never throws for
+    /// Telegram's trouble, and logs only at Information: an alert that did not go is not a desk incident.
+    /// </summary>
+    public async Task<bool> SendAlertTextAsync(long chatId, string text, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await http.CreateClient(HttpClientName).PostAsJsonAsync($"https://api.telegram.org/bot{Token}/sendMessage",
+                new JsonObject { ["chat_id"] = chatId, ["text"] = text, ["disable_web_page_preview"] = true }, cancellationToken);
+            if (response.IsSuccessStatusCode) return true;
+            logger.LogInformation("Telegram assistant: an alert was refused (HTTP {Status})", (int)response.StatusCode);
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogInformation("Telegram assistant: an alert could not be sent ({Type})", ex.GetType().Name);
+            return false;
+        }
+    }
+
+    /// <summary>An alert's spoken words (MP3) as a voice message after its text; as quiet as <see cref="SendAlertTextAsync"/>.</summary>
+    public async Task<bool> SendAlertVoiceAsync(long chatId, byte[] mp3, CancellationToken cancellationToken)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(chatId.ToString(CultureInfo.InvariantCulture)), "chat_id");
+        var file = new ByteArrayContent(mp3);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+        form.Add(file, "voice", "alert.mp3");
+        try
+        {
+            using var response = await http.CreateClient(HttpClientName).PostAsync($"https://api.telegram.org/bot{Token}/sendVoice", form, cancellationToken);
+            if (response.IsSuccessStatusCode) return true;
+            logger.LogInformation("Telegram assistant: an alert's voice note was refused (HTTP {Status})", (int)response.StatusCode);
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogInformation("Telegram assistant: an alert's voice note could not be sent ({Type})", ex.GetType().Name);
+            return false;
+        }
+    }
+
     /// <summary>The agent a chat is talking with: the one its last question went to, while the conversation lasts; else the Desk Assistant.</summary>
     private string AgentOf(long chatId) =>
         _history.TryGetValue(chatId, out var h) && _time.GetUtcNow().UtcDateTime - h.LastUtc < HistoryIdle ? h.Agent : AiCatalog.DeskAssistant;
@@ -545,6 +605,34 @@ public sealed class TelegramAssistant(
     /// </summary>
     private Task<string> VoiceNameAsync(CancellationToken cancellationToken) =>
         voice is null ? Task.FromResult(settings.CurrentValue.Voice.Name) : voice.Voice.NameAsync(cancellationToken);
+
+    /// <summary>
+    /// <c>/alerts on</c>, <c>/alerts off</c> or <c>/alerts</c>: the owner's own switch for Ira's alerts and briefings
+    /// (<see cref="IraAlertPrefs"/>), and where it stands, with a word when the desk-wide switch is off.
+    /// </summary>
+    private async Task<string> AlertsAsync(TelegramOwner owner, string argument, CancellationToken cancellationToken)
+    {
+        var s = settings.CurrentValue.Voice.Alerts;
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        bool on;
+        switch (argument)
+        {
+            case "on" or "off":
+                on = argument == "on";
+                await IraAlertPrefs.SetAsync(db, owner.TelegramUserId, on, owner.ConsoleUser, _time.GetUtcNow().UtcDateTime, cancellationToken);
+                logger.LogInformation("Telegram assistant: {User} turned Ira's alerts {State}", owner.ConsoleUser, argument);
+                break;
+            case "":
+                on = await IraAlertPrefs.IsOnAsync(db, owner.TelegramUserId, cancellationToken);
+                break;
+            default:
+                return IraAlertText.AlertsUsage;
+        }
+
+        string said = on ? IraAlertText.AlertsOn(s) : IraAlertText.AlertsOff;
+        return on && !s.Enabled ? said + IraAlertText.DeskOff : said;
+    }
 
     /// <summary>What follows a command: "/trader why?" and "/trader@bot why?" both give "why?".</summary>
     private static string AfterCommand(string text, string command)

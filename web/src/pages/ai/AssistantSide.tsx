@@ -182,7 +182,8 @@ export function TelegramCard() {
               </button>
               <span className="faint small">
                 /new starts a new conversation; /unlink removes the link. /trader, /reviewer, /news or /incident before a question asks
-                that agent, and /assistant comes back. A voice note asks Ira by voice; /name gives her another name.
+                that agent, and /assistant comes back. A voice note asks Ira by voice; /name gives her another name. /alerts on or
+                /alerts off sets her spoken alerts and briefings; /alerts says where they stand.
               </span>
             </div>
           )}
