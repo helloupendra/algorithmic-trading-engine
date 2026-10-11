@@ -9,7 +9,9 @@ The desk's hosted language models live on one console page. The page shows:
 - the owner's own questions, streamed.
 
 All fifteen agents are built (owner, 10 Oct 2026: every AI agent built and on):
-- the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2);
+- the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2), and from
+  12 Oct may propose four actions that code carries out only after the owner's PIN
+  ([Actions (with a PIN)](#actions-with-a-pin));
 - three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
   **Incident Explainer**;
 - four desk analysts from Phase 4 (10 Oct): the **Technical**, **Options/OI**, **Macro** and **Fundamental Analysts**
@@ -38,8 +40,10 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
 - **Owner and admins only.** The models run on NVIDIA's free hosted endpoint (build.nvidia.com). Its terms cover
   development, testing, research and evaluation. Serving traders would be production use, so every endpoint is
   `AdminOnly`.
-- **No model holds an order tool.** Nothing in the live trading path waits on a model. A future agent may *suggest*;
-  code decides.
+- **No model holds an order tool.** Nothing in the live trading path waits on a model. The Desk Assistant may *propose*
+  four actions on the paper desk (stop or start a strategy run, square off manual-book positions, switch an AI agent);
+  code resolves the target, waits for the owner's PIN, and carries it out as his own click would
+  ([Actions (with a PIN)](#actions-with-a-pin)). No model can place a broker order.
 - **The key never leaves the server.** It sits in the server's `.env` as `NVIDIA_API_KEY`. The desk writes it into
   `appsettings.Local.json` on each deploy (`scripts/_gen_local_settings.py`), and it is sent only in the provider's
   `Authorization` header. The browser learns `keyConfigured: true` and nothing more. Every stored text is scrubbed
@@ -336,7 +340,9 @@ The Desk Assistant answers from the desk's own records. The model asks for tools
 3. This repeats until the model answers.
 
 Every tool only reads (`IAiTool`); none places, cancels or switches anything. Each tool is built from the service the
-matching console page uses, so the numbers are the page's numbers.
+matching console page uses, so the numbers are the page's numbers. The one exception is the Desk Assistant's four
+proposal tools, offered only in an admin's chat: each stores a pending action and nothing else
+([Actions (with a PIN)](#actions-with-a-pin)).
 
 | Tool | Reads | Built on |
 | --- | --- | --- |
@@ -461,6 +467,10 @@ All under `api/Ai`, admin only.
 | `GET voice` | `{ name, enabled, speakReplies, handsFreePerMinute }`: the assistant's name as it is now, the switches and the hands-free budget ([Hands-free](#hands-free)) |
 | `POST voice/transcribe?conversationId=&wake=` | A spoken question written down: the body is the recording as `audio/wav`; returns `{ text, callId, seconds }`, and with `wake=1` also `{ addressed, question }` ([Voice](#voice-ira)) |
 | `POST voice/speak` | `{ text, callId? }`: the answer's spoken version as `audio/mpeg` ([Voice](#voice-ira)) |
+| `GET actions/pin` | `{ enabled, set, lockedUntilUtc, confirmSeconds }` for the signed-in admin; never the PIN ([Actions](#actions-with-a-pin)) |
+| `PUT actions/pin` | `{ pin }`: sets or resets the signed-in admin's PIN (4 to 8 digits); 400 for another shape |
+| `POST actions/{id}/confirm` | `{ pin }`: carries out a console action once; 200 with how it ended, 403 wrong PIN, 423 locked, 409 no longer waiting, 404 not this admin's |
+| `POST actions/{id}/cancel` | Cancels a console action while it waits; 409 once it no longer does |
 
 Since memory (1 Oct):
 - A row of `GET calls` also carries `feedback` (1, -1 or null) and `memoryCount`.
@@ -961,6 +971,9 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   that message becomes a correction of the agent that answered. `/remember …` saves a note for the agent the chat is
   talking with, `/memory` lists what it reads, and `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
   those dropped, with nothing to answer. A button pressed by anyone but a linked owner does nothing.
+- **Actions.** When the Assistant proposes one, the bot sends the summary code wrote and "Type your PIN to confirm, or
+  /cancel." A typed PIN is deleted from the chat, checked and carried out before any model is asked; `/pin` sets or
+  changes it ([Actions (with a PIN)](#actions-with-a-pin)).
 
 ## Voice (Ira)
 
@@ -1266,6 +1279,106 @@ waiting for its checks told once placed; the mark across a restart, with history
 the cap's "and N more"; `/alerts off` for one owner only; no briefing on a weekend or a holiday; Polly refusing with the
 text still sent.
 
+## Actions (with a PIN)
+
+Step 4 (12 Oct 2026): Ira does things, but only after the owner confirms with his PIN. The model only **proposes**;
+**code** checks the proposal, resolves its exact target, waits for the PIN, and carries it out as the owner, through the
+same services and checks as his own click. Paper desk only: no broker is ever called.
+
+| Action | Proposal tool | Carried out by (the console button's own path) | Checks it meets |
+| --- | --- | --- | --- |
+| Stop a strategy run | `propose_stop_run`: by `run_id`, or by strategy, underlying and account when exactly one live run matches | `StrategyRunControl.StopAsync` (runner stopped, every leg squared off, `RUN_STOPPED` by "upendra via Ira"); `StopOrphanAsync` for a row left open with no runner; the run-stopped notification | The strategies module grant; still running when confirmed |
+| Start a strategy run | `propose_start_run`: strategy, underlying, lots (1 to 50), account (the owner's own by default) | `StrategyStartService.StartAsync`, the Start button's service; the run's "started by" is "upendra via Ira" | Every check the Start button meets: the market's hours, a duplicate or open row, the run cap, the host's memory, the account's package; the strategies module grant |
+| Square off | `propose_square_off`: one manual-book position (`position_id` or `symbol`), or all open ones of an account (`all`) | `IPaperTradingService.ClosePositionsAsync` on the manual book, the reduce-only close the book's square-off and the risk guard use | Only the positions the owner was shown, and only those still open; the strategies module grant |
+| Switch an AI agent | `propose_agent_switch`: agent and on or off; switching `ai-trader` off pauses the AI Trader | `AiSettingsStore.SetAgentEnabledAsync`, AI → Agents' own switch, with "upendra via Ira" as who and the reason | Built; not already in that state; never the Desk Assistant itself |
+
+Nothing else: no broker order, deploy, setting or risk-limit change, delete or user change. (`ManualOrderService` places
+orders; it does not square any off, so a square-off takes the book's own close instead.)
+
+**Who is offered them.** The four tools are offered only to the Desk Assistant, only in a console or Telegram chat, and
+only when the asker is an active admin as his account row says now (`AiCatalog.ActionsOffered`, checked by the gateway
+on every call). Its prompt then gets `AiCatalog.ActionsPrompt`: what it may propose, that a proposal does nothing by
+itself, never to ask for or repeat a PIN, and never to say an action is done. Every other agent, a script's `POST ask`,
+a scheduled call and a trader read only, and their limits say so. `Ai:Actions:Enabled` (default true; `.env`
+`AI_ACTIONS_ENABLED=false`) switches the whole thing off: no tool is offered, and an action already waiting is refused.
+
+**A proposal** (`IraActionResolver`) validates and resolves its target in code: the exact run, account, positions or
+agent. Anything ambiguous or wrong is an error the model reads and relays, and nothing is stored:
+
+- "Two live Ghost Tangent Crossings runs on NIFTY: run 512 (upendra) and run 530 (coderforchange). Which one? Give its
+  run_id."
+- "Run 550 is upendra's manual book, which is never stopped: square off its positions with propose_square_off instead."
+- "Position 90 is not in upendra's manual book (it belongs to run 512): a strategy run's legs are squared off by
+  stopping the run."
+- "The News Analyst is already off: nothing to change."
+- Without a PIN: "Set a PIN first: /pin 1234 on Telegram or the Action PIN box on AI → Assistant."
+
+A valid one is stored as a pending row of `ai_actions` (`IraActions`): the owner's console user, the channel, the
+conversation (and the Telegram chat), the model call that proposed it, the kind, the resolved target as JSON, the
+sentence code wrote, and when it expires (`Ai:Actions:ConfirmSeconds`, 120). A newer proposal in the same conversation
+replaces an older one still waiting, so a PIN always confirms the one just shown. The tool's answer tells the model the
+summary and how the owner confirms; it adds "Nothing has happened yet."
+
+**Confirming.** The right PIN moves the row from pending to confirmed exactly once, under one gate, so a double confirm
+(two clicks, two tabs) carries it out once; the second is told "Action #12 is already being carried out." Then code
+carries it out and records `executed` or `failed`, with the time and the result. A wrong PIN is refused ("Wrong PIN: 2
+tries left before actions lock for 15 minutes. Nothing was done."); three wrong PINs within 10 minutes lock the owner's
+actions for 15 minutes, logged at Information ("upendra's actions are locked until 10:45 IST after 3 wrong PINs"), and
+proposals are refused while locked. The lock is kept in the API's memory, as the AI rate limit is: an API restart
+lifts it. An action not confirmed in time is refused, and its row is marked expired when it is next touched (a PIN, a
+cancel, a newer proposal in its conversation); nothing sweeps the table. An action is confirmed only on the channel it
+was proposed on, by the admin it was proposed for.
+
+**On Telegram.**
+
+1. The owner: "Stop the Ghost run on NIFTY in my account."
+2. The answer, then the bot's own message: "Action #12: Stop run 512 (Ghost Tangent Crossings on NIFTY, upendra's
+   account) and square off its open positions, as the Stop button does. It waits until 11:44 IST. Type your PIN to
+   confirm, or /cancel."
+3. The owner types the PIN. The bot deletes that message first (`deleteMessage`; a bot may delete what it was sent in a
+   private chat), checks it, carries the action out and replies: "Done: run 512 (Ghost Tangent Crossings, NIFTY,
+   upendra) stopped at 11:42 IST, 2 positions squared off; net −₹1,240 after charges." The outcome is added to the
+   conversation, so "and now?" is answered knowing it.
+
+A typed message of 4 to 8 digits is always handled there, before any model: with nothing waiting it is still deleted
+("No action is waiting for a PIN. I deleted your message."), so a PIN typed late never reaches a model or `ai_calls`.
+A voice note is never a PIN: its transcript is asked as a question, as any heard words are. `/cancel` drops the action
+waiting ("Cancelled action #12: nothing was done."). `/pin 1234` sets the PIN when none is set; `/pin <old> <new>`
+changes it, and a wrong old PIN counts toward the lock; `/pin` alone says whether one is set. Every `/pin` message is
+deleted.
+
+**On the console** (AI → Assistant). An answer that proposed an action ends in a confirm card: what it does and its
+number, the sentence code wrote, a countdown, a PIN field (`type=password`, `inputmode=numeric`,
+`autocomplete=one-time-code`), Confirm and Cancel. The newest card takes the keyboard. The PIN goes to
+`POST api/Ai/actions/{id}/confirm` and nowhere else: never into the conversation. The card then says "Done: …" or
+"Not done: …", or the wrong-PIN, lock, expiry or cancel line. The side panel's **Action PIN** box sets or resets the
+signed-in admin's PIN (twice, to be sure): signed in already, the console needs no old PIN. The tool step reads
+"Propose", not "Read".
+
+**The PIN** is per console user, 4 to 8 digits, and kept only as a salted PBKDF2-SHA256 hash (600,000 iterations) in
+`system_settings` under `ai.actions.pin.<user id>`. It is never stored or logged in clear: not in `ai_calls` (a typed
+PIN is handled before the gateway), not in the activity log, not in the API's log, and the console never puts it in a
+question.
+
+**The activity log.** Every outcome is a row of the desk's activity log (System → Log), written as the middleware
+writes one for a request, with the actor "upendra via Ira": method `IRA`, path `ira/actions/<id>/<outcome>`, action
+`ira-<kind>-<outcome>` (for example `ira-stop-run-executed`), module `strategies` (or `ai` for a switch), the target
+(the run, the book, the agent) and a sentence with the summary and the result. Outcomes: `executed` (200), `failed`
+(409), `cancelled`, `expired` (410), `wrong-pin` (403), `locked` (423); setting or changing the PIN is a row too
+(`ira-pin-set-set`, `ira-pin-set-changed`). The console's confirm and cancel requests also have the middleware's own
+row ("Ira's action #12: executed.").
+
+**Tests** (fakes only: no broker, no AWS, no Telegram): `IraActionsTests` (each proposal resolves its target; two
+matching runs are an error naming both; no PIN, a trader, a script or another agent proposes nothing; a wrong PIN is
+refused and three lock; an expired action is refused; the right PIN carries it out once, and two confirms at once
+carry it out once; a refusal by the desk is a failed action; switched off, nothing runs; every outcome is in the
+activity log; the PIN is only a salted hash), `IraActionsWiringTests` (only the Desk Assistant in an admin's chat is
+offered the tools, and not with `Ai:Actions:Enabled` off; the console endpoints behind the admin policy, over HTTP; on
+Telegram the typed PIN is deleted, checked and carried out without a model, three wrong PINs lock, `/cancel`, a late or
+stray PIN, `/pin`), `IraDeskHandsTests` (the start through `StrategyStartService`'s checks with real runner processes;
+the stop's path; the square-off; the switch) and `AiVoiceTests` (a heard number is a question, never a PIN); the
+console's in `web/src/lib/aiActions.test.ts`.
+
 ## Talking to the agents
 
 The owner can question every built agent, not only the Desk Assistant (owner, 3 Oct): to test it, and to correct it.
@@ -1419,6 +1532,9 @@ on the Calls tab under the pseudo-agent `memory`.
 3. Add its name to `AiToolNames` and to the agent's `Tools` in `AiCatalog`, or its `ChatTools` for what it reads in a
    chat (name it in the agent's chat prompt too). `AiAgentChatTests` fails for a name with no tool or no registration.
 4. Add it to `AiToolDataTests`, or `AiAgentChatToolTests` for a chat tool.
+
+A tool that acts is not added this way: the Desk Assistant's four proposal tools are `AiToolNames.Actions`, never in an
+agent's `Tools` or `ChatTools`, and offered by the gateway alone ([Actions (with a PIN)](#actions-with-a-pin)).
 
 ## Adding an agent
 
