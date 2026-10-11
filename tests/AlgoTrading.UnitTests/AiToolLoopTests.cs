@@ -114,6 +114,22 @@ public class AiToolLoopTests
     }
 
     [Fact]
+    public async Task A_tool_call_whose_arguments_were_cut_goes_back_to_the_model_as_an_empty_object()
+    {
+        // 11 Oct 2026: Kimi's stream ended mid-string; replayed as written, every model of the chain answered 400.
+        var ai = Build(tools: Runs());
+        ai.Provider.On(Judge1, Tools((AiToolNames.Runs, """{"date": "2026-10-0""")), Answer("I could not read that."));
+
+        var result = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
+
+        Assert.Equal(AiCallOutcome.Ok, result.Outcome);
+        Assert.Contains("not valid JSON", Assert.Single(result.Tools).Error);
+        var second = JsonNode.Parse(ai.Provider.Requests[1].Body)!["messages"]!.AsArray();
+        var replayed = second.Single(m => m!["role"]!.GetValue<string>() == "assistant")!["tool_calls"]![0]!["function"]!["arguments"]!.GetValue<string>();
+        Assert.Equal("{}", replayed);
+    }
+
+    [Fact]
     public async Task A_tool_that_throws_is_reported_to_the_model_without_its_internals()
     {
         var broken = Runs(_ => throw new InvalidOperationException("connection string Host=db;Password=secret"));

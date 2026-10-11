@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -490,7 +491,7 @@ public sealed class AiGateway
                     // This round was working, not the answer: keep it as reasoning. The turn goes back to the model
                     // that wrote it exactly as it came (Claude's thinking blocks), append-only.
                     Commit(working, round, reasoning, answer);
-                    conversation.Add(new AiMessage("assistant", answer.ToString().Trim(), end.ToolCalls)
+                    conversation.Add(new AiMessage("assistant", answer.ToString().Trim(), Replayable(end.ToolCalls))
                     {
                         Replay = end.Replay is { Count: > 0 } blocks ? new AiReplay(model, blocks) : null,
                     });
@@ -576,6 +577,28 @@ public sealed class AiGateway
     /// tool (the AI Trader's look, which asks a model itself) is told the ones
     /// it has.
     /// </summary>
+    /// <summary>
+    /// The model's tool calls as they can go back to a model: arguments that are not a JSON object (a stream cut
+    /// mid-string, 11 Oct 2026) as <c>{}</c>. Sent back as written, every provider refused the whole conversation with a
+    /// 400, and each model of the chain failed in turn. The call itself is still answered as it came: its tool result
+    /// says the arguments were not valid JSON, so the model can send them again.
+    /// </summary>
+    internal static IReadOnlyList<AiToolCall> Replayable(IReadOnlyList<AiToolCall> calls) =>
+        calls.Any(c => !IsJsonObject(c.Arguments)) ? calls.Select(c => IsJsonObject(c.Arguments) ? c : c with { Arguments = "{}" }).ToList() : calls;
+
+    private static bool IsJsonObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            return JsonNode.Parse(json) is JsonObject;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private async Task<AiToolStep> RunToolAsync(
         AiToolCall call,
         int round,
