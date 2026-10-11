@@ -98,4 +98,20 @@ check "and on, whatever the case"                   '{"Enabled": true}'         
 check "anything else for their switch is ignored"   "null"                                        "$(bedrock_open AI_BEDROCK_OPEN_ENABLED=no)"
 check "no AWS credential or token is carried"       "null"                                        "$(bedrock_open AWS_BEARER_TOKEN_BEDROCK=not-a-token AWS_SECRET_ACCESS_KEY=not-a-secret)"
 
+voice() {  # key=value ... -> the Ai section's Voice part as sorted JSON
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+print(json.dumps(build_api_settings(env)["Ai"].get("Voice"), sort_keys=True))
+PY
+}
+check "voice is left out unless set (on in code)"   "null"                                        "$(voice)"
+check "voice notes can be switched off"             '{"Enabled": false}'                          "$(voice AI_VOICE_ENABLED=false)"
+check "spoken replies alone can be switched off"    '{"SpeakReplies": false}'                     "$(voice AI_VOICE_SPEAK_REPLIES=False)"
+check "both together"                               '{"Enabled": true, "SpeakReplies": false}'    "$(voice AI_VOICE_ENABLED=true AI_VOICE_SPEAK_REPLIES=false)"
+check "anything else for a switch is ignored"       "null"                                        "$(voice AI_VOICE_ENABLED=on AI_VOICE_SPEAK_REPLIES=1)"
+check "no AWS credential is carried"                "null"                                        "$(voice AWS_ACCESS_KEY_ID=not-a-key AWS_SECRET_ACCESS_KEY=not-a-secret)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

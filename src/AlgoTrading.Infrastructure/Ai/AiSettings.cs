@@ -236,6 +236,9 @@ public sealed class AiSettings
     /// <summary>Open models on Amazon Bedrock, the third provider (<see cref="BedrockOpenChatClient"/>); on unless the owner turns it off.</summary>
     public AiBedrockOpenSettings BedrockOpen { get; set; } = new();
 
+    /// <summary>Voice notes to the Telegram assistant and its spoken replies ("Jarvis"); on unless the owner turns it off.</summary>
+    public AiVoiceSettings Voice { get; set; } = new();
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>
@@ -344,6 +347,56 @@ public sealed class AiBedrockOpenSettings
         ["nvidia.nemotron-super-3-120b"] = new() { Input = 0.15m, Output = 0.65m },
         ["minimax.minimax-m2.5"] = new() { Input = 0.30m, Output = 1.20m },
     };
+}
+
+/// <summary>
+/// The <c>Ai:Voice</c> section: voice notes to the desk's Telegram assistant, written down by Mistral's Voxtral on
+/// Bedrock's OpenAI-compatible endpoint (in <see cref="AiBedrockSettings.Region"/>), and the answer spoken back by Amazon
+/// Polly. As for Bedrock, no key here or anywhere in the desk's files: both are signed with the server's AWS role.
+/// </summary>
+public sealed class AiVoiceSettings
+{
+    /// <summary>Off: a voice note gets one line asking for the question typed, and nothing calls AWS for it.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// The audio model, by Bedrock's id. Voxtral Small: Voxtral Mini (<c>mistral.voxtral-mini-3b-2507</c>) answered the
+    /// question in the voice note instead of writing it down (11 Oct 2026).
+    /// </summary>
+    public string TranscribeModel { get; set; } = "mistral.voxtral-small-24b-2507";
+
+    /// <summary>Whether a voice note's answer is spoken back as a voice message too (Amazon Polly), after the text.</summary>
+    public bool SpeakReplies { get; set; } = true;
+
+    public string PollyVoice { get; set; } = "Kajal";
+
+    public string PollyEngine { get; set; } = "neural";
+
+    public string PollyLanguage { get; set; } = "en-IN";
+
+    /// <summary>Where Polly is asked: Mumbai has the neural Kajal voice.</summary>
+    public string PollyRegion { get; set; } = "ap-south-1";
+
+    /// <summary>
+    /// US dollars per million characters spoken: Polly's list price for neural voices (Oct 2026), for an estimate of
+    /// what a reply cost; AWS bills per its own page.
+    /// </summary>
+    public decimal PollyUsdPerMillionChars { get; set; } = 16m;
+
+    /// <summary>The longest voice note listened to, in seconds; a longer one is politely refused.</summary>
+    public int MaxSeconds { get; set; } = 120;
+
+    /// <summary>The largest voice note downloaded, in bytes (2 MB).</summary>
+    public int MaxBytes { get; set; } = 2 * 1024 * 1024;
+
+    /// <summary>Characters of the spoken reply at most, cut at a sentence; the full answer is in the text above it.</summary>
+    public int MaxSpokenChars { get; set; } = 600;
+
+    /// <summary>
+    /// The name the owner may call the assistant in a voice note. A voice question's prompt gets one line saying it
+    /// may answer to it; empty, no line.
+    /// </summary>
+    public string Name { get; set; } = "Jarvis";
 }
 
 /// <summary>A model's price in US dollars per million tokens. A cache write is the five-minute one (1.25 × input).</summary>

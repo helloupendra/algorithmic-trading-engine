@@ -225,6 +225,7 @@ def build_api_settings(env: dict[str, str]) -> dict:
             "BaseUrl": env.get("NVIDIA_API_BASE_URL", "https://integrate.api.nvidia.com/v1"),
             **build_bedrock_settings(env),
             **build_bedrock_open_settings(env),
+            **build_voice_settings(env),
         },
     }
 
@@ -253,6 +254,21 @@ def build_bedrock_open_settings(env: dict[str, str]) -> dict:
     """
     switch = env.get("AI_BEDROCK_OPEN_ENABLED", "").strip().lower()
     return {"BedrockOpen": {"Enabled": switch == "true"}} if switch in ("true", "false") else {}
+
+
+def build_voice_settings(env: dict[str, str]) -> dict:
+    """Voice notes to the Telegram assistant and its spoken replies: only the two switches.
+
+    Both are on in code, so each is written for true and for false, and left
+    out otherwise. Transcription and Polly sign with the machine's AWS role:
+    no AWS credential is ever read or written here.
+    """
+    voice: dict = {}
+    for key, name in (("AI_VOICE_ENABLED", "Enabled"), ("AI_VOICE_SPEAK_REPLIES", "SpeakReplies")):
+        switch = env.get(key, "").strip().lower()
+        if switch in ("true", "false"):
+            voice[name] = switch == "true"
+    return {"Voice": voice} if voice else {}
 
 
 def main() -> int:
