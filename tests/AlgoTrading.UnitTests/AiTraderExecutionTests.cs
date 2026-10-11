@@ -133,6 +133,22 @@ public sealed class AiTraderExecutionTests : IDisposable
         Assert.Contains("refused (validator)", AiTraderAgent.LastLooks([row]));
     }
 
+    [Fact]
+    public async Task A_reject_on_the_stop_floor_code_already_passed_is_not_counted()
+    {
+        string floor = Reject.Replace("It buys a call with the index pressed against its EMAs and nothing else in the brief behind it.",
+            "The stop loss of ₹170 is below the stop floor of ₹168.25 for this contract.");
+        using var t = new Trader();
+        t.Ai.Provider.On(Judge1, Answer(BuyAtmCall), Answer(floor), Answer(floor), Answer(Accept));
+
+        var row = await t.Agent().DecideAsync(Eleven, AiTraderModes.Live, null, default);
+
+        // Two REJECTs on a limit the rules passed do not count: one ACCEPT is no majority, so nothing is placed.
+        Assert.Equal((false, AiTraderValidator.UnavailableRule), (row.Allowed, row.Rule));
+        var data = JsonNode.Parse(t.Db.AiReports.AsNoTracking().Single(r => r.AgentKey == AiCatalog.Validator).DataJson)!;
+        Assert.Contains("stop floor", (string)data["samples"]![0]!["error"]!);
+    }
+
     [Theory]
     [InlineData("NIFTY 22,612 above EMA20 and EMA50", true)]
     [InlineData("NIFTY 22,612 above EMA20...direction.logit p 0.41", true)]

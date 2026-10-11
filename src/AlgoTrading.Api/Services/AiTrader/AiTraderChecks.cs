@@ -164,6 +164,14 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
         if (said == "REJECT")
         {
             if (flaw is null) return AiTraderValidatorSample.NoAnswer(result.CallId, result.Model, "A REJECT that names no flaw.");
+            // The stop floor is code's and the plan passed it; on 11 Oct Kimi K2.5 still rejected ₹170 as "below the
+            // ₹168.25 floor" in 3 of 20 rehearsed plans, told not to. Such a REJECT is not counted.
+            if (LimitFlaw.IsMatch(flaw))
+            {
+                return AiTraderValidatorSample.NoAnswer(result.CallId, result.Model,
+                    "A REJECT on the stop floor, which code checked and the plan passed.") with { Flaw = flaw, Quote = quote };
+            }
+
             if (quote is null || !Quotes(source, quote))
             {
                 return AiTraderValidatorSample.NoAnswer(result.CallId, result.Model,
@@ -191,6 +199,8 @@ public sealed class AiTraderValidator(AiGateway gateway, AiReportWriter reports,
             .ToList();
         return parts.Count > 0 && parts.Sum(p => p.Length) >= 12 && parts.All(p => text.Contains(p, StringComparison.Ordinal));
     }
+
+    private static readonly Regex LimitFlaw = new(@"\bstop(?:[- ]loss)?\s+floor\b|\b60\s?%\s+floor\b|\bfloor\s+of\s+₹", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex QuoteJoins = new(@"\.\.\.|…|\s\|\s|;\s|""\s*,\s*""", RegexOptions.Compiled);
 
