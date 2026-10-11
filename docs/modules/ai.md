@@ -970,7 +970,8 @@ persona says:
 - that it cannot save anything: a correction is kept as its memory with 👎 and the right answer under its reply, or
   as a note with `/remember`.
 
-Its scheduled work (sources `schedule`, `check`, `preview`) keeps its task prompt and tools, and so does a script's
+Its scheduled work (sources `schedule`, `check`, `preview`, and `dry-run` for a rehearsal of the AI Trader's checks,
+[AI Trader](ai_trader.md#a-dry-run-of-the-checks)) keeps its task prompt and tools, and so does a script's
 `POST ask` (source `api`). The Desk Assistant has no separate persona: its prompt already is one. A switched-off agent
 cannot be asked (409), as the Desk Assistant cannot.
 

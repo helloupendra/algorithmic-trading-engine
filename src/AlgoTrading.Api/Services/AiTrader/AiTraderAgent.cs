@@ -356,8 +356,7 @@ public sealed class AiTraderAgent(
     {
         var exec = execution!;
         bool start = plan.Action == AiTraderPlan.StartStrategy;
-        // A start runs with the plan's lots when they are within the rules' lots, else one.
-        if (start) plan = plan with { Lots = plan.Lots is int l && l >= 1 && l <= Rules.MaxLotsPerTrade ? l : 1 };
+        plan = ForChecks(plan);
         try
         {
             var validation = await exec.Validator.JudgeAsync(row, plan, contract, verdict, cancellationToken);
@@ -400,6 +399,15 @@ public sealed class AiTraderAgent(
 
         await SaveResultAsync(row);
     }
+
+    /// <summary>
+    /// A buy or start as the Validator, the Risk Memo and the placement take it: a start runs with the plan's lots when
+    /// they are within the rules' lots, else one. The checks' dry run (<see cref="AiTraderChecksDryRun"/>) takes it the same.
+    /// </summary>
+    public static AiTraderPlan ForChecks(AiTraderPlan plan) =>
+        plan.Action == AiTraderPlan.StartStrategy
+            ? plan with { Lots = plan.Lots is int l && l >= 1 && l <= Rules.MaxLotsPerTrade ? l : 1 }
+            : plan;
 
     /// <summary>
     /// The buy, judged by the rules once more on the fresh book at the price it would pay, just before the order is

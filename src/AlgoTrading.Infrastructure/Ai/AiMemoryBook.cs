@@ -69,8 +69,9 @@ public sealed class AiMemoryBook(
     /// are saved with the caller's next <c>SaveChanges</c>.
     /// </summary>
     /// <param name="trial">Memories read on this call whatever their status: a lesson tested before it is used.</param>
+    /// <param name="count">False for a rehearsal (<see cref="AiAskInput.CountMemoryUses"/>): read, not counted as used.</param>
     public async Task<IReadOnlyList<AiRecalled>> RecallAsync(
-        string agentKey, string question, CancellationToken cancellationToken, IReadOnlyList<long>? trial = null)
+        string agentKey, string question, CancellationToken cancellationToken, IReadOnlyList<long>? trial = null, bool count = true)
     {
         var s = settings.CurrentValue;
         if (!s.HasMemory(agentKey)) return [];
@@ -108,12 +109,15 @@ public sealed class AiMemoryBook(
             chars += size;
         }
 
-        // A counter, not a ledger: two answers at the same moment may count one use.
-        var now = _time.GetUtcNow().UtcDateTime;
-        foreach (var (memory, _) in picked)
+        // A counter, not a ledger: two answers at the same moment may count one use. A rehearsal reads, never counts.
+        if (count)
         {
-            memory.Uses++;
-            memory.LastUsedUtc = now;
+            var now = _time.GetUtcNow().UtcDateTime;
+            foreach (var (memory, _) in picked)
+            {
+                memory.Uses++;
+                memory.LastUsedUtc = now;
+            }
         }
 
         return picked.Select(p => new AiRecalled(p.Memory.Id, p.Memory.Kind, p.Memory.Text, p.Memory.Context,
