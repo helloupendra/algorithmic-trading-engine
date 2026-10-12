@@ -583,6 +583,21 @@ export function homeFor(user: Pick<MeResponse, 'role' | 'moduleGrants'> | null):
   return navFor(accessFor(user))[0]?.to ?? '/desk'
 }
 
+/**
+ * Where the sign-in page sends someone once they are in: back to the place a
+ * guard remembered in the navigation state (`{ from: location }`: RequireAuth
+ * for the console, the Ira app's own gate for /ira), with its search and hash,
+ * so /markets/chart?symbol=NIFTY or /ira survives the detour. Null when nothing
+ * was remembered: then it is their home.
+ */
+export function returnTarget(state: unknown): string | null {
+  const from = (state as { from?: { pathname?: unknown; search?: unknown; hash?: unknown } } | null)?.from
+  if (!from || typeof from.pathname !== 'string' || !from.pathname.startsWith('/')) return null
+  // Only a path on this site: never "//elsewhere.example" from a crafted state.
+  if (from.pathname.startsWith('//')) return null
+  return `${from.pathname}${typeof from.search === 'string' ? from.search : ''}${typeof from.hash === 'string' ? from.hash : ''}`
+}
+
 /** Every page of every console, for naming a route this user has no tab for. */
 const EVERY_PAGE: readonly NavWorkspace[] = collect(() => true)
 

@@ -1,0 +1,455 @@
+/*
+ * The Ira app (/ira): the console's tokens at a phone's size. A sticky header,
+ * the conversation in the window's own scroll (so the keyboard and the rubber
+ * band behave as the phone expects), and a sticky dock with one big mic. Every
+ * edge pads itself back from the notch and the home indicator.
+ *
+ * Text is larger than the console's 12.5px: a phone is read at arm's length.
+ * Inputs are 16px, below which an iPhone zooms the page on focus.
+ */
+
+.ira {
+  --ira-gutter: 16px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  max-width: 640px;
+  margin: 0 auto;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg0);
+  /* Nothing is ever wider than the phone: a wide table scrolls inside its own box. */
+  overflow-x: clip;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ira--center {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px var(--ira-gutter);
+  text-align: center;
+}
+
+.ira .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.ira-faint { color: var(--text-3); font-size: 13.5px; margin: 0; }
+
+.ira-link {
+  border: 0;
+  padding: 6px 2px;
+  background: none;
+  color: var(--brand-hi);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.ira-link--icon { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
+.ira-link--icon svg { width: 18px; height: 18px; }
+.ira-link--icon[aria-pressed='true'] { color: var(--brand-hi); }
+
+/* --- the mark --------------------------------------------------------------------- */
+.ira-glyph { width: 40px; height: 40px; flex: none; }
+.ira-glyph--xs { width: 26px; height: 26px; }
+.ira-glyph--sm { width: 34px; height: 34px; }
+.ira-glyph--lg { width: 76px; height: 76px; }
+.ira-glyph__body { transform-box: fill-box; transform-origin: center; }
+.ira-glyph--pulse .ira-glyph__body { animation: ira-level 1.1s ease-in-out infinite; }
+@keyframes ira-level {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.55); }
+}
+
+/* --- the header -------------------------------------------------------------------- */
+.ira-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(env(safe-area-inset-top) + 10px) var(--ira-gutter) 10px;
+  background: color-mix(in srgb, var(--bg0) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line-soft);
+}
+.ira-top__who { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.ira-top__name { font-size: 17px; font-weight: 650; line-height: 1.2; letter-spacing: 0.01em; }
+.ira-top__state {
+  font-size: 12.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ira-top__state--listening,
+.ira-top__state--speaking,
+.ira-top__state--answering { color: var(--live); }
+.ira-top__state--recording { color: var(--neg); }
+.ira-top__state--thinking,
+.ira-top__state--hearing { color: var(--brand-hi); }
+.ira-top__state--offline { color: var(--warn); }
+
+.ira-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  max-width: 46%;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.ira-chip__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ira-chip svg { width: 14px; height: 14px; flex: none; color: var(--text-3); }
+
+.ira-iconbtn {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ira-iconbtn:hover { background: var(--surface2); color: var(--text); }
+.ira-iconbtn svg { width: 20px; height: 20px; }
+.ira-iconbtn--sm { width: 32px; height: 32px; }
+.ira-iconbtn--sm svg { width: 15px; height: 15px; }
+
+/* --- the conversation -------------------------------------------------------------- */
+.ira-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px var(--ira-gutter) 18px;
+  min-width: 0;
+}
+.ira-banner { font-size: 13.5px; }
+
+.ira-chat { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.ira-chat__foot { margin: 0; text-align: center; }
+
+.ira-hello {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 7vh 4px 8px;
+  text-align: center;
+}
+.ira-hello__title { margin: 6px 0 0; font-size: 22px; font-weight: 650; letter-spacing: -0.005em; }
+.ira-starters { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 14px; }
+.ira-starter {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.ira-starter:hover:not(:disabled) { border-color: var(--line-hover); background: var(--surface2); }
+.ira-starter:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ira-turn { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ira-q { display: flex; justify-content: flex-end; }
+.ira-q__text {
+  max-width: 86%;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--brand-line);
+  border-radius: 18px 18px 4px 18px;
+  background: var(--brand-soft);
+  font-size: 15.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.ira-q__heard { margin-right: 6px; }
+
+.ira-a {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px 18px 18px 18px;
+  background: var(--surface);
+}
+.ira-a--error { border-color: color-mix(in srgb, var(--neg) 35%, var(--line)); }
+.ira .ira-a .ai-md { font-size: 15px; line-height: 1.55; }
+.ira .ira-a .ai-md__h--1 { font-size: 16px; }
+.ira .ira-a .ai-md__h--2,
+.ira .ira-a .ai-md__h--3 { font-size: 15.5px; }
+/* Tables and code stay compact, and scroll inside their own box rather than widening the bubble. */
+.ira .ira-a .tablewrap { max-width: 100%; }
+.ira .ira-a .ai-md__table .table { font-size: 12.5px; }
+.ira .ira-a .ai-md__table th,
+.ira .ira-a .ai-md__table td { padding: 6px 8px; }
+.ira .ira-a .ai-md__code { font-size: 12px; max-width: 100%; overflow-x: auto; }
+.ira-a__wait { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-2); font-size: 14px; }
+.ira-a__meta { margin: 10px 0 0; font-size: 11.5px; color: var(--text-3); }
+.ira-a__error { margin-top: 8px; font-size: 13.5px; }
+.ira .ira-a .ai-actions { margin-top: 12px; }
+
+.ira-dots { display: inline-flex; gap: 4px; }
+.ira-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand-hi);
+  animation: ira-dot 1.2s ease-in-out infinite;
+}
+.ira-dots span:nth-child(2) { animation-delay: 0.15s; }
+.ira-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ira-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* Actions from the phone's Shortcut, waiting for the PIN. */
+.ira-waiting { display: flex; flex-direction: column; gap: 8px; }
+.ira-waiting__head {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+/* The PIN and every other field: 16px, or the iPhone zooms in on focus. */
+.ira .field__input,
+.ira-sheet .field__input { font-size: 16px; min-height: 44px; }
+.ira .ai-action__row .btn,
+.ira-sheet .ai-action__row .btn { min-height: 40px; }
+
+.ira-install {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--brand-line);
+  border-radius: 12px;
+  background: var(--brand-soft);
+  font-size: 13.5px;
+}
+.ira-install__text { flex: 1 1 auto; min-width: 0; }
+
+/* --- the dock: the strips, the keyboard, and the three buttons -------------------------- */
+.ira-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px var(--ira-gutter) calc(env(safe-area-inset-bottom) + 10px);
+  background: color-mix(in srgb, var(--bg0) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line-soft);
+}
+.ira-dock__status { display: flex; flex-direction: column; gap: 6px; }
+.ira-dock__status:empty { display: none; }
+.ira .ira-dock .ai-rec,
+.ira .ira-dock .ai-playback,
+.ira .ira-dock .ai-hf { font-size: 13px; border-radius: 10px; min-height: 36px; }
+.ira .ira-dock .small-note { margin: 0; font-size: 13px; }
+
+.ira-dock__row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+}
+.ira-dock__hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+.ira-dock__hint .ira-faint { font-size: 12.5px; text-align: right; }
+
+.ira-mic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  box-shadow: 0 8px 24px -10px color-mix(in srgb, var(--brand) 70%, transparent);
+  cursor: pointer;
+  /* A held press is push-to-talk: no scrolling, selecting or long-press menu under the thumb. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.ira-mic svg { width: 30px; height: 30px; }
+.ira-mic:active:not(:disabled) { transform: scale(0.96); }
+.ira-mic:disabled { background: var(--surface3); color: var(--text-3); box-shadow: none; cursor: not-allowed; }
+.ira-mic[aria-pressed='true'] { background: var(--neg); box-shadow: 0 0 0 0 color-mix(in srgb, var(--neg) 45%, transparent); animation: ira-ring 1.6s ease-out infinite; }
+@keyframes ira-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--neg) 45%, transparent); }
+  100% { box-shadow: 0 0 0 18px color-mix(in srgb, var(--neg) 0%, transparent); }
+}
+/* Recording by a tap: the next tap asks it, so the button shows "send". */
+.ira-mic__send {
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 18px solid #fff;
+  transform: translateY(-2px);
+}
+.ira-mic--stop { background: var(--surface3); color: var(--neg); box-shadow: none; }
+.ira-mic--stop svg { width: 26px; height: 26px; fill: currentColor; }
+
+.ira-side {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 72px;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.ira-side svg {
+  box-sizing: content-box;
+  width: 22px;
+  height: 22px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+}
+/* The console hides these words on a narrow screen; here they are the buttons' names under the icons. */
+.ira .ira-side .ai-speak__label,
+.ira .ira-side .ai-hands__label { display: inline; }
+.ira-side[aria-pressed='true'] { color: var(--brand-hi); }
+.ira-side[aria-pressed='true'] svg { background: var(--brand-soft); border-color: var(--brand-line); }
+.ira-side:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.ira-type { display: flex; gap: 8px; }
+.ira .field__input.ira-type__input { flex: 1 1 auto; width: auto; min-width: 0; border-radius: 12px; }
+.ira-type__go { min-height: 44px; border-radius: 12px; }
+
+.ira-end { height: 1px; }
+
+/* --- sheets --------------------------------------------------------------------------- */
+.ira-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: var(--scrim);
+  animation: ira-fade 0.15s ease-out;
+}
+.ira-sheet__panel {
+  width: 100%;
+  max-width: 640px;
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px var(--ira-gutter, 16px) calc(env(safe-area-inset-bottom) + 18px);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--bg0);
+  box-shadow: var(--shadow-2);
+  font-size: 14.5px;
+  outline: none;
+  animation: ira-rise 0.2s ease-out;
+}
+.ira-sheet__grip { width: 38px; height: 4px; margin: 4px auto 6px; border-radius: 2px; background: var(--line-strong); }
+.ira-sheet__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 8px; }
+.ira-sheet__title { margin: 0; font-size: 17px; font-weight: 650; }
+.ira-sheet__body { display: flex; flex-direction: column; gap: 14px; }
+.ira-sheet .panel { padding: 14px; border-radius: 12px; }
+.ira-sheet .btn--sm { min-height: 36px; padding: 6px 12px; font-size: 13.5px; }
+.ira-sheet .small-note { font-size: 13px; }
+.ira-sheet .ai-owner { gap: 6px 10px; }
+@keyframes ira-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ira-rise { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+:root.ira-sheet-open body { overflow: hidden; }
+
+.ira-agents { display: flex; flex-direction: column; gap: 6px; }
+.ira-agent {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ira-agent.is-active { border-color: var(--brand-line); background: var(--brand-soft); }
+.ira-agent__name { font-weight: 600; font-size: 15px; }
+.ira-agent__note { font-size: 12px; color: var(--text-3); align-self: center; }
+.ira-agent__job { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-3); line-height: 1.4; }
+
+.ira-set { display: flex; flex-direction: column; gap: 8px; }
+.ira-set__head {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ira-set__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0; }
+.ira-seg { align-self: flex-start; }
+.ira-seg .seg__btn { min-height: 34px; padding: 6px 14px; font-size: 13.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ira-glyph--pulse .ira-glyph__body,
+  .ira-dots span,
+  .ira-mic[aria-pressed='true'],
+  .ira-sheet,
+  .ira-sheet__panel { animation: none; }
+}

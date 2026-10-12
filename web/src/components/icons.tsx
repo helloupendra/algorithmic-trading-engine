@@ -304,3 +304,18 @@ export const IconInfo = (p: SVGProps<SVGSVGElement>) => (
     <path d="M12 11v5.5M12 7.8v.3" />
   </Icon>
 )
+
+/** Three dots: more, the Ira app's settings. */
+export const IconMore = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth="3" />
+  </Icon>
+)
+
+/** A keyboard: type the question instead of saying it (the Ira app). */
+export const IconKeyboard = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3" y="6.5" width="18" height="11" rx="2" />
+    <path d="M7 10.5h.01M10.3 10.5h.01M13.7 10.5h.01M17 10.5h.01M8 14h8" />
+  </Icon>
+)

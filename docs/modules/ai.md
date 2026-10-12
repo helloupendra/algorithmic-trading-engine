@@ -30,7 +30,8 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   - `/ai/assistant`;
   - `/ai/agents`;
   - `/ai/models`;
-  - `/ai/calls`.
+  - `/ai/calls`;
+  - `/ira`: Ira on the owner's phone, outside the console's chrome ([Ira on the phone](#ira-on-the-phone)).
 - Code: `src/AlgoTrading.Infrastructure/Ai/`, `src/AlgoTrading.Api/Controllers/AiController.cs`,
   `src/AlgoTrading.Api/Services/AiAgents/`.
 - Tables: `ai_calls`, `ai_reports`; `regulatory_circulars` for the Compliance Triage.
@@ -478,7 +479,8 @@ Since memory (1 Oct):
 - `GET calls/{id}` carries `memoryIds` and `feedback`.
 - The stream's `done` event and `POST ask` carry `memoryIds`.
 
-The memory endpoints are under [Memory](#memory).
+The memory endpoints are under [Memory](#memory). The phone's (`api/Ira`) are under
+[Ira on the phone](#ira-on-the-phone).
 
 ## Scheduled agents (Phase 3)
 
@@ -1527,6 +1529,163 @@ memories its record lists.
 `/fundamental …`, `/data …`, `/compliance …` or `/research …` asks that agent; the chat stays with it, so a
 follow-up needs no prefix, until `/assistant`, `/new` or half an hour of quiet brings back the Desk Assistant. A prefix
 alone switches without asking. An answer from another agent than the Assistant names it under the text.
+
+## Ira on the phone
+
+The owner (12 Oct 2026): "Use Ira on my phone directly, like Siri or Gemini." Two ways in, both for an active admin
+only, as every AI endpoint is:
+
+- **The Ira app, `/ira`**: a full-screen page made for a phone, installable on Android and iPhone.
+- **"Hey Siri, Ira"**: an Apple Shortcut that dictates the question, sends it to `POST api/Ira/ask` with a phone token,
+  and speaks the answer.
+
+### The Ira app
+
+`/ira` is the console's own conversation, drawn for a phone. AI → Assistant and `/ira` share one engine
+(`web/src/pages/ai/useAssistantSession.ts`): the conversations per agent, the streaming ask, the mic, spoken replies and
+hands-free behave the same on both, and the rows are the same (source `console`).
+
+- **Outside the console's chrome**: no top bar or tabs. A header with Ira's state ("Ready", "Recording", "Reading the
+  desk…", "Speaking", "Listening for "Ira""), the agent in a chip, and a settings button.
+- **One big mic.** Hold it and speak, let go to ask; or tap it, speak, and tap it again to ask (Cancel drops the take).
+  Hands-free ("Ira, …") on its right, spoken replies on its left. Spoken replies are **on** by default here, kept per
+  viewer under `openfno.ira.speak` (the console's switch stays off by default). While an answer streams the mic is a
+  stop button. "Type" opens a text box.
+- **The conversation** in large bubbles: the question (🎙 when it was heard), then the answer in the console's renderer
+  (`AnswerText`: tables, lists, code), compact; the model, seconds and call under it. An answer that proposed an action
+  ends in the console's confirm card (`AssistantActions`), PIN and all.
+- **Actions proposed from the phone's Shortcut** wait at the top ("From "Hey Siri, Ira"") with the same card, read every
+  15 s from `GET api/Ira/actions`.
+- **Sheets**: the agent picker (Desk Assistant by default, remembered under `openfno.ira.agent`); settings: the theme
+  (dark by default, as the console), installing, the Phones box, the Action PIN, a new conversation, the console, sign
+  out.
+- **Sizes**: built at 390 px; text 15 px, inputs 16 px (an iPhone zooms in on a smaller field); the header, the dock and
+  the sheets pad themselves from the notch and the home indicator; no horizontal scroll (a wide table scrolls in its
+  own box).
+
+**Signing in.** An iPhone's home-screen app keeps storage of its own, apart from Safari, so its first launch is always
+signed out. `/ira` sends a visitor to the console's `/login` with where to come back to (the same navigation state
+`RequireAuth` uses, read by `returnTarget` in `lib/modules.ts`), and the sign-in page returns to `/ira`. A signed-in
+trader is told that Ira is for the desk's admin.
+
+**Installing.**
+
+| Piece | What |
+| --- | --- |
+| `ira.webmanifest` | Name and short name "Ira", `start_url` and `scope` `/ira`, `display: standalone`, portrait, theme and background `#070b11` (the console's `--bg0`), icons 192 and 512 (`any`) and 512 (`maskable`) |
+| Icons | `public/brand/ira-*.png`: five candles standing as a voice's level meter, in the brand gradient (`--brand-hi` to `--live`) on the console's ground. Drawn once in `web/scripts/ira-icons.mjs`, which writes the SVG sources (`ira-mark.svg`, `ira-maskable.svg`) and renders the PNGs with headless Chrome: `node web/scripts/ira-icons.mjs` |
+| `ira.html` | The built `index.html` with Ira's manifest, `apple-touch-icon` (180 px, full bleed), `apple-mobile-web-app-title` "Ira", tab icon, title and `noindex`, written by the build (`src/lib/iraShell.ts`); the build fails if `index.html` loses a line it replaces. The API serves it for `/ira` and `/ira/…` (`ConsoleSite`), so a phone reads Ira's head before any script runs; a `wwwroot` without it serves `index.html` |
+| `ira-sw.js` | A service worker, scope `/ira`, registered in production builds. It keeps the shell (the page network first, the hashed bundles, the icons, the fonts) so the app opens with no network and says "Offline". It never answers or keeps `/api` or `/hubs`: a question, an answer, a token, a PIN or a recording never touches it |
+
+The static files are served before any fallback, as `application/manifest+json` and `text/javascript`. A missing
+`*.webmanifest` or `ira-sw.js` answers 404, never the console's HTML. The content-security policy already allows them
+(`manifest-src 'self'`, `worker-src 'self' blob:`), and `Permissions-Policy: microphone=(self)` covers `/ira`.
+
+**The install hint** (`lib/ira.ts installHint`): on Android (Chrome, Edge, Samsung Internet) an "Install Ira" button
+from the browser's own `beforeinstallprompt`; on an iPhone or iPad, "tap Share, then Add to Home Screen"; nothing once
+installed (display mode standalone, or iOS's `navigator.standalone`) or once dismissed. On Android, "Hey Google, open
+Ira" opens the installed app.
+
+### "Hey Siri, Ira"
+
+`POST api/Ira/ask` with `Authorization: Bearer <phone token>` and `{ "text": "...", "agent"?: "desk-assistant" }`
+answers `{ text, spoken, callId }`:
+
+- `text`: the full answer;
+- `spoken`: what Siri says: `VoiceText.Spoken` (no tables, code, links or citations; cut at a sentence to
+  `MaxSpokenChars`), ending "The full answer is on the console, on the AI Calls page." where Telegram's says "the text
+  above";
+- `callId`: the answer's row on the Calls tab; `actionId` too when it proposed an action.
+
+It asks through the same gateway as a console question (`IraPhoneAsk`): the agent's switch and chain, its tools and
+memories, source **`phone`** (a chat source, so other agents answer as themselves), `RequestedBy` and `UserId` the
+token's owner, and **the same AI rate limit** as his console questions (one bucket per user). The prompt gets one line:
+the question was dictated on his phone, he hears a short spoken version (so lead with the answer), and an action is
+confirmed in the Ira app. A phone keeps its last four questions and answers for half an hour, in memory, as Telegram's
+chat does, so "and BANKNIFTY?" follows "How is NIFTY doing?" (conversation `ph-<token>-<random>`).
+
+**An action.** The Desk Assistant may propose one from the phone, as from the console. It is stored as a console
+action waiting for the PIN, and `spoken` is "I have proposed: …. Confirm it with your PIN in the Ira app." **Nothing
+is carried out from this endpoint**: the PIN is typed in `/ira`, where the action waits at the top, or under the
+answer that proposed it; it expires after `Ai:Actions:ConfirmSeconds` like any other.
+
+**Refusals** carry `error` and a `spoken` line, so Siri says what went wrong instead of nothing:
+
+| Status | When | Siri says |
+| --- | --- | --- |
+| 401 | No token, a wrong or revoked one, or its owner is no longer an active admin | "This phone's Ira token was not accepted. Make a new one in the Ira app's settings." |
+| 400 | No text, over `MaxQuestionChars`, or an agent nobody talks with | "I did not get a question. Try again." and the like |
+| 409 | The agent is switched off | "I cannot ask the … right now: it is switched off on the console's AI page." |
+| 429 | The AI rate limit, with Retry-After | "That is a lot of questions in a short time. Try again in 3 minutes." |
+| 503 | No model can be asked, or `Ai:Phone:Enabled` is off | "No model can be asked right now. Try again later." |
+| 502 | Every model failed | "I could not get an answer just now: no model answered. Try again in a minute." |
+
+**A slow answer.** Once the call has started, the response is opened (200, `application/json`, no transform) and a
+single space goes out every 10 s until the JSON follows: Cloudflare cuts a response quiet for 100 s, and the phone's
+request gives up after a quiet minute. Whitespace before a JSON value is valid JSON, so the Shortcut reads it as
+usual. A refusal comes before the call starts, so it keeps its own status. A failure after the start is a 200 whose
+object carries `error` and `spoken`.
+
+### Phone tokens
+
+- **Made** on the console by an admin for himself: the **Phones** box on AI → Assistant's side panel and in `/ira`'s
+  settings (`POST api/Ira/phones { label }`). A token is `ira_` and 32 random bytes in base64url (47 characters).
+- **Shown once**, in that answer. The desk keeps only its **SHA-256** (`ai_phone_tokens.TokenHash`, unique), with the
+  label, who made it, when, when it was last used and when it was revoked. A copy of the table opens nothing; 256 random
+  bits need no salt or slow hash.
+- **Accepted on `POST api/Ira/ask` alone.** Its own authentication scheme (`IraPhone`, `IraPhoneAuthentication`) is
+  named only by the `IraPhone` policy, which only `IraPhoneController` carries. The console's JWT handler leaves any
+  `Bearer ira_…` alone (it is never validated or logged as a JWT), so on every other endpoint a phone token is no
+  credential: 401. The principal it builds holds no role. The console's own sign-in does not open the phone's endpoint
+  either.
+- **Each use** reads the row again and the owner's account (an active admin now), and stamps `LastUsedUtc`.
+- **Revoked** (`DELETE api/Ira/phones/{id}`) from the next request on; the row stays with `RevokedUtc`, and the phone's
+  conversation is dropped.
+- **Never in clear**: not stored, not logged (the log says "Ira phone: upendra made phone token #3 (Upendra's iPhone)",
+  "… asked the Desk Assistant from Upendra's iPhone (token #3): call 912, 8.4 s", at Information), not in the activity
+  log (it keeps no bodies).
+- At most `MaxTokensPerUser` (5) working tokens per admin.
+
+| `api/Ira` | Who | What |
+| --- | --- | --- |
+| `POST ask` | A phone token | The question, as above |
+| `GET phones` | Admin | `{ enabled, maxTokens, tokens: [{ id, label, createdUtc, lastUsedUtc }] }`: his own, never a token |
+| `POST phones` | Admin | `{ label }` (1 to 60 characters): `{ id, label, createdUtc, lastUsedUtc, token }`, the only time the token is shown; 409 when off, unnamed or at the cap |
+| `DELETE phones/{id}` | Admin | Revokes one of his own; 404 for another's or one already revoked |
+| `GET actions` | Admin | His actions proposed from the phone still waiting for the PIN: `[{ id, kind, summary, createdUtc, expiresUtc, callId }]`, confirmed with `POST api/Ai/actions/{id}/confirm` |
+
+| `Ai:Phone` | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | `true` | Off: `POST api/Ira/ask` answers 503 and no token can be made |
+| `MaxTokensPerUser` | 5 | Working phone tokens one admin may hold |
+| `MaxQuestionChars` | 2000 | The longest question a phone may send |
+
+### The Shortcut, exactly
+
+The Phones box lists these with the console's own address and a copy button; on the desk the address is
+`https://www.openfno.com/api/Ira/ask`.
+
+1. **New Shortcut**, named "Ira" (Siri runs a shortcut by its name).
+2. **Dictate Text**: Language English (India), or Hindi; Stop Listening After Pause.
+3. **Get Contents of URL**: `https://www.openfno.com/api/Ira/ask`, Method **POST**, Headers: `Authorization` =
+   `Bearer <token>`, Request Body **JSON**: `text` = Dictated Text.
+4. **Get Dictionary Value**: Get Value for `spoken` in Contents of URL.
+5. **Speak Text**: Dictionary Value.
+
+"Hey Siri, Ira" then runs it. **Android:** open `/ira` in Chrome, add it to the home screen (Install), and say "Hey
+Google, open Ira".
+
+**Tests** (no AWS, no NVIDIA, no phone: scripted models, a JWT signed with a test key): `IraPhoneTests` (a token is shown
+once and only its SHA-256 kept; revoke works at once; a disabled or demoted owner's token opens nothing; over HTTP the
+phone token opens `POST api/Ira/ask` and gets 401 on `api/Ai/voice`, `api/Ai/ask`, `api/Ai/actions/pin`, `api/Ira/phones`
+and `api/Ira/actions`, while the console's JWT gets 401 on the ask; the token never appears in any log line; the ask's
+row is source `phone` as the owner, with the conversation carried; an action proposed from the phone is spoken as
+proposed, waits, is listed for the Ira app and is carried out by the console's confirm; the rate limit is shared and
+answers 429 with Retry-After and a spoken wait; a slow answer is kept alive with spaces before valid JSON; the manifest
+and the worker are served with their types, `/ira` gets its shell, a missing manifest is a 404); `web/src/lib/ira.test.ts`
+(the route's gate and the return to `/ira` after signing in, the install hint, spoken replies on by default, the
+Shortcut's steps, the manifest and its icons, the shell's head); `web/src/lib/voice.test.ts` (the shared session's
+rules: hands-free's hold, why the mic or hands-free cannot start).
 
 ## Memory
 

@@ -866,8 +866,14 @@ public static partial class AiCatalog
         "and the desk's docs (search_docs).\n" +
         "An idea is a test, not a change: when asked whether to run something live, say that the desk tests first." + ChatRules;
 
-    /// <summary>Where a call is the owner talking with an agent: the console's Assistant tab and the desk's Telegram bot.</summary>
-    public static readonly IReadOnlyList<string> ChatSources = ["console", "telegram"];
+    /// <summary>
+    /// Where a call is the owner talking with an agent: the console's Assistant tab (and the phone app, /ira, which is the
+    /// same page's conversation), the desk's Telegram bot, and the owner's phone by Apple Shortcut (<c>POST api/Ira/ask</c>).
+    /// </summary>
+    public static readonly IReadOnlyList<string> ChatSources = ["console", "telegram", PhoneSource];
+
+    /// <summary>The source of a question asked from the owner's phone by Apple Shortcut ("Hey Siri, Ira").</summary>
+    public const string PhoneSource = "phone";
 
     /// <summary>
     /// Whether a call from <paramref name="source"/> talks with <paramref name="agent"/> as its chat persona: the owner

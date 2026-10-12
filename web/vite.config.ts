@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import type { Plugin } from 'vite'
+import { iraShell } from './src/lib/iraShell.ts'
 
 /**
  * Not `new URL(...).pathname`. On Windows that returns "/C:/Users/..." with the
@@ -27,6 +29,29 @@ function docsSite(): Plugin {
       const { buildDocs } = await import('./docs-site/build.mjs')
       const pages = await buildDocs({ outDir: here('./dist') })
       console.log(`\n  docs-site: ${pages} pages → dist/docs\n`)
+    },
+  }
+}
+
+/**
+ * The Ira phone app's shell, dist/ira.html: the built index.html with Ira's
+ * manifest, icons and name in its head (src/lib/iraShell.ts), which the API
+ * serves for /ira so a phone installs "Ira" before any script runs.
+ */
+function iraShellPage(): Plugin {
+  let outDir = here('./dist')
+  return {
+    name: 'openfno-ira-shell',
+    apply: 'build',
+    configResolved(config) {
+      // --outDir (a screenshot build, a deploy's staging folder) wins over the default dist.
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    async closeBundle() {
+      const { readFileSync, writeFileSync } = await import('node:fs')
+      const { join } = await import('node:path')
+      writeFileSync(join(outDir, 'ira.html'), iraShell(readFileSync(join(outDir, 'index.html'), 'utf8')))
+      console.log(`\n  ira-shell: ${join(outDir, 'ira.html')}\n`)
     },
   }
 }
@@ -72,7 +97,7 @@ function freshStills(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), docsSite(), freshStills()],
+  plugins: [react(), iraShellPage(), docsSite(), freshStills()],
   server: {
     proxy: {
       '/api': {

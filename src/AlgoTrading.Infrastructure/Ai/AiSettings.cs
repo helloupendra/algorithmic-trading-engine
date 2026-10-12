@@ -236,6 +236,9 @@ public sealed class AiSettings
     /// <summary>Open models on Amazon Bedrock, the third provider (<see cref="BedrockOpenChatClient"/>); on unless the owner turns it off.</summary>
     public AiBedrockOpenSettings BedrockOpen { get; set; } = new();
 
+    /// <summary>Ira on the owner's phone: the Apple Shortcut's endpoint and its tokens (<c>Ai:Phone</c>).</summary>
+    public AiPhoneSettings Phone { get; set; } = new();
+
     /// <summary>Voice notes to the Telegram assistant and its spoken replies ("Ira"); on unless the owner turns it off.</summary>
     public AiVoiceSettings Voice { get; set; } = new();
 
