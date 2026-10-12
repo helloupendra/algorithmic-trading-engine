@@ -1,8 +1,8 @@
 /**
  * Ira's actions on the console (step 4): the Desk Assistant may propose one of
- * four actions on the paper desk (stop or start a strategy run, square off
- * manual-book positions, switch an AI agent), and code carries it out only
- * after the owner types his PIN.
+ * five actions on the paper desk (stop or start a strategy run, square off
+ * manual-book positions, close everything open in an account, switch an AI
+ * agent), and code carries it out only after the owner types his PIN.
  *
  * A proposal arrives as a tool step of the answer (propose_*): its result is
  * the JSON the model was given, which names the stored action, the sentence
@@ -17,9 +17,49 @@ import { ApiError, api } from './api'
 import type { AiToolStep, TurnRound } from './ai'
 
 /** The proposal tools, in the order the model is offered them. */
-export const ACTION_TOOLS: readonly string[] = ['propose_stop_run', 'propose_start_run', 'propose_square_off', 'propose_agent_switch']
+export const ACTION_TOOLS: readonly string[] = [
+  'propose_stop_run',
+  'propose_start_run',
+  'propose_square_off',
+  'propose_agent_switch',
+  'propose_close_account',
+]
 
 export type ActionStatus = 'pending' | 'confirmed' | 'cancelled' | 'expired' | 'executed' | 'failed'
+
+/** A live run an account close stops, as code listed it when it proposed. */
+export interface CloseRunItem {
+  runId: number
+  strategy: string
+  underlying: string
+  openLegs: number
+  /** Net after charges when proposed; null when it could not be read. */
+  net: number | null
+}
+
+/** A manual-book position an account close squares off. */
+export interface ClosePositionItem {
+  positionId: number
+  /** "NIFTY 25100 CE · 27 Oct". */
+  contract: string
+  side: string
+  lots: number
+  /** Unrealized when proposed, before charges; null when it could not be marked. */
+  unrealized: number | null
+}
+
+/** Everything an account close will close: the confirm card lists it in full. */
+export interface CloseItems {
+  account: string
+  runCount: number
+  positionCount: number
+  /** The runs' open legs, squared off when they stop. */
+  openLegs: number
+  runs: CloseRunItem[]
+  positions: ClosePositionItem[]
+  /** Items past what the tool's answer could carry (the summary and the action still hold them all). */
+  notListed: number
+}
 
 /** An action the Desk Assistant proposed in an answer, as its tool's result names it. */
 export interface ProposedAction {
@@ -28,6 +68,8 @@ export interface ProposedAction {
   summary: string
   /** When it stops waiting for the PIN; null when the result did not say. */
   expiresUtc: string | null
+  /** An account close's full list; null for the other actions. */
+  items: CloseItems | null
 }
 
 /** An action as the API returns it once it has an answer. */
@@ -71,6 +113,38 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
+const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+/** An account close's list from its tool's answer; null when there is none or it is not the shape. */
+export function readCloseItems(value: unknown): CloseItems | null {
+  const o = record(value)
+  if (!o || !Array.isArray(o.runs) || !Array.isArray(o.positions)) return null
+  const runs = o.runs.flatMap((r): CloseRunItem[] => {
+    const x = record(r)
+    const runId = num(x?.runId)
+    return x && runId != null
+      ? [{ runId, strategy: text(x.strategy), underlying: text(x.underlying), openLegs: num(x.openLegs) ?? 0, net: num(x.net) }]
+      : []
+  })
+  const positions = o.positions.flatMap((p): ClosePositionItem[] => {
+    const x = record(p)
+    const positionId = num(x?.positionId)
+    return x && positionId != null
+      ? [{ positionId, contract: text(x.contract), side: text(x.side), lots: num(x.lots) ?? 0, unrealized: num(x.unrealized) }]
+      : []
+  })
+  return {
+    account: text(o.account),
+    runCount: num(o.runCount) ?? runs.length,
+    positionCount: num(o.positionCount) ?? positions.length,
+    openLegs: num(o.openLegs) ?? runs.reduce((sum, r) => sum + r.openLegs, 0),
+    runs,
+    positions,
+    notListed: num(o.notListed) ?? 0,
+  }
+}
+
 /** The action a proposal tool stored, read from the exact JSON the model was given; null for any other step. */
 export function readProposal(step: Pick<AiToolStep, 'name' | 'ok' | 'result'>): ProposedAction | null {
   if (!step.ok || !ACTION_TOOLS.includes(step.name)) return null
@@ -90,6 +164,7 @@ export function readProposal(step: Pick<AiToolStep, 'name' | 'ok' | 'result'>): 
     kind: typeof data.kind === 'string' ? data.kind : '',
     summary,
     expiresUtc: typeof data.expiresUtc === 'string' && !Number.isNaN(Date.parse(data.expiresUtc)) ? data.expiresUtc : null,
+    items: readCloseItems(data.items),
   }
 }
 
@@ -134,9 +209,25 @@ export function actionKindLabel(kind: string): string {
       return 'Square off'
     case 'agent_switch':
       return 'Switch an agent'
+    case 'close_account':
+      return 'Close an account'
     default:
       return 'Action'
   }
+}
+
+/** "7 runs (9 open legs) · 3 manual positions": the count over an account close's list. */
+export function closeCountText(items: Pick<CloseItems, 'runCount' | 'positionCount' | 'openLegs'>): string {
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  const parts: string[] = []
+  if (items.runCount > 0) parts.push(`${plural(items.runCount, 'run')}${items.openLegs > 0 ? ` (${plural(items.openLegs, 'open leg')})` : ''}`)
+  if (items.positionCount > 0) parts.push(plural(items.positionCount, 'manual position'))
+  return parts.join(' · ') || 'nothing open'
+}
+
+/** Whether a reply says only part was done ("Partly done: …"): the card marks it so, not as nothing done. */
+export function isPartlyDone(message: string): boolean {
+  return message.startsWith('Partly done')
 }
 
 /** Seconds until `iso`, never below 0; null when it is not a time. */

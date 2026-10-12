@@ -21,9 +21,10 @@
  * the request, which also cancels the call on the server.
  *
  * No tool places, changes or cancels a broker order; the page says so from
- * the agent's own record. The Desk Assistant may propose one of four actions
- * on the paper desk (stop or start a run, square off manual positions, switch
- * an agent): the answer that proposed it ends in a confirm card (AssistantActions)
+ * the agent's own record. The Desk Assistant may propose one of five actions
+ * on the paper desk (stop or start a run, square off manual positions, close
+ * everything in an account, switch an agent): the answer that proposed it ends
+ * in a confirm card (AssistantActions)
  * with the summary code wrote and a PIN field, and only that PIN, sent to the
  * API's confirm endpoint, lets code carry it out. The PIN never joins the
  * conversation. The side panel sets the PIN.
@@ -929,8 +930,9 @@ export function AiAssistantPage() {
             {agentKey === DESK_ASSISTANT ? (
               <p className="ai-chat__lead">
                 It reads the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news and
-                strategy specs. Asked to, it can also propose to stop or start a strategy run, square off manual positions or
-                switch an agent: nothing happens until you confirm with your Action PIN, and then code does it, as your own
+                strategy specs. Asked to, it can also propose to stop or start a strategy run, square off manual positions,
+                close everything in an account or switch an agent: nothing happens until you confirm with your Action PIN, and
+                then code does it, as your own
                 click would. It never places a broker order. Numbers it takes from the desk are cited like{' '}
                 <span className="mono">(get_runs, 15:30 IST)</span>.
               </p>
