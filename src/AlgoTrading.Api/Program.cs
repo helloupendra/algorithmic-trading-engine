@@ -246,6 +246,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Se
 // and 15:40 IST briefings, to the linked owners' private chats as text and a voice note; one pass a minute.
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiVoice.IIraDesk, AlgoTrading.Api.Services.AiVoice.IraDesk>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiVoice.IraAlertService>();
+// Ira on the phone (Ai:Phone): "Hey Siri, Ira" asks POST api/Ira/ask with a phone token made on the console (only its
+// SHA-256 is stored), through the same gateway as a console question, source phone; a phone's last turns for half an hour.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiPhone.IraPhoneTokens>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiPhone.IraPhoneConversations>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiPhone.IraPhoneAsk>();
 // The agents' memory: the owner's notes, verdicts and corrections, and the check's lessons (AI → Memory).
 builder.Services.AddScoped<AlgoTrading.Api.Services.AgentMemory.AiMemoryService>();
 // The owner's one page (Today): trading, agents, learning, system and decisions at a glance.
@@ -415,6 +420,14 @@ builder.Services
             // accepted for an ordinary API call.
             OnMessageReceived = context =>
             {
+                // A phone token (Bearer ira_…) is not a JWT and opens only POST api/Ira/ask, through its own scheme:
+                // left alone here, it is no credential on any other endpoint, and is never validated or logged as a JWT.
+                if (IraPhoneAuthentication.CarriesPhoneToken(context.Request))
+                {
+                    context.NoResult();
+                    return Task.CompletedTask;
+                }
+
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
                 if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
@@ -456,7 +469,9 @@ builder.Services
                 }
             },
         };
-    });
+    })
+    // The phone token's scheme, consulted only by the IraPhone policy on POST api/Ira/ask.
+    .AddIraPhoneTokens();
 
 // Deny by default. Any endpoint without explicit authorization metadata requires a
 // valid token, so a newly added controller is protected the moment it is written
@@ -630,7 +645,7 @@ app.Use(async (context, next) =>
 
 // Signed-in console paths: never indexed (X-Robots-Tag below).
 string[] ConsolePrefixes = ["/admin", "/trader", "/desk", "/markets", "/trade", "/research", "/data", "/system", "/account",
-    "/notebook", "/login", "/invite", "/api", "/hubs"];
+    "/notebook", "/login", "/invite", "/api", "/hubs", "/ira"];
 app.Use(async (context, next) =>
 {
     var p = context.Request.Path.Value ?? string.Empty;
@@ -676,14 +691,15 @@ app.MapControllers();
 app.MapMetrics().AllowAnonymous();
 
 // SPA fallback: any non-API route serves the React app's index.html so
-// client-side routing works on hard refresh / deep links. API and hub paths
-// are excluded on purpose: an unknown /api route must answer 404, never a
-// cacheable HTML document that a client then mistakes for JSON.
-// The documentation site under /docs is static HTML of its own; the SPA
-// fallback must not swallow it. A docs address without its trailing slash
-// (/docs, /docs/architecture) is sent to the canonical one so every page has
-// exactly one URL for search engines and for people.
-app.MapFallbackToFile("{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)|docs(/|$)).*$)}", "index.html").AllowAnonymous();
+// client-side routing works on hard refresh / deep links; /ira serves the
+// phone app's shell (ira.html). API and hub paths are excluded on purpose: an
+// unknown /api route must answer 404, never a cacheable HTML document that a
+// client then mistakes for JSON. The documentation site under /docs is static
+// HTML of its own; the SPA fallback must not swallow it. A docs address
+// without its trailing slash (/docs, /docs/architecture) is sent to the
+// canonical one so every page has exactly one URL for search engines and for
+// people. See ConsoleSite.
+AlgoTrading.Api.Services.ConsoleSite.MapConsoleFallbacks(app);
 
 // Signed-in callers only, and closed when the token it opened with expires;
 // see LiveFeedHubSetup for why each.

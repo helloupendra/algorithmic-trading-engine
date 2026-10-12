@@ -123,6 +123,9 @@ public class TradingDbContext : DbContext
     /// <summary>Actions the Desk Assistant proposed, each run by code only after the owner's PIN. See <see cref="AiAction"/>.</summary>
     public DbSet<AiAction> AiActions => Set<AiAction>();
 
+    /// <summary>The phones that may ask Ira by Apple Shortcut ("Hey Siri, Ira"): a hash of each token, never the token. See <see cref="AiPhoneToken"/>.</summary>
+    public DbSet<AiPhoneToken> AiPhoneTokens => Set<AiPhoneToken>();
+
     /// <summary>The Desk Assistant's exam: a frozen bank of questions about finished days, its sittings and their answers. See <see cref="AiExamQuestion"/>.</summary>
     public DbSet<AiExamQuestion> AiExamQuestions => Set<AiExamQuestion>();
 
