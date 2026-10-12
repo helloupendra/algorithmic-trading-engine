@@ -84,7 +84,16 @@ internal static class IraActionsTestKit
     {
         services.AddSingleton(guard);
         services.AddScoped(_ => hands);
-        services.AddScoped(sp => new IraActions(sp.GetRequiredService<TradingDbContext>(), hands, guard, options, NullLogger<IraActions>.Instance, time));
+        services.AddScoped(sp => new IraActions(sp.GetRequiredService<TradingDbContext>(), hands, guard, options, NullLogger<IraActions>.Instance, time,
+            sp.GetRequiredService<IServiceScopeFactory>()));
+    }
+
+    /// <summary>Scopes whose hands are <paramref name="hands"/>: what lets an account close run its items at the same time.</summary>
+    public static IServiceScopeFactory Scopes(IIraActionHands hands)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => hands);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
     public static StrategyProcessRegistry Registry() => new(
@@ -100,15 +109,32 @@ internal static class IraActionsTestKit
         public void Advance(TimeSpan by) => Now += by;
     }
 
-    /// <summary>Hands that record each action they were asked to carry out and answer as told (done, by default).</summary>
+    /// <summary>
+    /// Hands that record each action they were asked to carry out and answer as told: done by default, a stop with one
+    /// leg squared off and a square-off of every position asked. They count how many calls are in hand at once.
+    /// </summary>
     public sealed class FakeHands : IIraActionHands
     {
+        private readonly object _gate = new();
+        private int _inFlight;
+
         public List<(string Kind, IraOwner Owner, object Target)> Calls { get; } = [];
 
         public Func<string, IraOutcome>? Answer { get; set; }
 
-        /// <summary>Held open by a test that confirms twice at once.</summary>
+        /// <summary>An answer for one target (a run that fails, a run gone): null falls back to <see cref="Answer"/>, then the default.</summary>
+        public Func<string, object, IraOutcome?>? Respond { get; set; }
+
+        /// <summary>Held open by a test that confirms twice at once, or watches how many stops run together.</summary>
         public Task Hold { get; set; } = Task.CompletedTask;
+
+        /// <summary>What <see cref="DayNetAsync"/> says.</summary>
+        public decimal? DayNet { get; set; }
+
+        /// <summary>Calls in hand now, and the most there ever were at once.</summary>
+        public int InFlight { get { lock (_gate) return _inFlight; } }
+
+        public int MostAtOnce { get; private set; }
 
         public Task<IraOutcome> StopRunAsync(IraOwner owner, IraStopRun target, CancellationToken cancellationToken) => Run(AiActionKind.StopRun, owner, target);
 
@@ -118,11 +144,31 @@ internal static class IraActionsTestKit
 
         public Task<IraOutcome> SwitchAgentAsync(IraOwner owner, IraAgentSwitch target, CancellationToken cancellationToken) => Run(AiActionKind.AgentSwitch, owner, target);
 
+        public Task<decimal?> DayNetAsync(string account, CancellationToken cancellationToken) => Task.FromResult(DayNet);
+
         private async Task<IraOutcome> Run(string kind, IraOwner owner, object target)
         {
-            lock (Calls) Calls.Add((kind, owner, target));
-            await Hold;
-            return Answer?.Invoke(kind) ?? new IraOutcome(true, $"Done: {kind} for {owner.UserName}.", new { kind });
+            lock (_gate)
+            {
+                Calls.Add((kind, owner, target));
+                _inFlight++;
+                MostAtOnce = Math.Max(MostAtOnce, _inFlight);
+            }
+
+            try
+            {
+                await Hold;
+                return Respond?.Invoke(kind, target) ?? Answer?.Invoke(kind) ?? new IraOutcome(true, $"Done: {kind} for {owner.UserName}.", target switch
+                {
+                    IraStopRun s => new IraRunStopped(s.RunId, 1, null),
+                    IraSquareOff q => new IraSquaredOff(q.BookRunId, q.PositionIds.Count, q.PositionIds, 0m),
+                    _ => new { kind },
+                });
+            }
+            finally
+            {
+                lock (_gate) _inFlight--;
+            }
         }
     }
 

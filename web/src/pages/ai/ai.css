@@ -1183,6 +1183,7 @@ a.ai-subject:hover { text-decoration: underline; }
 }
 .ai-action--waiting { border-color: var(--warn); border-left-color: var(--warn); background: var(--warn-soft); }
 .ai-action--done { border-left-color: var(--pos); }
+.ai-action--partly { border-left-color: var(--warn); }
 .ai-action--failed,
 .ai-action--locked { border-left-color: var(--neg); }
 .ai-action__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; }
@@ -1194,6 +1195,39 @@ a.ai-subject:hover { text-decoration: underline; }
 .field__input.ai-action__pin { flex: 0 1 150px; width: 150px; min-width: 0; letter-spacing: 0.25em; }
 .field__input.ai-action__pin:placeholder-shown { letter-spacing: normal; font-family: inherit; }
 .ai-action__wrong { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--neg); }
+/* An account close's full list: every run and manual position, scrolling past about a dozen rows. */
+.ai-close { display: flex; flex-direction: column; gap: 4px; }
+.ai-close__count { margin: 0; color: var(--text-2); }
+.ai-close__count strong { color: var(--text); font-weight: 650; }
+.ai-close__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.ai-close__list:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ai-close__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.ai-close__item:first-child { border-top: 0; }
+.ai-close__what { min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.ai-close__meta { white-space: nowrap; font-size: 11.5px; }
+.ai-close__pnl { white-space: nowrap; text-align: right; min-width: 72px; }
+@media (max-width: 480px) {
+  .ai-close__item { grid-template-columns: minmax(0, 1fr) auto; }
+  .ai-close__meta { grid-column: 1; grid-row: 2; }
+  .ai-close__pnl { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+}
 .ai-pinform { display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 480px) {
   .field__input.ai-action__pin { flex: 1 1 100%; width: 100%; }

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTION_TOOLS,
   actionKindLabel,
+  closeCountText,
+  isPartlyDone,
   isPinShape,
   pinProblem,
   proposalsOf,
   readAnswer,
+  readCloseItems,
   readPinStatus,
   readProposal,
   readRefusal,
@@ -51,7 +54,43 @@ describe('readProposal', () => {
       kind: 'stop_run',
       summary: 'Stop run 512 (Ghost Tangent Crossings on NIFTY, upendra’s account).',
       expiresUtc: '2026-10-12T05:02:00Z',
+      items: null,
     })
+  })
+
+  it('reads an account close’s full list for the card', () => {
+    const items = {
+      account: 'admin',
+      runCount: 2,
+      positionCount: 1,
+      openLegs: 3,
+      runs: [
+        { runId: 512, strategy: 'Ghost Tangent Crossings', underlying: 'NIFTY', openLegs: 2, net: -1240.4 },
+        { runId: 540, strategy: 'Fulcrum', underlying: 'BANKNIFTY', openLegs: 1 },
+        { strategy: 'no id: dropped' },
+      ],
+      positions: [{ positionId: 77, contract: 'NIFTY 25100 CE · 27 Oct', side: 'BUY', lots: 2, unrealized: 15 }],
+      notListed: 0,
+    }
+    const read = readProposal(step('propose_close_account', { ...proposal(14, 'Close everything in admin’s account: …'), kind: 'close_account', items }))
+
+    expect(read?.kind).toBe('close_account')
+    expect(read?.items).toEqual({
+      account: 'admin',
+      runCount: 2,
+      positionCount: 1,
+      openLegs: 3,
+      runs: [
+        { runId: 512, strategy: 'Ghost Tangent Crossings', underlying: 'NIFTY', openLegs: 2, net: -1240.4 },
+        { runId: 540, strategy: 'Fulcrum', underlying: 'BANKNIFTY', openLegs: 1, net: null },
+      ],
+      positions: [{ positionId: 77, contract: 'NIFTY 25100 CE · 27 Oct', side: 'BUY', lots: 2, unrealized: 15 }],
+      notListed: 0,
+    })
+    expect(closeCountText(read!.items!)).toBe('2 runs (3 open legs) · 1 manual position')
+    expect(closeCountText({ runCount: 0, positionCount: 3, openLegs: 0 })).toBe('3 manual positions')
+    expect(readCloseItems({ runs: 'nope' })).toBeNull()
+    expect(readCloseItems(undefined)).toBeNull()
   })
 
   it('ignores a refused proposal, a read tool and a result that is not the shape', () => {
@@ -62,8 +101,8 @@ describe('readProposal', () => {
     expect(readProposal({ name: 'propose_stop_run', ok: true, result: '{"tool":"propose_stop_run","error":"cut' })).toBeNull()
   })
 
-  it('knows all four proposal tools', () => {
-    expect(ACTION_TOOLS).toEqual(['propose_stop_run', 'propose_start_run', 'propose_square_off', 'propose_agent_switch'])
+  it('knows all five proposal tools', () => {
+    expect(ACTION_TOOLS).toEqual(['propose_stop_run', 'propose_start_run', 'propose_square_off', 'propose_agent_switch', 'propose_close_account'])
     for (const name of ACTION_TOOLS) expect(readProposal(step(name, proposal(3)))?.id).toBe(3)
   })
 })
@@ -145,18 +184,22 @@ describe('a proposal in the tool steps', () => {
     expect(toolLabel('propose_stop_run', '{"run_id":512}')).toEqual({ label: 'Stop run #512', detail: '' })
     expect(toolLabel('propose_agent_switch', '{"agent":"ai-trader","on":false}')).toEqual({ label: 'Switch ai-trader', detail: 'on: false' })
     expect(toolLabel('propose_square_off', '{"all":true}')).toEqual({ label: 'Square off', detail: 'all: true' })
+    expect(toolLabel('propose_close_account', '{"account":"coderforchange"}')).toEqual({ label: 'Close account coderforchange', detail: '' })
   })
 })
 
 describe('the card’s words', () => {
   it('names each action and counts down its wait', () => {
-    expect(['stop_run', 'start_run', 'square_off', 'agent_switch', 'x'].map(actionKindLabel)).toEqual([
+    expect(['stop_run', 'start_run', 'square_off', 'agent_switch', 'close_account', 'x'].map(actionKindLabel)).toEqual([
       'Stop a run',
       'Start a run',
       'Square off',
       'Switch an agent',
+      'Close an account',
       'Action',
     ])
+    expect(isPartlyDone('Partly done: admin’s account at 12:41 IST: 6 runs stopped; 1 failed: run 530 (no answer).')).toBe(true)
+    expect(isPartlyDone('Not done: nothing in admin’s account was closed at 12:41 IST; 1 failed: run 530 (no answer).')).toBe(false)
     const now = Date.parse('2026-10-12T05:00:18Z')
     expect(secondsLeft('2026-10-12T05:02:00Z', now)).toBe(102)
     expect(waitText(102)).toBe('1:42 left')

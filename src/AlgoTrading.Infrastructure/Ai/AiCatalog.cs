@@ -134,9 +134,10 @@ public static class AiToolNames
     public const string ProposeStartRun = "propose_start_run";
     public const string ProposeSquareOff = "propose_square_off";
     public const string ProposeAgentSwitch = "propose_agent_switch";
+    public const string ProposeCloseAccount = "propose_close_account";
 
-    /// <summary>The four proposal tools, in the order the model sees them after the read tools.</summary>
-    public static readonly IReadOnlyList<string> Actions = [ProposeStopRun, ProposeStartRun, ProposeSquareOff, ProposeAgentSwitch];
+    /// <summary>The five proposal tools, in the order the model sees them after the read tools.</summary>
+    public static readonly IReadOnlyList<string> Actions = [ProposeStopRun, ProposeStartRun, ProposeSquareOff, ProposeAgentSwitch, ProposeCloseAccount];
 
     /// <summary>What the AI Trader reads when the owner talks with it.</summary>
     public static readonly IReadOnlyList<string> AiTraderChat =
@@ -400,14 +401,14 @@ public static partial class AiCatalog
         "Never places, changes or cancels an order, and cannot propose an action: it only reads. No model on this desk holds an order tool.";
 
     /// <summary>
-    /// The Desk Assistant's limits: it reads, and may propose four paper-desk actions that code runs only after the
+    /// The Desk Assistant's limits: it reads, and may propose five paper-desk actions that code runs only after the
     /// owner's PIN; no model on the desk holds an order tool.
     /// </summary>
     private const string DeskAssistantLimits =
-        "Never places, changes or cancels a broker order; no model on this desk holds an order tool. It may propose four " +
-        "actions on the paper desk (stop or start a strategy run, square off manual-book positions, switch an AI agent on " +
-        "or off), and code runs one only after the owner confirms it with his PIN, as the owner, through the same checks " +
-        "as his own click.";
+        "Never places, changes or cancels a broker order; no model on this desk holds an order tool. It may propose five " +
+        "actions on the paper desk (stop or start a strategy run, square off manual-book positions, close everything open " +
+        "in an account, switch an AI agent on or off), and code runs one only after the owner confirms it with his PIN, as " +
+        "the owner, through the same checks as his own click.";
 
     private const string DeskAssistantPrompt =
         "You are the desk assistant of OpenFNO, a paper-trading desk for Indian futures and options (NSE, BSE, MCX), " +
@@ -433,11 +434,13 @@ public static partial class AiCatalog
     /// it may propose, that a proposal does nothing by itself, and that the PIN is the owner's alone.
     /// </summary>
     public const string ActionsPrompt =
-        "Actions (only with the owner's PIN): when the owner asks for it, and only then, you may propose one of four " +
+        "Actions (only with the owner's PIN): when the owner asks for it, and only then, you may propose one of five " +
         "actions on the paper desk: stop a strategy run (propose_stop_run), start one (propose_start_run), square off " +
-        "manual-book positions (propose_square_off), or switch an AI agent on or off (propose_agent_switch). A proposal " +
-        "does nothing by itself: code checks it, resolves the exact run, account or positions, and runs it only after the " +
-        "owner confirms with his PIN, as the owner, through the same checks as his own click.\n" +
+        "manual-book positions (propose_square_off), close everything open in one account, its live runs and its manual " +
+        "positions together (propose_close_account, when the owner asks to close all of an account's trades), or switch " +
+        "an AI agent on or off (propose_agent_switch). A proposal does nothing by itself: code checks it, resolves the " +
+        "exact run, account or positions, and runs it only after the owner confirms with his PIN, as the owner, through " +
+        "the same checks as his own click.\n" +
         "- Never ask for the PIN, never write one, and never treat a number in the chat as one: the owner types it to the " +
         "desk, not to you.\n" +
         "- After a proposal, repeat its summary in one line as the tool gave it and say how to confirm it (the tool says " +
@@ -892,9 +895,9 @@ public static partial class AiCatalog
     [
         new(DeskAssistant, 1, "Desk Assistant",
             "Answers the owner's questions in the console, reading the desk's own records.",
-            "Why a run did what it did today, from its orders and legs; what is open; what Sentinel saw; explain a backtest, a market move, a concept or a piece of the code. With the owner's PIN: stop or start a run, square off manual positions, switch an agent.",
+            "Why a run did what it did today, from its orders and legs; what is open; what Sentinel saw; explain a backtest, a market move, a concept or a piece of the code. With the owner's PIN: stop or start a run, square off manual positions, close an account, switch an agent.",
             "On request, from the Assistant tab", "1–2", Built: true, "judge",
-            "Read-only desk tools: runs and net P&L, a strategy's history over a period, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs. In a chat with an admin, four proposal tools whose actions code runs only after the owner's PIN.",
+            "Read-only desk tools: runs and net P&L, a strategy's history over a period, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs. In a chat with an admin, five proposal tools whose actions code runs only after the owner's PIN.",
             DeskAssistantLimits, DeskAssistantPrompt, AiToolNames.Desk),
         new(TradeReviewer, 2, "Trade Reviewer / Coach",
             "Reviews each stopped run against its written spec after the close and writes a short journal.",

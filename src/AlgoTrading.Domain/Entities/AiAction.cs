@@ -2,8 +2,9 @@ namespace AlgoTrading.Domain.Entities;
 
 /// <summary>
 /// One action the Desk Assistant ("Ira") proposed and the owner may confirm with his PIN: stop or start a strategy
-/// run, square off manual-book positions, or switch an AI agent on or off. The model only proposes; code resolved the
-/// target, wrote this row, and runs it only after the PIN, as the owner's console user.
+/// run, square off manual-book positions, close everything open in an account, or switch an AI agent on or off. The
+/// model only proposes; code resolved the target, wrote this row, and runs it only after the PIN, as the owner's
+/// console user.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -82,7 +83,13 @@ public static class AiActionKind
     /// <summary>Switch an AI agent on or off, as AI → Agents does.</summary>
     public const string AgentSwitch = "agent_switch";
 
-    public static readonly IReadOnlyList<string> All = [StopRun, StartRun, SquareOff, AgentSwitch];
+    /// <summary>
+    /// Close everything open in one account: stop each of its live strategy runs (squaring off their legs) and square
+    /// off its manual book's open positions, all on one PIN.
+    /// </summary>
+    public const string CloseAccount = "close_account";
+
+    public static readonly IReadOnlyList<string> All = [StopRun, StartRun, SquareOff, AgentSwitch, CloseAccount];
 }
 
 /// <summary>Where an action stands.</summary>

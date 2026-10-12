@@ -6,6 +6,8 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using static AlgoTrading.UnitTests.AiTestKit;
 using static AlgoTrading.UnitTests.IraActionsTestKit;
@@ -100,7 +102,10 @@ public sealed class IraDeskHandsTests
 
         Assert.True(stopped.Done, stopped.Message);
         Assert.Matches($@"^Done: run {runId} \(Ghost, NIFTY, admin\) stopped at \d\d:\d\d IST\.$", stopped.Message);
+        Assert.Equal(runId, Assert.IsType<IraRunStopped>(stopped.Result).RunId);
         Assert.Equal($"Not done: run {runId} is not running any more, so there was nothing to stop.", again.Message);
+        // Gone, not failed: an account close reports it as closed already.
+        Assert.True(again.Gone);
         await using var read = desk.Db();
         Assert.Equal("Stopped", (await read.SimulationRuns.SingleAsync()).Status);
         var signal = await read.SimulationSignals.SingleAsync(s => s.SignalType == StrategyRunControl.RunStoppedSignalType);
@@ -136,6 +141,46 @@ public sealed class IraDeskHandsTests
         var nothing = await hands.SquareOffAsync(new IraOwner(IraActionsTestKit.Admin, "upendra"),
             new IraSquareOff(550, IraActionsTestKit.Admin, "upendra", [77], All: false), CancellationToken.None);
         Assert.Equal("Not done: none of those positions is open any more: nothing to square off.", nothing.Message);
+    }
+
+    [Fact]
+    public async Task Closing_an_account_stops_all_its_runs_on_the_stop_buttons_path_together_and_leaves_the_other_accounts()
+    {
+        using var desk = new RunnerDesk();
+        Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await desk.Start("NIFTY"));
+        Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await desk.Start("BANKNIFTY"));
+        Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await desk.Start("NIFTY", ownerUserId: RunnerDesk.TraderId));
+        // A row left Running with no runner behind it (the API restarted): closed as the Stop button closes it.
+        long orphan = desk.SeedRun(RunnerDesk.AdminId, "SENSEX", "Running");
+        long traders = desk.Runs().Single(r => r.UserId == RunnerDesk.TraderId).Id;
+
+        // Each item's hands in a scope of their own, with their own context, as Program.cs gives them.
+        var services = new ServiceCollection();
+        services.AddScoped(_ => desk.Db());
+        services.AddScoped<IIraActionHands>(sp => Hands(desk, sp.GetRequiredService<TradingDbContext>()));
+        var scopes = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+        await using var db = desk.Db();
+        FastPins();
+        var actions = new IraActions(db, Hands(desk, db), new IraPinGuard(), new AiTestKit.Monitor(Settings()), NullLogger<IraActions>.Instance, null, scopes);
+        await actions.SetPinAsync(Admin, Pin, null, requireCurrent: false, "the console", CancellationToken.None);
+        var proposal = await new IraActionResolver(db, desk.Catalog, desk.Registry, new AiSettingsStore(db)).CloseAccountAsync(Admin, "Admin", CancellationToken.None);
+        var action = await actions.ProposeAsync(Admin, new AiToolCaller(AiCatalog.DeskAssistant, "console", "admin", RunnerDesk.AdminId, "c-close", 5),
+            proposal, CancellationToken.None);
+
+        var result = await actions.ConfirmAsync(action.Id, Admin, Pin, AiActionChannel.Console, CancellationToken.None);
+
+        Assert.Equal(IraConfirmKind.Executed, result.Kind);
+        Assert.Matches(@"^Done: admin's account closed at \d\d:\d\d IST: 3 runs stopped\.$", result.Message);
+        var runs = desk.Runs();
+        Assert.All(runs.Where(r => r.UserId == RunnerDesk.AdminId), r => Assert.Equal("Stopped", r.Status));
+        Assert.Equal("Running", runs.Single(r => r.Id == traders).Status);
+        Assert.Equal(1, desk.Registry.Count);
+        await using var read = desk.Db();
+        var stops = await read.SimulationSignals.Where(s => s.SignalType == StrategyRunControl.RunStoppedSignalType).ToListAsync();
+        Assert.Equal(3, stops.Count);
+        Assert.All(stops, s => Assert.Contains("\"by\":\"admin via Ira\"", s.MetadataJson));
+        Assert.Contains(stops, s => s.SimulationRunId == orphan && s.MetadataJson.Contains("runner process was not found"));
     }
 
     [Fact]
