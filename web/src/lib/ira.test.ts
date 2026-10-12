@@ -202,7 +202,7 @@ describe('phone tokens', () => {
         { id: 12, kind: 'stop_run', summary: 'Stop run 512.', createdUtc: 'x', expiresUtc: '2026-10-12T05:02:00Z', callId: 9 },
         { id: 'no' },
       ]),
-    ).toEqual([{ id: 12, kind: 'stop_run', summary: 'Stop run 512.', expiresUtc: '2026-10-12T05:02:00Z' }])
+    ).toEqual([{ id: 12, kind: 'stop_run', summary: 'Stop run 512.', expiresUtc: '2026-10-12T05:02:00Z', items: null }])
     expect(readPhoneActions({})).toEqual([])
   })
 })
