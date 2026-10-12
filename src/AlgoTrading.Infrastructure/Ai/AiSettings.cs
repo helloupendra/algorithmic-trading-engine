@@ -459,9 +459,9 @@ public sealed class AiVoiceAlertsSettings
 }
 
 /// <summary>
-/// The <c>Ai:Actions</c> section: the Desk Assistant may propose four actions on the paper desk (stop or start a
-/// strategy run, square off manual-book positions, switch an AI agent), which code runs only after the owner types his
-/// PIN. The model never acts and never sees the PIN.
+/// The <c>Ai:Actions</c> section: the Desk Assistant may propose five actions on the paper desk (stop or start a
+/// strategy run, square off manual-book positions, close everything open in an account, switch an AI agent), which code
+/// runs only after the owner types his PIN. The model never acts and never sees the PIN.
 /// </summary>
 public sealed class AiActionsSettings
 {

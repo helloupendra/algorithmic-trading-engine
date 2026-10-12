@@ -220,8 +220,9 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.DataChecksTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.CircularsTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ResearchNotesTool>();
-// Ira's actions (Ai:Actions): the Desk Assistant's four proposal tools, offered only in an admin's chat. A proposal is a
+// Ira's actions (Ai:Actions): the Desk Assistant's five proposal tools, offered only in an admin's chat. A proposal is a
 // pending ai_actions row; code carries it out only after the owner's PIN, through the services the console's buttons use.
+// An account close stops its runs four at a time, each in its own scope (IraAccountCloser).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiActions.IraPinGuard>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiActions.IIraActionHands, AlgoTrading.Api.Services.AiActions.IraDeskHands>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiActions.IraActionResolver>();
@@ -230,6 +231,7 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ProposeStartRunTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ProposeSquareOffTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ProposeAgentSwitchTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ProposeCloseAccountTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
