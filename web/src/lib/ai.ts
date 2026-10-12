@@ -753,6 +753,7 @@ const SOURCES: Record<string, string> = {
   telegram: 'Telegram',
   preview: 'AI Trader look now',
   alert: 'Ira alert',
+  phone: 'Phone (Siri)',
 }
 
 export const CALL_SOURCES = Object.keys(SOURCES)
