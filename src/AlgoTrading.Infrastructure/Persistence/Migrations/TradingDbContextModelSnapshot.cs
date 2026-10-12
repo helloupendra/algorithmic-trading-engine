@@ -735,6 +735,51 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiPhoneToken", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<DateTime?>("LastUsedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "TokenHash" }, "IX_ai_phone_tokens_TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex(new[] { "UserId", "CreatedUtc" }, "IX_ai_phone_tokens_UserId_CreatedUtc");
+
+                    b.ToTable("ai_phone_tokens", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AiReport", b =>
                 {
                     b.Property<long>("Id")
