@@ -10,7 +10,7 @@ The desk's hosted language models live on one console page. The page shows:
 
 All fifteen agents are built (owner, 10 Oct 2026: every AI agent built and on):
 - the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2), and from
-  12 Oct may propose four actions that code carries out only after the owner's PIN
+  12 Oct may propose five actions that code carries out only after the owner's PIN
   ([Actions (with a PIN)](#actions-with-a-pin));
 - three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
   **Incident Explainer**;
@@ -41,7 +41,8 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   development, testing, research and evaluation. Serving traders would be production use, so every endpoint is
   `AdminOnly`.
 - **No model holds an order tool.** Nothing in the live trading path waits on a model. The Desk Assistant may *propose*
-  four actions on the paper desk (stop or start a strategy run, square off manual-book positions, switch an AI agent);
+  five actions on the paper desk (stop or start a strategy run, square off manual-book positions, close everything open
+  in an account, switch an AI agent);
   code resolves the target, waits for the owner's PIN, and carries it out as his own click would
   ([Actions (with a PIN)](#actions-with-a-pin)). No model can place a broker order.
 - **The key never leaves the server.** It sits in the server's `.env` as `NVIDIA_API_KEY`. The desk writes it into
@@ -340,7 +341,7 @@ The Desk Assistant answers from the desk's own records. The model asks for tools
 3. This repeats until the model answers.
 
 Every tool only reads (`IAiTool`); none places, cancels or switches anything. Each tool is built from the service the
-matching console page uses, so the numbers are the page's numbers. The one exception is the Desk Assistant's four
+matching console page uses, so the numbers are the page's numbers. The one exception is the Desk Assistant's five
 proposal tools, offered only in an admin's chat: each stores a pending action and nothing else
 ([Actions (with a PIN)](#actions-with-a-pin)).
 
@@ -1291,11 +1292,12 @@ same services and checks as his own click. Paper desk only: no broker is ever ca
 | Start a strategy run | `propose_start_run`: strategy, underlying, lots (1 to 50), account (the owner's own by default) | `StrategyStartService.StartAsync`, the Start button's service; the run's "started by" is "upendra via Ira" | Every check the Start button meets: the market's hours, a duplicate or open row, the run cap, the host's memory, the account's package; the strategies module grant |
 | Square off | `propose_square_off`: one manual-book position (`position_id` or `symbol`), or all open ones of an account (`all`) | `IPaperTradingService.ClosePositionsAsync` on the manual book, the reduce-only close the book's square-off and the risk guard use | Only the positions the owner was shown, and only those still open; the strategies module grant |
 | Switch an AI agent | `propose_agent_switch`: agent and on or off; switching `ai-trader` off pauses the AI Trader | `AiSettingsStore.SetAgentEnabledAsync`, AI → Agents' own switch, with "upendra via Ira" as who and the reason | Built; not already in that state; never the Desk Assistant itself |
+| Close an account (12 Oct) | `propose_close_account`: the account (`admin`, `coderforchange`, "my account") | Every live run through the single stop's path above, and the manual book's open positions through the square-off's close, together on one PIN (`IraAccountCloser`, [below](#closing-an-account)) | What is still open at the PIN; the strategies module grant on each item |
 
 Nothing else: no broker order, deploy, setting or risk-limit change, delete or user change. (`ManualOrderService` places
 orders; it does not square any off, so a square-off takes the book's own close instead.)
 
-**Who is offered them.** The four tools are offered only to the Desk Assistant, only in a console or Telegram chat, and
+**Who is offered them.** The five tools are offered only to the Desk Assistant, only in a console or Telegram chat, and
 only when the asker is an active admin as his account row says now (`AiCatalog.ActionsOffered`, checked by the gateway
 on every call). Its prompt then gets `AiCatalog.ActionsPrompt`: what it may propose, that a proposal does nothing by
 itself, never to ask for or repeat a PIN, and never to say an action is done. Every other agent, a script's `POST ask`,
@@ -1355,6 +1357,70 @@ number, the sentence code wrote, a countdown, a PIN field (`type=password`, `inp
 signed-in admin's PIN (twice, to be sure): signed in already, the console needs no old PIN. The tool step reads
 "Propose", not "Read".
 
+### Closing an account
+
+The owner, 12 Oct 2026: "If I tell Ira to close all trades of a particular account, everything should close together."
+`propose_close_account(account)` closes everything open in one account on one PIN.
+
+**Which account.** The owner's own ("my account", "mine", "me", or his user name) or one he manages: every account
+but a service one, as the Desk lists them for an admin. Case, spaces, an "@" and a trailing "'s account" are ignored
+("Admin's account", "@coderforchange"); an exact user name wins, else a distinctive part (3 letters or more) of an
+active account's name. Two matches are an error ("Two accounts match code: coder-x, coderforchange. Which one?"), and
+so is none ("There is no account named mallory. The accounts: …").
+
+**The proposal** (`IraActionResolver.CloseAccountAsync`) lists, in code, what is open now:
+
+- every live strategy run of the account, Running or Stopping (not a recap or a replay, not the pattern-alerts
+  runner), with its strategy, underlying, open legs and net after charges (`RunPnl`, as its card shows it);
+- every open position of its manual book, with its contract (the instrument master's label, as the console's), side,
+  lots and unrealized P&L marked at the latest quote (the stored mark where none is known).
+
+Nothing open is an error the model reads: "Nothing is open in admin's account." The summary names at most six runs and
+six positions, then "and N more"; the action's parameters keep every one of them, and the tool's answer carries the
+full list for the console's card (up to 80 items, about 105 characters each, under `Ai:MaxToolResultChars`):
+
+> Close everything in admin's account: stop 7 runs (Ghost Tangent Crossings NIFTY run 512, Fulcrum BANKNIFTY run 530,
+> Ghost Tangent Crossings SENSEX run 541, Smc Structure Break NIFTY run 544, Fulcrum NIFTY run 547, Ghost Tangent
+> Crossings BANKNIFTY run 551 and 1 more) and square off their 9 open positions, and square off 3 manual positions
+> (NIFTY 25100 CE · 27 Oct ×2, NIFTY 25000 PE · 27 Oct ×1 and BANKNIFTY 56000 CE · 27 Oct ×1). Net now: runs −₹12,351
+> after charges, manual positions −₹600 unrealized.
+
+The two figures are kept apart on purpose: a run's net is after its charges, a manual position's unrealized P&L is
+before them.
+
+**One PIN closes it all** (`IraAccountCloser`). At the PIN, code reads again what is still open; whatever closed after
+the proposal is skipped and reported, not stopped again. Then, at the same time:
+
+- each run still open is stopped through `IIraActionHands.StopRunAsync`, the single stop's own path
+  (`StrategyRunControl.StopAsync` squaring off its legs, `StopOrphanAsync` for a run with no runner, the run-stopped
+  notification);
+- the manual positions still open are squared off together through `SquareOffAsync`, the book's reduce-only close.
+
+At most **four** items run at once (`IraAccountCloser.Parallelism`, `Parallel.ForEachAsync` with
+`MaxDegreeOfParallelism = 4`): the server has two CPUs and was overloaded on the day this was asked for, and a stop is a
+runner process to end plus a square-off to fill. Each item resolves its hands in a DI scope of its own, so no two stops
+share a database context. Every item ends on its own: one that is refused or throws is reported as failed, and the
+others go on. A run the desk finds already stopped (`IraOutcome.Gone`) counts as closed already, not failed.
+
+**The reply** is one message, with the account's day net after charges as the Today page states it (its live runs
+started today, recaps left out). What the manual positions realized is said apart, since Today counts runs:
+
+> Done: admin's account closed at 12:41 IST: 7 runs stopped, 6 strategy positions and 3 manual positions squared off
+> (the manual ones realized −₹560 before charges). Day net −₹12,880 after charges.
+
+> Partly done: admin's account at 12:41 IST: 5 runs stopped, 6 strategy positions and 3 manual positions squared off
+> (the manual ones realized −₹560 before charges); 1 failed: run 530 (the runner did not stop in 30 s); 1 had closed
+> already: run 553. Day net −₹12,880 after charges.
+
+"Done" only when nothing failed; with a failure the action is recorded `failed` (only part was done) and the reply says
+"Partly done", never "closed". With nothing left to close: "Not done: everything in admin's account had closed already
+(run 512, run 540): nothing was left to close."
+
+**On the console** the card lists everything to close in a scrolling list with the count ("10 to close in admin's
+account: 7 runs (9 open legs) · 3 manual positions"): each run with its open legs and net, each manual position with
+its side, lots and unrealized P&L. A partial close shows a "partly done" badge. **On Telegram** the bot sends the
+summary, capped as above, and the one reply.
+
 **The PIN** is per console user, 4 to 8 digits, and kept only as a salted PBKDF2-SHA256 hash (600,000 iterations) in
 `system_settings` under `ai.actions.pin.<user id>`. It is never stored or logged in clear: not in `ai_calls` (a typed
 PIN is handled before the gateway), not in the activity log, not in the API's log, and the console never puts it in a
@@ -1365,8 +1431,12 @@ writes one for a request, with the actor "upendra via Ira": method `IRA`, path `
 `ira-<kind>-<outcome>` (for example `ira-stop-run-executed`), module `strategies` (or `ai` for a switch), the target
 (the run, the book, the agent) and a sentence with the summary and the result. Outcomes: `executed` (200), `failed`
 (409), `cancelled`, `expired` (410), `wrong-pin` (403), `locked` (423); setting or changing the PIN is a row too
-(`ira-pin-set-set`, `ira-pin-set-changed`). The console's confirm and cancel requests also have the middleware's own
-row ("Ira's action #12: executed.").
+(`ira-pin-set-set`, `ira-pin-set-changed`). An account close writes one row per item before the action's own
+(`ira-close-account-executed` or `-failed`, target the account): `ira-close-account-run-done` (200),
+`…-run-already-closed` (410), `…-run-failed` (409) and the same for `position`, path
+`ira/actions/<id>/<run|position>/<id>`, with a sentence ("Closing admin's account (action #12) via Ira (console): run
+512 (Ghost Tangent Crossings on NIFTY) stopped, 2 positions squared off; net −₹1,240 after charges."). The console's
+confirm and cancel requests also have the middleware's own row ("Ira's action #12: executed.").
 
 **Tests** (fakes only: no broker, no AWS, no Telegram): `IraActionsTests` (each proposal resolves its target; two
 matching runs are an error naming both; no PIN, a trader, a script or another agent proposes nothing; a wrong PIN is
@@ -1375,9 +1445,13 @@ carry it out once; a refusal by the desk is a failed action; switched off, nothi
 activity log; the PIN is only a salted hash), `IraActionsWiringTests` (only the Desk Assistant in an admin's chat is
 offered the tools, and not with `Ai:Actions:Enabled` off; the console endpoints behind the admin policy, over HTTP; on
 Telegram the typed PIN is deleted, checked and carried out without a model, three wrong PINs lock, `/cancel`, a late or
-stray PIN, `/pin`), `IraDeskHandsTests` (the start through `StrategyStartService`'s checks with real runner processes;
-the stop's path; the square-off; the switch) and `AiVoiceTests` (a heard number is a question, never a PIN); the
-console's in `web/src/lib/aiActions.test.ts`.
+stray PIN, `/pin`), `IraCloseAccountTests` (the proposal lists runs and positions, recaps and the alerts runner left
+out; nothing open is an error; the account named tolerantly, an ambiguous one refused; one PIN closes everything; what
+closed before the PIN is skipped; one failure does not stop the others; four at a time and never more; a row per item
+and one for the action; a trader, a script or another agent proposes nothing), `IraDeskHandsTests` (the start through
+`StrategyStartService`'s checks with real runner processes; the stop's path; an account close stopping real runners
+and an orphaned row together, each in its own scope, leaving another account's run alone; the square-off; the switch)
+and `AiVoiceTests` (a heard number is a question, never a PIN); the console's in `web/src/lib/aiActions.test.ts`.
 
 ## Talking to the agents
 
@@ -1533,7 +1607,7 @@ on the Calls tab under the pseudo-agent `memory`.
    chat (name it in the agent's chat prompt too). `AiAgentChatTests` fails for a name with no tool or no registration.
 4. Add it to `AiToolDataTests`, or `AiAgentChatToolTests` for a chat tool.
 
-A tool that acts is not added this way: the Desk Assistant's four proposal tools are `AiToolNames.Actions`, never in an
+A tool that acts is not added this way: the Desk Assistant's five proposal tools are `AiToolNames.Actions`, never in an
 agent's `Tools` or `ChatTools`, and offered by the gateway alone ([Actions (with a PIN)](#actions-with-a-pin)).
 
 ## Adding an agent
