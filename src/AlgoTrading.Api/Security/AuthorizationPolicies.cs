@@ -16,6 +16,12 @@ public static class AuthorizationPolicies
     public const string AdminOnly = "AdminOnly";
 
     /// <summary>
+    /// A phone token, and nothing else: the Apple Shortcut's <c>POST api/Ira/ask</c>. Authenticated by the phone
+    /// token's own scheme (<see cref="IraPhoneAuthentication"/>), never the console's JWT.
+    /// </summary>
+    public const string IraPhone = "IraPhone";
+
+    /// <summary>
     /// The platform's rules: every endpoint needs a signed-in caller unless it
     /// opts out with [AllowAnonymous], and <see cref="AdminOnly"/> needs the
     /// Admin role. Defined once, so a test host that drives the real
@@ -27,7 +33,11 @@ public static class AuthorizationPolicies
                 .RequireAuthenticatedUser()
                 .Build())
             .AddPolicy(AdminOnly, policy =>
-                policy.RequireRole(UserRoles.Admin));
+                policy.RequireRole(UserRoles.Admin))
+            .AddPolicy(IraPhone, policy => policy
+                .AddAuthenticationSchemes(IraPhoneAuthentication.Scheme)
+                .RequireAuthenticatedUser()
+                .RequireClaim(IraPhoneAuthentication.TokenIdClaim));
 }
 
 /// <summary>

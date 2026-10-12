@@ -58,56 +58,52 @@
  * and asks whatever is said to the assistant by name ("Ira, …"), marked
  * "🎙 heard hands-free"; it pauses while Ira speaks, while an answer comes,
  * while the mic button is in use and while the tab is hidden.
+ *
+ * The conversations, the asking, the mic, spoken replies and hands-free are
+ * one engine (useAssistantSession) that the phone app, /ira, shares; this
+ * page adds the tiers, /remember, the votes and the side panel. The side
+ * panel's Phones box makes and revokes the phone tokens "Hey Siri, Ira" asks
+ * with (AssistantPhones).
  */
 
-import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
 import {
   ASK_TIERS,
-  AskRefusal,
   CHAT_AGENTS,
   DESK_ASSISTANT,
   MEMORY_MAX_CHARS,
-  agentChatsReducer,
-  askFailureText,
   chatAgentMeta,
   conversationNote,
   formatSeconds,
   formatTokens,
-  historyFor,
-  initialAgentChats,
-  streamingAgent,
   toolLabel,
   toolsLine,
-  isAbort,
   memoryErrorText,
   memoryHref,
   memoryLabel,
   memoryTextProblem,
   modelName,
-  newConversationId,
   parseAskTier,
   parseRemember,
-  streamAsk,
   useAddMemory,
   useAiAgents,
   useAiOverview,
   useCallFeedback,
 } from '../../lib/ai'
-import type { AskTier, ChatAction, ChatTurn, FeedbackScore, HeardMark, TurnRound } from '../../lib/ai'
-import { readSpeakReplies, transcribe, voiceFailureText, writeSpeakReplies } from '../../lib/voice'
+import type { AskTier, ChatTurn, FeedbackScore, TurnRound } from '../../lib/ai'
+import { readSpeakReplies, writeSpeakReplies } from '../../lib/voice'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
-import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
+import { CallLink, ChainChips, CopyButton, MemoriesRead, ToolStepRow } from './parts'
 import { DocsSearchCard, TelegramCard } from './AssistantSide'
-import { ActionCard, ActionPinCard } from './AssistantActions'
-import { proposalsOf } from '../../lib/aiActions'
+import { ActionPinCard } from './AssistantActions'
 import type { ActionOutcome } from '../../lib/aiActions'
+import { TurnActions } from './AssistantProposals'
+import { PhonesCard } from './AssistantPhones'
 import { HandsFreeStrip, HandsFreeToggle, MicButton, PlaybackBar, RecordingStrip, SpeakToggle } from './AssistantVoice'
-import { useAiVoice, useHandsFree, useSpokenReplies, useVoiceRecorder } from './voiceHooks'
-import type { HandsFreeHold } from './voiceHooks'
+import { useActionOutcomes, useAssistantSession, useFollowLatest } from './useAssistantSession'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -132,38 +128,6 @@ function writeStored(key: string, value: string) {
   } catch {
     /* storage refused: the draft lives as long as the page */
   }
-}
-
-/** Copies an answer; falls back to a hidden selection where the clipboard API is not allowed (plain http). */
-function CopyButton({ text }: { text: string }) {
-  const [said, setSaid] = useState<string | null>(null)
-  useEffect(() => {
-    if (!said) return
-    const id = window.setTimeout(() => setSaid(null), 1600)
-    return () => window.clearTimeout(id)
-  }, [said])
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setSaid('Copied')
-    } catch {
-      const area = document.createElement('textarea')
-      area.value = text
-      area.setAttribute('readonly', '')
-      area.style.position = 'fixed'
-      area.style.opacity = '0'
-      document.body.appendChild(area)
-      area.select()
-      const ok = document.execCommand('copy')
-      area.remove()
-      setSaid(ok ? 'Copied' : 'Copy failed')
-    }
-  }
-  return (
-    <button type="button" className="btn btn--ghost btn--sm ai-copy" onClick={() => void copy()}>
-      {said ?? 'Copy'}
-    </button>
-  )
 }
 
 /** The model's reasoning: folded and dim; while it is still thinking, its last words show in the fold. */
@@ -410,37 +374,6 @@ function RememberNote({ line, agentName }: { line: RememberLine; agentName: stri
   )
 }
 
-/** The actions an answer proposed, each with its confirm card, once the answer has finished streaming. */
-function TurnActions({
-  turn,
-  newest,
-  outcomes,
-  onOutcome,
-}: {
-  turn: ChatTurn
-  newest: boolean
-  outcomes: Readonly<Record<number, ActionOutcome>>
-  onOutcome: (id: number, outcome: ActionOutcome) => void
-}) {
-  if (turn.status === 'streaming') return null
-  const proposals = proposalsOf(turn.rounds)
-  if (proposals.length === 0) return null
-  return (
-    <div className="ai-actions">
-      {proposals.map(({ action, replaced }, i) => (
-        <ActionCard
-          key={action.id}
-          action={action}
-          replaced={replaced}
-          outcome={outcomes[action.id] ?? null}
-          onOutcome={(o) => onOutcome(action.id, o)}
-          focus={newest && i === proposals.length - 1}
-        />
-      ))}
-    </div>
-  )
-}
-
 function Turn({
   turn,
   now,
@@ -549,76 +482,63 @@ export function AiAssistantPage() {
   const overview = useAiOverview()
   const agents = useAiAgents()
   const addMemory = useAddMemory()
-  const qc = useQueryClient()
   const [params] = useSearchParams()
-  const [state, dispatch] = useReducer(agentChatsReducer, undefined, () => initialAgentChats(params.get('agent') ?? readStored(AGENT_KEY)))
   const [draft, setDraft] = useState(() => readStored(DRAFT_KEY) ?? '')
   const [tier, setTier] = useState<AskTier>(() => parseAskTier(readStored(TIER_KEY)))
   const [remembered, setRemembered] = useState<RememberLine[]>([])
-  // What became of each proposed action, by its id: the cards keep it across a switch of conversation.
-  const [outcomes, setOutcomes] = useState<Record<number, ActionOutcome>>({})
-  const onOutcome = (id: number, outcome: ActionOutcome) => setOutcomes((o) => ({ ...o, [id]: outcome }))
-  const [composerNote, setComposerNote] = useState<string | null>(null)
-  const [speakOn, setSpeakOn] = useState(() => readSpeakReplies())
-  const [hearing, setHearing] = useState(false)
-  const hearAbort = useRef<AbortController | null>(null)
-  // The newest question's turn: its answer is read aloud when it finishes, if Speak replies is on by then.
-  const speakNext = useRef<string | null>(null)
-  const replies = useSpokenReplies()
-  const abortRef = useRef<AbortController | null>(null)
+  const [outcomes, onOutcome] = useActionOutcomes()
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  const follow = useRef(true)
 
-  const agentKey = state.agent
-  const chat = state.chats[agentKey]
+  const tiers = overview.data?.tiers
+  const keyMissing = overview.data?.provider.keyConfigured === false
+  const agentInfo = (key: string) => agents.data?.agents.find((a) => a.key === key)
+  // Switched off, or an API from before the other agents could be talked with (it would answer with their scheduled task's JSON).
+  const blockedFor = (key: string) => {
+    const a = agentInfo(key)
+    return keyMissing || a?.status === 'off' || (a != null && !a.chat)
+  }
+
+  const session = useAssistantSession({
+    initialAgent: params.get('agent') ?? readStored(AGENT_KEY),
+    blockedFor,
+    tier,
+    // The agent's own tier asks with no tier at all, so the API walks the agent's own chain: a chain the owner
+    // gave the agent on the Agents tab is the one its tier choice uses. The other choices ask that tier's chain.
+    sendTierFor: (key) => (tier === (agentInfo(key)?.tier ?? null) ? null : tier),
+    speakInitially: readSpeakReplies(),
+    saveSpeak: writeSpeakReplies,
+    onAsked: (heard) => {
+      follow()
+      if (!heard) setDraft('')
+    },
+    // A recording or a hands-free question that cannot be asked now waits in the box.
+    onHeldBack: (question) => {
+      setDraft((d) => (d.trim() ? d : question))
+      return 'Heard, but it cannot be asked yet: the words are in the box. Ask when the answer above finishes.'
+    },
+  })
+  const { state, agentKey, chat, busy, streaming, busyElsewhere, recorder, recording, hearing, replies, handsFree } = session
   const meta = chatAgentMeta(agentKey)
-  // One question at a time across the conversations: an answer streams on in its own conversation when the owner switches away.
-  const busy = streamingAgent(state)
-  const streaming = busy === agentKey
-  const busyElsewhere = busy != null && !streaming
   const now = useNow(1_000, busy != null)
+  const { endRef, follow } = useFollowLatest([chat.turns, remembered], chat.turns.length > 0 || remembered.length > 0)
 
   useEffect(() => writeStored(DRAFT_KEY, draft), [draft])
   useEffect(() => writeStored(TIER_KEY, tier), [tier])
   useEffect(() => writeStored(AGENT_KEY, agentKey === DESK_ASSISTANT ? '' : agentKey), [agentKey])
   // A link to /ai/assistant?agent=… picks that agent, here or arriving.
   const linked = params.get('agent')
+  const pickAgent = session.pick
   useEffect(() => {
-    if (linked) dispatch({ type: 'pick', agent: linked })
+    if (linked) pickAgent(linked)
+    // Only a new link picks: the session's pick is a new function each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linked])
-  // Leaving the page stops the answer, which cancels the call on the server, and any recording still being written down.
-  useEffect(
-    () => () => {
-      abortRef.current?.abort()
-      hearAbort.current?.abort()
-    },
-    [],
-  )
-  useEffect(() => writeSpeakReplies(speakOn), [speakOn])
 
-  // Keep the newest words in view while the reader is at the bottom; leave them be once they scroll up to read.
-  useEffect(() => {
-    const onScroll = () => {
-      follow.current = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 140
-    }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
-  useLayoutEffect(() => {
-    if (follow.current && (chat.turns.length > 0 || remembered.length > 0)) endRef.current?.scrollIntoView({ block: 'end' })
-  }, [chat.turns, remembered])
-
-  const tiers = overview.data?.tiers
-  const agent = agents.data?.agents.find((a) => a.key === agentKey)
+  const agent = agentInfo(agentKey)
   const agentName = meta.label
-  const keyMissing = overview.data?.provider.keyConfigured === false
   const switchedOff = agent?.status === 'off'
-  // An API from before the other agents could be talked with answers them with their scheduled task's JSON.
   const notOnThisApi = agent != null && !agent.chat
-  const blocked = keyMissing || switchedOff || notOnThisApi
-  // The agent's own tier asks with no tier at all, so the API walks the agent's own chain: a chain the owner
-  // gave the agent on the Agents tab is the one its tier choice uses. The other choices ask that tier's chain.
+  const blocked = blockedFor(agentKey)
   const ownTier = agent?.tier ?? null
   const chainFor = (key: AskTier) =>
     key === ownTier && agent ? agent.chain : (tiers?.find((t) => t.key === key)?.chain ?? [])
@@ -633,49 +553,6 @@ export function AiAssistantPage() {
   }, [])
 
   /**
-   * Asks `question` (typed, or a recording's transcript with `heard`) and
-   * streams the answer; false when it cannot be asked now (another answer is
-   * streaming, or the agent is blocked).
-   */
-  const ask = (question: string, heard: HeardMark | null = null): boolean => {
-    if (!question || busy != null || blocked) return false
-    void run(question, heard)
-    return true
-  }
-
-  const run = async (question: string, heard: HeardMark | null) => {
-    // The answer belongs to the agent asked, wherever the page is when it arrives.
-    const asking = agentKey
-    const send = (action: ChatAction) => dispatch({ type: 'chat', agent: asking, action })
-    const id = `t-${Date.now().toString(36)}-${chat.turns.length}`
-    const messages = historyFor(chat.turns, question)
-    follow.current = true
-    // A new question stops the last answer's voice; this one is read aloud when it finishes, if Speak replies is on then.
-    replies.stop()
-    speakNext.current = id
-    send({ type: 'ask', id, question, tier, now: Date.now(), heard })
-    if (!heard) setDraft('')
-    const controller = new AbortController()
-    abortRef.current = controller
-    try {
-      await streamAsk(
-        { messages, tier: tier === ownTier ? null : tier, conversationId: chat.conversationId, agent: asking },
-        (event) => send({ type: 'event', id, event }),
-        controller.signal,
-      )
-      send({ type: 'closed', id })
-    } catch (error) {
-      if (isAbort(error)) send({ type: 'stopped', id })
-      else if (error instanceof AskRefusal) send({ type: 'refused', id, message: error.message, status: error.status, callId: error.callId })
-      else send({ type: 'refused', id, message: askFailureText(error), status: null })
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null
-      // The call is in the log and the day's numbers now.
-      void qc.invalidateQueries({ queryKey: ['ai'] })
-    }
-  }
-
-  /**
    * "/remember …" is saved as a note for the agent being talked with, not
    * asked. A note with nothing in it, or too long, stays in the box with the
    * reason under it; one the API refuses comes back to the box (unless
@@ -684,13 +561,13 @@ export function AiAssistantPage() {
   const remember = (text: string) => {
     const problem = text === '' ? 'Write the note after /remember, for example: /remember quote P&L net of charges.' : memoryTextProblem(text)
     if (problem) {
-      setComposerNote(problem)
+      session.setNote(problem)
       return
     }
     const key = `n-${Date.now().toString(36)}-${remembered.length}`
     const typed = draft
     const forAgent = agentKey
-    follow.current = true
+    follow()
     setRemembered((lines) => [...lines, { key, agent: forAgent, at: chat.turns.length, text, state: 'saving', id: null, error: null }])
     setDraft('')
     // mutateAsync, not mutate: each note needs its own answer, even when two are in flight.
@@ -711,128 +588,19 @@ export function AiAssistantPage() {
     }
     const note = parseRemember(draft)
     if (note != null) remember(note)
-    else if (ask(draft.trim())) replies.unlock()
+    else if (session.ask(draft.trim())) replies.unlock()
   }
 
-  // The newest render's ask, for a transcript that arrives after the page has moved on.
-  const askNow = useRef(ask)
-  useEffect(() => {
-    askNow.current = ask
-  })
-
-  /**
-   * A recording, written down and asked as typed. A voice question never runs
-   * a command: "/remember …" heard is asked, not saved. When it cannot be
-   * asked now, the transcript waits in the box.
-   */
-  const hear = async (wav: ArrayBuffer) => {
-    const controller = new AbortController()
-    hearAbort.current = controller
-    setHearing(true)
-    setComposerNote(null)
-    try {
-      const heard = await transcribe(wav, chat.conversationId, controller.signal)
-      const text = heard.text.trim()
-      if (!text) setComposerNote('Nothing was heard in that recording. Try again a little closer to the mic, or type the question.')
-      else if (!askNow.current(text, { callId: heard.callId, seconds: heard.seconds })) {
-        setDraft((d) => (d.trim() ? d : text))
-        setComposerNote('Heard, but it cannot be asked yet: the words are in the box. Ask when the answer above finishes.')
-      }
-    } catch (error) {
-      if (!isAbort(error)) setComposerNote(voiceFailureText('hear', error))
-    } finally {
-      if (hearAbort.current === controller) hearAbort.current = null
-      setHearing(false)
-    }
-  }
-
-  const recorder = useVoiceRecorder(
-    (wav) => void hear(wav),
-    (problem) => setComposerNote(problem),
-  )
-  const recording = recorder.state !== 'idle'
-
-  // Hands-free: quiet while Ira speaks (it must not hear itself), while an answer comes, while the mic is in use,
-  // and while there is nobody to ask.
-  const voice = useAiVoice()
-  const voiceName = voice.data?.name ?? 'Ira'
-  const handsFreeHold: HandsFreeHold | null =
-    replies.state === 'fetching' || replies.state === 'playing'
-      ? 'speaking'
-      : busy != null
-        ? 'answering'
-        : recording || hearing
-          ? 'recording'
-          : blocked
-            ? 'blocked'
-            : null
-  const handsFree = useHandsFree({
-    info: voice.data ?? null,
-    hold: handsFreeHold,
-    conversationId: chat.conversationId,
-    // A question said to the assistant is asked as the mic's are; when it cannot be asked now, it waits in the box.
-    onQuestion: (question, mark) => {
-      if (askNow.current(question, mark)) return
-      setDraft((d) => (d.trim() ? d : question))
-      setComposerNote('Heard, but it cannot be asked yet: the words are in the box. Ask when the answer above finishes.')
-    },
-  })
-  // Why hands-free cannot be turned on here, for its title; null when it can.
-  const handsFreeWhy = voice.isError
-    ? 'Hands-free needs the latest API build: restart the API to pick up the code'
-    : !voice.data
-      ? "Checking the desk's voice…"
-      : !voice.data.enabled
-        ? 'Voice is switched off on this desk (Ai:Voice:Enabled)'
-        : voice.data.handsFreePerMinute <= 0
-          ? 'Hands-free is switched off on this desk (Ai:Voice:HandsFreePerMinute is 0)'
-          : null
-
-  // The press that starts a recording: whatever is being read aloud stops (the mic would hear it), and the press
-  // itself unlocks playback for the answer, where a browser wants a gesture first.
-  const onMicPress = () => {
-    replies.stop()
-    replies.unlock()
-    setComposerNote(null)
-  }
-
-  // The newest answer is read aloud once it has finished, when Speak replies is on.
-  const say = replies.say
-  useEffect(() => {
-    const id = speakNext.current
-    if (!id) return
-    for (const c of Object.values(state.chats)) {
-      const t = c.turns.find((x) => x.id === id)
-      if (!t) continue
-      if (t.status === 'streaming') return
-      speakNext.current = null
-      if (t.status === 'done' && t.answer.trim() && speakOn) say(t.answer, t.callId)
-      return
-    }
-  }, [state, speakOn, say])
-
-  const toggleSpeak = (on: boolean) => {
-    setSpeakOn(on)
-    if (on) {
-      replies.allow()
-      replies.unlock()
-    } else replies.stop()
-  }
-
-  const stop = () => abortRef.current?.abort()
-
+  const voiceName = session.voiceName
   const startOver = () => {
-    if (streaming) abortRef.current?.abort()
-    dispatch({ type: 'chat', agent: agentKey, action: { type: 'reset', conversationId: newConversationId() } })
+    session.startOver()
     setRemembered((lines) => lines.filter((l) => l.agent !== agentKey))
-    setComposerNote(null)
     inputRef.current?.focus()
   }
 
   const pick = (key: string) => {
-    dispatch({ type: 'pick', agent: key })
-    setComposerNote(null)
-    follow.current = true
+    session.pick(key)
+    follow()
   }
 
   const onSubmit = (e: FormEvent) => {
@@ -849,14 +617,6 @@ export function AiAssistantPage() {
 
   const questions = chat.turns.length
   const isNote = parseRemember(draft) != null
-  // Why the mic cannot start now, in words for its title; null when it can.
-  const micBlocked = blocked
-    ? `The ${agentName} cannot be asked right now (see above)`
-    : busy != null
-      ? 'One question at a time: the mic is back when the answer finishes'
-      : hearing
-        ? 'Writing the last recording down…'
-        : null
   // This agent's notes sent after the first `k` turns, in the order they were sent.
   const notesAt = (k: number) =>
     remembered.filter((l) => l.agent === agentKey && l.at === k).map((l) => <RememberNote key={l.key} line={l} agentName={agentName} />)
@@ -1033,19 +793,19 @@ export function AiAssistantPage() {
           maxLength={20_000}
           onChange={(e) => {
             setDraft(e.target.value)
-            setComposerNote(null)
+            session.setNote(null)
           }}
           onKeyDown={onKeyDown}
         />
-        <RecordingStrip recorder={recorder} hearing={hearing} onStopHearing={() => hearAbort.current?.abort()} keyboard={finePointer} />
+        <RecordingStrip recorder={recorder} hearing={hearing} onStopHearing={session.stopHearing} keyboard={finePointer} />
         <HandsFreeStrip handsFree={handsFree} name={voiceName} />
-        {composerNote && (
+        {session.note && (
           <p className="small-note warn ai-flush" role="alert">
-            {composerNote}
+            {session.note}
           </p>
         )}
         <PlaybackBar replies={replies} />
-        {busyElsewhere && !isNote && (
+        {busyElsewhere && busy && !isNote && (
           <p className="small-note ai-flush" role="status">
             The {chatAgentMeta(busy).label} is still answering: one question at a time.{' '}
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => pick(busy)}>
@@ -1077,20 +837,20 @@ export function AiAssistantPage() {
             {finePointer ? 'Enter to ask · Shift+Enter for a new line · /remember … saves a note' : 'The button asks; Enter is a new line'}
           </span>
           <div className="ai-composer__send">
-            <SpeakToggle on={speakOn} onChange={toggleSpeak} />
+            <SpeakToggle on={session.speakOn} onChange={session.setSpeak} />
             <HandsFreeToggle
               handsFree={handsFree}
               name={voiceName}
-              why={handsFreeWhy}
+              why={session.handsFreeWhy}
               onTurnOn={() => {
                 // The click is the gesture a spoken reply may need later, when nothing else is pressed.
                 replies.unlock()
-                setComposerNote(null)
+                session.setNote(null)
               }}
             />
-            <MicButton recorder={recorder} disabled={micBlocked != null} why={micBlocked} onStart={onMicPress} />
+            <MicButton recorder={recorder} disabled={session.micBlocked != null} why={session.micBlocked} onStart={session.onMicPress} />
             {streaming && !recording && (
-              <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={stop}>
+              <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={session.stop}>
                 <IconStop /> Stop
               </button>
             )}
@@ -1119,8 +879,9 @@ export function AiAssistantPage() {
       </form>
       <div ref={endRef} className="ai-end" aria-hidden="true" />
       </div>
-      <aside className="ai-assistant__side" aria-label="Telegram, Action PIN and docs search">
+      <aside className="ai-assistant__side" aria-label="Telegram, phones, Action PIN and docs search">
         <TelegramCard />
+        <PhonesCard />
         <ActionPinCard />
         <DocsSearchCard />
       </aside>
