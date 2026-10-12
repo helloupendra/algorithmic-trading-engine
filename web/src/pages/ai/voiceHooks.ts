@@ -24,7 +24,7 @@ import {
   voiceFailureText,
   writeHandsFree,
 } from '../../lib/voice'
-import type { VoiceInfo } from '../../lib/voice'
+import type { HandsFreeHold, VoiceInfo } from '../../lib/voice'
 import { isAbort } from '../../lib/ai'
 import type { HeardMark } from '../../lib/ai'
 import { api } from '../../lib/api'
@@ -333,8 +333,7 @@ export function useAiVoice() {
   })
 }
 
-/** Why the page wants hands-free quiet for now: Ira speaking, an answer coming, the mic in use, or nobody to ask. */
-export type HandsFreeHold = 'speaking' | 'answering' | 'recording' | 'blocked'
+export type { HandsFreeHold } from '../../lib/voice'
 
 /** Why hands-free is not listening: the page's hold, a hidden tab, too much speech, or the moment after a hold. */
 export type HandsFreePause = HandsFreeHold | 'hidden' | 'cap' | 'resuming'

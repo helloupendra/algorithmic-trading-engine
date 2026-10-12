@@ -6,7 +6,7 @@
  * same way.
  */
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -32,6 +32,49 @@ import {
 import { ACTION_TOOLS } from '../../lib/aiActions'
 import type { AiModel, AiModelHealth, AiProvider, AiToolStep, FeedbackScore } from '../../lib/ai'
 import { Badge } from '../../components/ui'
+
+/**
+ * Copies `text`: an answer, a phone token, the Shortcut's address. Falls back
+ * to a hidden selection where the clipboard API is not allowed (plain http).
+ */
+export function CopyButton({
+  text,
+  label = 'Copy',
+  className = 'btn btn--ghost btn--sm ai-copy',
+}: {
+  text: string
+  label?: string
+  className?: string
+}) {
+  const [said, setSaid] = useState<string | null>(null)
+  useEffect(() => {
+    if (!said) return
+    const id = window.setTimeout(() => setSaid(null), 1600)
+    return () => window.clearTimeout(id)
+  }, [said])
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setSaid('Copied')
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      area.remove()
+      setSaid(ok ? 'Copied' : 'Copy failed')
+    }
+  }
+  return (
+    <button type="button" className={className} onClick={() => void copy()}>
+      {said ?? label}
+    </button>
+  )
+}
 
 /** "Nemotron 3 Ultra" with its full id beside it (or in its title when `bare`). */
 export function ModelLabel({ id, bare }: { id: string | null | undefined; bare?: boolean }) {

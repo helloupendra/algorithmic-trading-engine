@@ -101,8 +101,8 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
 /** Routes that are neither old nor a workspace tab's: the public pages and the fallbacks. */
 export const ROUTES_THAT_STAY: readonly string[] = ['/', '/login', '/invite/:token', '/forbidden', '*']
 
-/** New homes outside every workspace tab. */
-export const HOMES_OUTSIDE_WORKSPACES: readonly string[] = ['/account', '/notebook/:id']
+/** New homes outside every workspace tab: the trader's account, a whiteboard, and Ira, the phone app (its own gate admits admins only). */
+export const HOMES_OUTSIDE_WORKSPACES: readonly string[] = ['/account', '/notebook/:id', '/ira']
 
 /**
  * Where an old URL goes: the target with `:params` filled from the old path

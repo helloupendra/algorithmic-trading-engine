@@ -19,50 +19,69 @@
  * without a press and asks whatever starts with the assistant's name
  * ("Ira, …"); the API decides whether it did (voiceHooks useHandsFree). A
  * line in the composer says it is listening, with a level, or why it paused.
+ *
+ * The phone app (/ira) draws the same controls bigger: its own class names,
+ * and `tapSends` on the mic, so a tap starts a take and the next tap asks it
+ * (a phone has no Esc, and a Send button would sit away from the thumb).
  */
 
 import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { IconHandsFree, IconMic, IconSpeaker, IconStop } from '../../components/icons'
 import { HOLD_MS, VOICE_MAX_SECONDS, clockText } from '../../lib/voice'
 import type { HandsFree, HandsFreePause, SpokenReplies, VoiceRecorder } from './voiceHooks'
 
 /**
  * The mic beside Ask. A press that is held is push-to-talk: letting go sends.
- * A click starts a take that runs until Send; a second click cancels it. The
- * keyboard gets the click behaviour (Enter or Space), and Esc cancels.
+ * A click starts a take that runs until Send; a second click cancels it (or,
+ * with `tapSends`, asks it). The keyboard gets the click behaviour (Enter or
+ * Space), and Esc cancels.
  */
 export function MicButton({
   recorder,
   disabled,
   why,
   onStart,
+  className = 'btn btn--sm ai-mic',
+  tapSends = false,
+  children,
 }: {
   recorder: VoiceRecorder
   disabled: boolean
   why: string | null
   /** Called inside the press that starts a recording, before it starts. */
   onStart: () => void
+  /** Replaces the console's small button classes (the phone app's big round mic). */
+  className?: string
+  /** A tap on the mic while a clicked take records asks it, rather than cancelling it. */
+  tapSends?: boolean
+  /** Replaces the mic icon. */
+  children?: ReactNode
 }) {
-  const press = useRef<{ at: number; cancels: boolean } | null>(null)
+  const press = useRef<{ at: number; ends: boolean } | null>(null)
   const on = recorder.state !== 'idle'
   const begin = (held: boolean) => {
     onStart()
     recorder.start(held)
+  }
+  // A second press ends the take: asked when something was recorded and the mic asks on a tap; otherwise dropped.
+  const end = () => {
+    if (tapSends && recorder.state === 'recording') recorder.send()
+    else recorder.cancel()
   }
 
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0 || (disabled && !on)) return
     e.preventDefault()
     e.currentTarget.setPointerCapture?.(e.pointerId)
-    press.current = { at: performance.now(), cancels: on }
+    press.current = { at: performance.now(), ends: on }
     if (!on) begin(true)
   }
   const onPointerUp = () => {
     const p = press.current
     press.current = null
     if (!p) return
-    if (p.cancels) recorder.cancel()
+    if (p.ends) end()
     else if (performance.now() - p.at >= HOLD_MS && recorder.heldLongEnough()) recorder.send()
     // A quick press, or a hold the mic was still starting through: it carries on until Send, the mic again, or Esc.
     else recorder.release()
@@ -70,7 +89,7 @@ export function MicButton({
   const onClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
     // Pointer presses are handled above; this is Enter or Space (or a screen reader's click).
     if (e.detail !== 0) return
-    if (on) recorder.cancel()
+    if (on) end()
     else if (!disabled) begin(false)
   }
   const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -81,13 +100,15 @@ export function MicButton({
   }
 
   const title = on
-    ? 'Recording: Send asks it; click the mic again or press Esc to cancel'
+    ? tapSends
+      ? 'Recording: tap to ask it, or let go if you are holding it'
+      : 'Recording: Send asks it; click the mic again or press Esc to cancel'
     : (why ?? 'Ask by voice: hold to talk, or click to start recording')
   return (
     <button
       type="button"
-      className="btn btn--sm ai-mic"
-      aria-label="Ask by voice"
+      className={className}
+      aria-label={on && tapSends ? 'Ask what was recorded' : 'Ask by voice'}
       aria-pressed={on}
       title={title}
       disabled={disabled && !on}
@@ -98,7 +119,7 @@ export function MicButton({
       onClick={onClick}
       onKeyDown={onKeyDown}
     >
-      <IconMic />
+      {children ?? <IconMic />}
     </button>
   )
 }
@@ -109,12 +130,15 @@ export function RecordingStrip({
   hearing,
   onStopHearing,
   keyboard,
+  tapSends = false,
 }: {
   recorder: VoiceRecorder
   hearing: boolean
   onStopHearing: () => void
   /** A keyboard is likely (a fine pointer): Esc is worth naming. */
   keyboard: boolean
+  /** The mic asks a clicked take on its next tap (the phone app). */
+  tapSends?: boolean
 }) {
   if (hearing) {
     return (
@@ -146,18 +170,28 @@ export function RecordingStrip({
       <span className="ai-rec__hint faint">
         {recorder.held
           ? `Let go to ask${keyboard ? ' · Esc cancels' : ''}`
-          : `Send asks it · ${keyboard ? 'Esc or the mic cancels' : 'the mic again cancels'}`}
+          : tapSends
+            ? 'Tap the mic to ask it'
+            : `Send asks it · ${keyboard ? 'Esc or the mic cancels' : 'the mic again cancels'}`}
       </span>
     </div>
   )
 }
 
 /** "Speak replies": the viewer's own choice, off by default. */
-export function SpeakToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+export function SpeakToggle({
+  on,
+  onChange,
+  className = 'btn btn--ghost btn--sm ai-speak',
+}: {
+  on: boolean
+  onChange: (on: boolean) => void
+  className?: string
+}) {
   return (
     <button
       type="button"
-      className="btn btn--ghost btn--sm ai-speak"
+      className={className}
       aria-pressed={on}
       aria-label="Speak replies"
       title={on ? 'Answers are read aloud when they finish (in this browser). Click to stop.' : 'Read answers aloud when they finish (in this browser)'}
@@ -180,19 +214,21 @@ export function HandsFreeToggle({
   name,
   why,
   onTurnOn,
+  className = 'btn btn--ghost btn--sm ai-hands',
 }: {
   handsFree: HandsFree
   name: string
   why: string | null
   /** Called inside the click that turns it on: a gesture, for playback later. */
   onTurnOn: () => void
+  className?: string
 }) {
   const on = handsFree.on && handsFree.available
   const title = why ?? (on ? `Listening for "${name}" (in this browser). Click to stop and let go of the microphone.` : `Listen for "${name}, …" without pressing anything (in this browser)`)
   return (
     <button
       type="button"
-      className="btn btn--ghost btn--sm ai-hands"
+      className={className}
       aria-pressed={on}
       aria-label="Hands-free"
       title={title}

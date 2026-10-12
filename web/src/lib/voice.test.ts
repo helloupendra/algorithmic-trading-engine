@@ -6,7 +6,10 @@ import {
   VoiceRefusal,
   checkWake,
   clockText,
+  handsFreeHoldFor,
+  handsFreeUnavailableText,
   handsFreeWait,
+  micBlockedText,
   micErrorText,
   readHandsFree,
   readSpeakReplies,
@@ -303,5 +306,38 @@ describe('hands-free: the voice and the budget', () => {
     }
     expect(readHandsFree(broken)).toBe(false)
     expect(() => writeHandsFree(true, broken)).not.toThrow()
+  })
+})
+
+// The conversation engine both the Assistant page and the Ira app share (pages/ai/useAssistantSession) decides with these.
+describe('the shared session’s rules', () => {
+  const quiet = { playback: 'idle' as const, answering: false, recording: false, blocked: false }
+
+  it('holds hands-free while Ira speaks, an answer comes, the mic is in use, or nobody can be asked; most pressing first', () => {
+    expect(handsFreeHoldFor(quiet)).toBeNull()
+    expect(handsFreeHoldFor({ ...quiet, playback: 'fetching' })).toBe('speaking')
+    expect(handsFreeHoldFor({ ...quiet, playback: 'playing', answering: true })).toBe('speaking')
+    expect(handsFreeHoldFor({ ...quiet, answering: true, recording: true })).toBe('answering')
+    expect(handsFreeHoldFor({ ...quiet, recording: true, blocked: true })).toBe('recording')
+    expect(handsFreeHoldFor({ ...quiet, blocked: true })).toBe('blocked')
+    // A reply the browser held back is not being spoken: it may listen.
+    expect(handsFreeHoldFor({ ...quiet, playback: 'blocked' })).toBeNull()
+  })
+
+  it('says why the mic cannot start', () => {
+    const free = { blocked: false, answering: false, hearing: false, agentName: 'Desk Assistant' }
+    expect(micBlockedText(free)).toBeNull()
+    expect(micBlockedText({ ...free, blocked: true, answering: true })).toBe('The Desk Assistant cannot be asked right now (see above)')
+    expect(micBlockedText({ ...free, answering: true })).toBe('One question at a time: the mic is back when the answer finishes')
+    expect(micBlockedText({ ...free, hearing: true })).toBe('Writing the last recording down…')
+  })
+
+  it('says why hands-free cannot be turned on', () => {
+    const info = { name: 'Ira', enabled: true, speakReplies: true, handsFreePerMinute: 6 }
+    expect(handsFreeUnavailableText({ failed: false, info })).toBeNull()
+    expect(handsFreeUnavailableText({ failed: true, info: null })).toContain('latest API build')
+    expect(handsFreeUnavailableText({ failed: false, info: null })).toBe("Checking the desk's voice…")
+    expect(handsFreeUnavailableText({ failed: false, info: { ...info, enabled: false } })).toContain('Ai:Voice:Enabled')
+    expect(handsFreeUnavailableText({ failed: false, info: { ...info, handsFreePerMinute: 0 } })).toContain('HandsFreePerMinute is 0')
   })
 })

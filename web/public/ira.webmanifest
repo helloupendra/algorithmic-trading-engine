@@ -1,0 +1,33 @@
+{
+  "id": "/ira",
+  "name": "Ira",
+  "short_name": "Ira",
+  "description": "Ask the OpenFNO desk by voice: hold the mic, or say \"Ira, …\".",
+  "start_url": "/ira",
+  "scope": "/ira",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070b11",
+  "theme_color": "#070b11",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/brand/ira-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/ira-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/ira-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

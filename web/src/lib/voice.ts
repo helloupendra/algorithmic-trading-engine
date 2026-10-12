@@ -218,6 +218,45 @@ export function handsFreeWait(sentAt: readonly number[], now: number, perMinute:
   return recent[recent.length - perMinute] + HANDS_FREE_WINDOW_MS - now
 }
 
+/** Why the page wants hands-free quiet for now: Ira speaking, an answer coming, the mic in use, or nobody to ask. */
+export type HandsFreeHold = 'speaking' | 'answering' | 'recording' | 'blocked'
+
+/**
+ * The hold a conversation puts on hands-free, in order of what matters most: Ira
+ * speaking (it must not hear itself), an answer streaming (in any agent's
+ * conversation), the mic button in use or its recording being written down,
+ * and an agent that cannot be asked. Null: it may listen.
+ */
+export function handsFreeHoldFor(s: {
+  playback: 'idle' | 'fetching' | 'playing' | 'blocked'
+  answering: boolean
+  recording: boolean
+  blocked: boolean
+}): HandsFreeHold | null {
+  if (s.playback === 'fetching' || s.playback === 'playing') return 'speaking'
+  if (s.answering) return 'answering'
+  if (s.recording) return 'recording'
+  if (s.blocked) return 'blocked'
+  return null
+}
+
+/** Why the mic cannot start now, in words for its title; null when it can. */
+export function micBlockedText(s: { blocked: boolean; answering: boolean; hearing: boolean; agentName: string }): string | null {
+  if (s.blocked) return `The ${s.agentName} cannot be asked right now (see above)`
+  if (s.answering) return 'One question at a time: the mic is back when the answer finishes'
+  if (s.hearing) return 'Writing the last recording down…'
+  return null
+}
+
+/** Why hands-free cannot be turned on here, for its title; null when it can. */
+export function handsFreeUnavailableText(voice: { failed: boolean; info: VoiceInfo | null }): string | null {
+  if (voice.failed) return 'Hands-free needs the latest API build: restart the API to pick up the code'
+  if (!voice.info) return "Checking the desk's voice…"
+  if (!voice.info.enabled) return 'Voice is switched off on this desk (Ai:Voice:Enabled)'
+  if (voice.info.handsFreePerMinute <= 0) return 'Hands-free is switched off on this desk (Ai:Voice:HandsFreePerMinute is 0)'
+  return null
+}
+
 /** A refusal that hands-free cannot listen past: signed out, not allowed, not on this API, or voice switched off. */
 export function stopsHandsFree(error: unknown): boolean {
   return (error instanceof VoiceRefusal || error instanceof ApiError) && [401, 403, 404, 503].includes(error.status)

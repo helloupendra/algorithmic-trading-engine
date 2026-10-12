@@ -56,6 +56,7 @@ import { AiAgentsPage } from './pages/ai/AiAgentsPage'
 import { AiReportsPage } from './pages/ai/AiReportsPage'
 import { AiModelsPage } from './pages/ai/AiModelsPage'
 import { AiCallsPage } from './pages/ai/AiCallsPage'
+import { IraPage } from './pages/ira/IraPage'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -96,6 +97,10 @@ export default function App() {
             {Object.keys(ROUTE_MOVES).map((from) => (
               <Route key={from} path={from} element={<MovedTo />} />
             ))}
+
+            {/* Ira, the phone app: full screen, outside the console's chrome, installable. Its own gate sends a
+                signed-out visitor to /login and back (an iPhone's home-screen app has storage of its own). */}
+            <Route path="/ira" element={<IraPage />} />
 
             <Route element={<RequireAuth />}>
               {/* Full-window pages: no top bar. A whiteboard inside the console
