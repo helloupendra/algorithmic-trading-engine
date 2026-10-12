@@ -39,5 +39,10 @@ public class OptionChainSnapshotConfiguration : IEntityTypeConfiguration<OptionC
         builder.HasIndex(x => new { x.Symbol, x.CapturedUtc })
             .IsUnique()
             .HasDatabaseName("ux_chain_symbol_time");
+
+        // The newest capture of all, which the poller's status reads every 15 s on two console pages. Without it that
+        // read scanned all 29 million rows (40 s each) and kept the 2-CPU server overloaded (12 Oct 2026).
+        builder.HasIndex(x => x.CapturedUtc)
+            .HasDatabaseName("ix_chain_captured_utc");
     }
 }

@@ -3426,6 +3426,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CapturedUtc")
+                        .HasDatabaseName("ix_chain_captured_utc");
+
                     b.HasIndex("Symbol", "CapturedUtc")
                         .IsUnique()
                         .HasDatabaseName("ux_chain_symbol_time");
