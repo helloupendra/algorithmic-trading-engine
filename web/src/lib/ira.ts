@@ -18,6 +18,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
+import { readCloseItems } from './aiActions'
 import type { ProposedAction } from './aiActions'
 
 // ---------- the route's gate ----------------------------------------------------
@@ -296,6 +297,8 @@ export function readPhoneActions(raw: unknown): ProposedAction[] {
       kind: typeof o.kind === 'string' ? o.kind : '',
       summary: o.summary as string,
       expiresUtc: typeof o.expiresUtc === 'string' ? o.expiresUtc : null,
+      // An account close's full list when the API sends it; the summary already names the first few.
+      items: readCloseItems(o.items),
     }))
 }
 
