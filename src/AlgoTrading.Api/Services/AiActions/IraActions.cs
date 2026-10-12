@@ -77,17 +77,21 @@ public enum IraPinChange
 /// </para>
 /// <para>
 /// Every outcome (executed, failed, cancelled, expired, a wrong PIN, a lock) is a row of the desk's activity log with
-/// the actor "<c>owner via Ira</c>". The PIN is never stored or logged: only its salted hash, in
-/// <c>system_settings</c> under <c>ai.actions.pin.&lt;user id&gt;</c>.
+/// the actor "<c>owner via Ira</c>"; an account close adds a row for each run and position it closed, skipped or could
+/// not close. The PIN is never stored or logged: only its salted hash, in <c>system_settings</c> under
+/// <c>ai.actions.pin.&lt;user id&gt;</c>.
 /// </para>
 /// </remarks>
+/// <param name="scopes">Gives each item of an account close its own scope, so its stops run at the same time
+/// (<see cref="IraAccountCloser"/>); without it they run one after another.</param>
 public sealed class IraActions(
     TradingDbContext db,
     IIraActionHands hands,
     IraPinGuard guard,
     IOptionsMonitor<AiSettings> settings,
     ILogger<IraActions> logger,
-    TimeProvider? time = null)
+    TimeProvider? time = null,
+    IServiceScopeFactory? scopes = null)
 {
     /// <summary>Where an owner's PIN hash is kept, by console user id.</summary>
     public const string PinKeyPrefix = "ai.actions.pin.";
@@ -383,16 +387,27 @@ public sealed class IraActions(
     private async Task<IraConfirmResult> ExecuteAsync(AiAction action, IraOwner owner)
     {
         IraOutcome outcome;
+        IraCloseAccount? closed = null;
+        IReadOnlyList<IraCloseItem> items = [];
         try
         {
-            outcome = action.Kind switch
+            if (action.Kind == AiActionKind.CloseAccount)
             {
-                AiActionKind.StopRun => await hands.StopRunAsync(owner, Read<IraStopRun>(action), CancellationToken.None),
-                AiActionKind.StartRun => await hands.StartRunAsync(owner, Read<IraStartRun>(action), CancellationToken.None),
-                AiActionKind.SquareOff => await hands.SquareOffAsync(owner, Read<IraSquareOff>(action), CancellationToken.None),
-                AiActionKind.AgentSwitch => await hands.SwitchAgentAsync(owner, Read<IraAgentSwitch>(action), CancellationToken.None),
-                _ => IraOutcome.Refused($"{action.Kind} is not an action this desk knows"),
-            };
+                closed = Read<IraCloseAccount>(action);
+                var result = await new IraAccountCloser(db, hands, scopes, logger, _time).CloseAsync(owner, closed);
+                (outcome, items) = (result.Outcome, result.Items);
+            }
+            else
+            {
+                outcome = action.Kind switch
+                {
+                    AiActionKind.StopRun => await hands.StopRunAsync(owner, Read<IraStopRun>(action), CancellationToken.None),
+                    AiActionKind.StartRun => await hands.StartRunAsync(owner, Read<IraStartRun>(action), CancellationToken.None),
+                    AiActionKind.SquareOff => await hands.SquareOffAsync(owner, Read<IraSquareOff>(action), CancellationToken.None),
+                    AiActionKind.AgentSwitch => await hands.SwitchAgentAsync(owner, Read<IraAgentSwitch>(action), CancellationToken.None),
+                    _ => IraOutcome.Refused($"{action.Kind} is not an action this desk knows"),
+                };
+            }
         }
         catch (Exception ex)
         {
@@ -408,8 +423,12 @@ public sealed class IraActions(
         row.ExecutedUtc = now;
         row.ResultJson = JsonSerializer.Serialize(new { message = outcome.Message, result = outcome.Result }, IraActionResolver.Json);
         row.Error = outcome.Done ? string.Empty : Cut(outcome.Message, 1000);
-        Audit(row, outcome.Done ? "executed" : "failed", outcome.Done ? 200 : 409, outcome.Done,
-            $"{(outcome.Done ? "Executed" : "Not done")} via Ira ({row.Channel}): {row.Summary} {outcome.Message}");
+        foreach (var item in items) AuditItem(row, closed!.Account, item);
+        // An account close's summary lists what it closed and each item has its row, so its own row keeps the reply whole;
+        // the reply says itself whether it was done, partly done or not done.
+        Audit(row, outcome.Done ? "executed" : "failed", outcome.Done ? 200 : 409, outcome.Done, closed is null
+            ? $"{(outcome.Done ? "Executed" : "Not done")} via Ira ({row.Channel}): {row.Summary} {outcome.Message}"
+            : $"Close everything in {closed.Account}'s account via Ira ({row.Channel}). {outcome.Message}");
         await db.SaveChangesAsync(CancellationToken.None);
         logger.LogInformation("Ira actions: #{Id} ({Kind}) for {User}: {Message}", row.Id, row.Kind, owner.UserName, outcome.Message);
         return new IraConfirmResult(outcome.Done ? IraConfirmKind.Executed : IraConfirmKind.Failed, outcome.Message, row);
@@ -472,6 +491,33 @@ public sealed class IraActions(
         });
     }
 
+    /// <summary>
+    /// One activity-log row for one item of an account close: the run or position, and how it ended
+    /// (<c>ira-close-account-run-done</c>, <c>…-position-already-closed</c>, <c>…-run-failed</c>). The whole action's
+    /// own row follows them.
+    /// </summary>
+    private void AuditItem(AiAction action, string account, IraCloseItem item)
+    {
+        string state = IraAccountCloser.StateWord(item.State);
+        db.ActivityLog.Add(new ActivityLogEntry
+        {
+            OccurredUtc = _time.GetUtcNow().UtcDateTime,
+            UserId = action.UserId,
+            UserName = Cut(IraActionText.Actor(action.UserName), 100),
+            Role = UserRoles.Admin,
+            Module = "strategies",
+            Action = $"ira-close-account-{item.Type}-{state}",
+            Method = "IRA",
+            Path = $"ira/actions/{action.Id}/{item.Type}/{item.Id.ToString(CultureInfo.InvariantCulture)}",
+            StatusCode = item.State switch { IraCloseState.Done => 200, IraCloseState.AlreadyClosed => 410, _ => 409 },
+            DurationMs = 0,
+            Succeeded = item.State == IraCloseState.Done,
+            TargetType = item.Type,
+            TargetId = item.Id.ToString(CultureInfo.InvariantCulture),
+            Summary = Cut(IraActionText.CloseItemLine(action, account, item), 500),
+        });
+    }
+
     private async Task AuditAsync(IraOwner owner, AiAction? action, string what, string outcome, int status, bool succeeded, string summary, CancellationToken cancellationToken)
     {
         db.ActivityLog.Add(new ActivityLogEntry
@@ -496,10 +542,11 @@ public sealed class IraActions(
     {
         AiActionKind.StopRun or AiActionKind.StartRun => "run",
         AiActionKind.SquareOff => "position",
+        AiActionKind.CloseAccount => "account",
         _ => "agent",
     };
 
-    /// <summary>What the action acted on: the run, the book, the agent; the run a start made once it ran.</summary>
+    /// <summary>What the action acted on: the run, the book, the account, the agent; the run a start made once it ran.</summary>
     private static string? TargetId(AiAction action)
     {
         try
@@ -510,6 +557,7 @@ public sealed class IraActions(
             {
                 AiActionKind.StopRun when root.TryGetProperty("runId", out var r) => r.ToString(),
                 AiActionKind.SquareOff when root.TryGetProperty("bookRunId", out var b) => b.ToString(),
+                AiActionKind.CloseAccount when root.TryGetProperty("accountUserId", out var u) => u.ToString(),
                 AiActionKind.AgentSwitch when root.TryGetProperty("agent", out var a) => a.GetString(),
                 AiActionKind.StartRun => StartedRun(action.ResultJson),
                 _ => null,

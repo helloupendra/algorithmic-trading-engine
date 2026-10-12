@@ -55,8 +55,8 @@ public sealed class RunPnl
         public decimal Net => Realized + Unrealized - Charges;
     }
 
-    /// <summary>One open leg, as much of it as marking needs.</summary>
-    public sealed record OpenLeg(long RunId, string Symbol, string Direction, int Quantity, decimal AveragePrice, decimal StoredUnrealized);
+    /// <summary>One open leg, as much of it as marking needs; <paramref name="PositionId"/> names it when its own mark is wanted.</summary>
+    public sealed record OpenLeg(long RunId, string Symbol, string Direction, int Quantity, decimal AveragePrice, decimal StoredUnrealized, long PositionId = 0);
 
     /// <summary>
     /// The open legs of <paramref name="runIds"/> marked to market, per run;
@@ -72,6 +72,24 @@ public sealed class RunPnl
             .ToListAsync(cancellationToken);
 
         return await MarkAsync(runIds, legs, cancellationToken);
+    }
+
+    /// <summary>
+    /// Each of <paramref name="positionIds"/> still open, marked to market on its own: the unrealized P&amp;L its run's
+    /// card counts for it (Ira's account close lists each manual position with it). A position no longer open has no
+    /// entry.
+    /// </summary>
+    public async Task<Dictionary<long, decimal>> UnrealizedByPositionAsync(IReadOnlyCollection<long> positionIds, CancellationToken cancellationToken)
+    {
+        if (positionIds.Count == 0) return new Dictionary<long, decimal>();
+
+        var legs = await _dbContext.PaperPositions.AsNoTracking()
+            .Where(p => positionIds.Contains(p.Id) && p.Status == OpenStatus)
+            .Select(p => new OpenLeg(p.SimulationRunId, p.Symbol, p.Direction, p.Quantity, p.AveragePrice, p.UnrealizedPnl, p.Id))
+            .ToListAsync(cancellationToken);
+
+        var valued = await ValueAsync(legs.Select(l => l.RunId).Distinct().ToList(), legs, cancellationToken);
+        return valued.ToDictionary(v => v.Leg.PositionId, v => v.Unrealized);
     }
 
     /// <summary>
@@ -134,7 +152,23 @@ public sealed class RunPnl
         CancellationToken cancellationToken)
     {
         var result = runIds.Distinct().ToDictionary(id => id, _ => Mark.None);
-        if (legs.Count == 0) return result;
+        foreach (var (leg, unrealized, used) in await ValueAsync(runIds, legs, cancellationToken))
+        {
+            var current = result.GetValueOrDefault(leg.RunId, Mark.None);
+            result[leg.RunId] = new Mark(current.Unrealized + unrealized, current.CapitalUsed + used);
+        }
+
+        return result;
+    }
+
+    /// <summary>Each leg's unrealized P&amp;L and the capital it ties up, at the mark <see cref="MarkAsync"/> describes.</summary>
+    private async Task<List<(OpenLeg Leg, decimal Unrealized, decimal CapitalUsed)>> ValueAsync(
+        IReadOnlyCollection<long> runIds,
+        IReadOnlyList<OpenLeg> legs,
+        CancellationToken cancellationToken)
+    {
+        var valued = new List<(OpenLeg Leg, decimal Unrealized, decimal CapitalUsed)>(legs.Count);
+        if (legs.Count == 0) return valued;
 
         var symbols = legs.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
 
@@ -177,11 +211,9 @@ public sealed class RunPnl
                 : leg.StoredUnrealized;
 
             decimal used = PaperTradingService.UsedCapitalOf(leg.Direction, leg.Symbol, leg.AveragePrice, leg.Quantity, lotSize);
-
-            var current = result.GetValueOrDefault(leg.RunId, Mark.None);
-            result[leg.RunId] = new Mark(current.Unrealized + unrealized, current.CapitalUsed + used);
+            valued.Add((leg, unrealized, used));
         }
 
-        return result;
+        return valued;
     }
 }

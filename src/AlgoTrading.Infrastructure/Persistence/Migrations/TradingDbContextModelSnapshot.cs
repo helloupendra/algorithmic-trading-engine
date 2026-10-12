@@ -189,7 +189,7 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_ai_actions_Channel", "\"Channel\" IN ('console', 'telegram')");
 
-                            t.HasCheckConstraint("CK_ai_actions_Kind", "\"Kind\" IN ('stop_run', 'start_run', 'square_off', 'agent_switch')");
+                            t.HasCheckConstraint("CK_ai_actions_Kind", "\"Kind\" IN ('stop_run', 'start_run', 'square_off', 'agent_switch', 'close_account')");
 
                             t.HasCheckConstraint("CK_ai_actions_Status", "\"Status\" IN ('pending', 'confirmed', 'cancelled', 'expired', 'executed', 'failed')");
                         });

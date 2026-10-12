@@ -11,8 +11,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services.AiActions;
 
-/// <summary>A resolved proposal, ready to store: its kind, its exact target as JSON, and the sentence the owner confirms.</summary>
-public sealed record IraProposal(string Kind, string ParamsJson, string Summary);
+/// <summary>
+/// A resolved proposal, ready to store: its kind, its exact target as JSON, and the sentence the owner confirms.
+/// <paramref name="Details"/>, when given, joins the tool's answer as <c>items</c>: what the console's confirm card lists
+/// in full (an account close's runs and positions).
+/// </summary>
+public sealed record IraProposal(string Kind, string ParamsJson, string Summary, object? Details = null);
 
 /// <summary>
 /// Turns what the model asked for into the exact thing that would run, or refuses in words the model reads and relays
@@ -26,7 +30,8 @@ public sealed partial class IraActionResolver(
     StrategyProcessRegistry registry,
     AiSettingsStore store,
     IMarketSessionService? sessions = null,
-    TimeProvider? time = null)
+    TimeProvider? time = null,
+    RunPnl? pnl = null)
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -193,6 +198,151 @@ public sealed partial class IraActionResolver(
         var p = new IraSquareOff(book.Id, accountId, accountName, chosen.Select(c => c.Id).ToList(), everything);
         var legs = chosen.Select(c => Leg(c.Id, c.Symbol, c.Direction, c.Quantity, c.AveragePrice)).ToList();
         return new IraProposal(AiActionKind.SquareOff, JsonSerializer.Serialize(p, Json), IraActionText.SquareOffSummary(p, legs));
+    }
+
+    // ---------- close an account ----------
+
+    /// <summary>The most runs and positions together the tool's answer lists for the confirm card; the action keeps them all.</summary>
+    /// <remarks>About 105 characters each, so the answer stays well under <c>Ai:MaxToolResultChars</c> (16,000).</remarks>
+    public const int MaxCardItems = 80;
+
+    /// <summary>
+    /// Everything open in one account, resolved now: every live strategy run (Running or Stopping; not a recap or a
+    /// replay, not the alerts runner) with its strategy, underlying, open legs and net after charges, and every open
+    /// position of its manual book with its contract, lots and unrealized P&amp;L. Nothing open is an error the model
+    /// reads.
+    /// </summary>
+    public async Task<IraProposal> CloseAccountAsync(IraOwner owner, string? account, CancellationToken cancellationToken)
+    {
+        var (accountId, accountName) = await ManagedAccountAsync(account, owner, cancellationToken);
+
+        var rows = await db.SimulationRuns.AsNoTracking()
+            .Where(r => r.UserId == accountId
+                        && r.Mode == StrategyRunControl.LivePaperMode
+                        && r.StrategyName != ManualOrdersController.BookStrategyName
+                        && (r.Status == StrategyRunControl.RunStatusRunning || r.Status == StrategyRunControl.RunStatusStopping))
+            .WithoutRecaps()
+            .OrderBy(r => r.Id)
+            .Select(r => new { r.Id, r.StrategyName, r.Symbol, r.ParametersJson })
+            .ToListAsync(cancellationToken);
+        // The pattern-alerts runner is a LivePaper row that never trades: closing trades leaves it alone, as the Desk does.
+        rows = rows.Where(r => !string.Equals(LiveRunParameters.ReadRole(r.ParametersJson), AlertsSupervisor.RoleAlerts, StringComparison.OrdinalIgnoreCase)).ToList();
+        var runIds = rows.Select(r => r.Id).ToList();
+
+        var legs = runIds.Count == 0
+            ? new Dictionary<long, int>()
+            : await db.PaperPositions.AsNoTracking()
+                .Where(p => runIds.Contains(p.SimulationRunId) && p.Status == "Open" && p.Quantity > 0)
+                .GroupBy(p => p.SimulationRunId)
+                .Select(g => new { RunId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(g => g.RunId, g => g.Count, cancellationToken);
+        var figures = pnl is null || runIds.Count == 0
+            ? new Dictionary<long, RunPnl.Figures>()
+            : await pnl.FiguresAsync(runIds, runIds.ToHashSet(), cancellationToken);
+        var runs = rows.Select(r => new IraCloseRun(r.Id, r.StrategyName, UnderlyingOf(r.ParametersJson, r.Symbol), legs.GetValueOrDefault(r.Id),
+            figures.TryGetValue(r.Id, out var f) ? Math.Round(f.Net, 2) : null)).ToList();
+
+        var book = await ManualBook.FindAsync(db, accountId, cancellationToken);
+        var positions = new List<IraClosePosition>();
+        if (book is not null)
+        {
+            var open = await db.PaperPositions.AsNoTracking()
+                .Where(p => p.SimulationRunId == book.Id && p.Status == "Open")
+                .OrderBy(p => p.Id)
+                .Select(p => new { p.Id, p.Symbol, p.Direction, p.Quantity, p.UnrealizedPnl })
+                .ToListAsync(cancellationToken);
+            // Marked as the book's card marks them; the stored mark where no quote is known (or without the P&L service).
+            var marks = pnl is null || open.Count == 0
+                ? new Dictionary<long, decimal>()
+                : await pnl.UnrealizedByPositionAsync(open.Select(p => p.Id).ToList(), cancellationToken);
+            // Labelled as the console labels them: the instrument master's expiry, the symbol's grammar where it has none.
+            var symbols = open.Select(p => p.Symbol).Distinct(StringComparer.Ordinal).ToList();
+            var instruments = (await db.Instruments.AsNoTracking()
+                    .Where(i => symbols.Contains(i.Symbol))
+                    .Select(i => new PositionViewBuilder.InstrumentLite(i.Symbol, i.Underlying, i.StrikePrice, i.OptionType, i.ExpiryDate, i.Exchange, i.InstrumentType))
+                    .ToListAsync(cancellationToken))
+                .GroupBy(i => i.Symbol, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            positions = open.Select(p => new IraClosePosition(p.Id, p.Symbol, PositionViewBuilder.BuildContract(p.Symbol, instruments.GetValueOrDefault(p.Symbol)).Label,
+                PaperPnl.IsLong(p.Direction) ? "BUY" : "SELL", p.Quantity,
+                Math.Round(marks.TryGetValue(p.Id, out var mark) ? mark : p.UnrealizedPnl, 2))).ToList();
+        }
+
+        if (runs.Count == 0 && positions.Count == 0) throw new AiToolArgumentException($"Nothing is open in {accountName}'s account.");
+
+        var p = new IraCloseAccount(accountId, accountName, runs, positions.Count > 0 ? book!.Id : null, positions);
+        return new IraProposal(AiActionKind.CloseAccount, JsonSerializer.Serialize(p, Json), IraActionText.CloseSummary(p), CardItems(p));
+    }
+
+    /// <summary>What the console's confirm card lists, in full up to <see cref="MaxCardItems"/>, with the counts.</summary>
+    private static object CardItems(IraCloseAccount p)
+    {
+        var runs = p.Runs.Take(MaxCardItems).ToList();
+        var positions = p.Positions.Take(Math.Max(0, MaxCardItems - runs.Count)).ToList();
+        return new
+        {
+            account = p.Account,
+            runCount = p.Runs.Count,
+            positionCount = p.Positions.Count,
+            openLegs = p.Runs.Sum(r => r.OpenLegs),
+            runs = runs.Select(r => new { runId = r.RunId, strategy = IraActionText.Strategy(r.Strategy), underlying = r.Underlying, openLegs = r.OpenLegs, net = r.Net }),
+            positions = positions.Select(x => new { positionId = x.PositionId, contract = x.Contract, side = x.Side, lots = x.Lots, unrealized = x.Unrealized }),
+            notListed = p.Runs.Count + p.Positions.Count - runs.Count - positions.Count,
+        };
+    }
+
+    /// <summary>
+    /// The account the owner named for a close: his own ("my account", "mine", "me", or his user name), or one of the
+    /// accounts he manages, every account but a service one, as the Desk lists them for an admin. Case, spaces, an
+    /// "@" or a trailing "'s account" aside; an exact name wins, else a distinctive part of an active account's name.
+    /// Two matches, or none, are an error naming the accounts.
+    /// </summary>
+    public async Task<(long Id, string Name)> ManagedAccountAsync(string? asked, IraOwner owner, CancellationToken cancellationToken)
+    {
+        string cleaned = CleanAccount(asked);
+        if (cleaned.Length == 0) throw new AiToolArgumentException("Name the account: its user name (as get_runs shows it), or \"my account\" for your own.");
+        if (OwnAccountWords.Contains(cleaned)) return (owner.UserId, owner.UserName);
+
+        string wanted = Norm(cleaned);
+        var accounts = (await db.AppUsers.AsNoTracking()
+                .Where(u => u.Role != Domain.Constants.UserRoles.Service)
+                .Select(u => new { u.Id, u.UserName, u.IsActive })
+                .ToListAsync(cancellationToken))
+            .OrderBy(u => u.UserName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var exact = accounts.Where(a => Norm(a.UserName) == wanted).ToList();
+        var matches = exact.Count > 0
+            ? exact
+            : wanted.Length >= 3 ? accounts.Where(a => a.IsActive && Norm(a.UserName).Contains(wanted, StringComparison.Ordinal)).ToList() : [];
+        string known = string.Join(", ", accounts.Where(a => a.IsActive).Select(a => a.UserName).Take(30));
+        return matches.Count switch
+        {
+            1 => (matches[0].Id, matches[0].UserName),
+            0 => throw new AiToolArgumentException($"There is no account named {asked!.Trim()}. The accounts: {known}."),
+            _ => throw new AiToolArgumentException(
+                $"{IraActionText.Number(matches.Count)} accounts match {asked!.Trim()}: {string.Join(", ", matches.Select(m => m.UserName))}. Which one?"),
+        };
+    }
+
+    /// <summary>What "my account" is said as, once cleaned: the owner's own.</summary>
+    private static readonly HashSet<string> OwnAccountWords = new(StringComparer.Ordinal)
+    {
+        "my", "mine", "me", "myself", "my own", "own", "self", "mera", "meri", "mera apna", "apna",
+    };
+
+    /// <summary>"Admin's account" is "admin"; "@coderforchange" is "coderforchange"; "my account" is "my".</summary>
+    private static string CleanAccount(string? asked)
+    {
+        char[] edges = ['"', '\'', '.', ' '];
+        string text = (asked ?? string.Empty).Trim().ToLowerInvariant().Replace('’', '\'').Trim(edges);
+        if (text.StartsWith('@')) text = text[1..];
+        if (text.StartsWith("account ", StringComparison.Ordinal)) text = text["account ".Length..];
+        foreach (string tail in new[] { " account", " a/c", " acct", "'s" })
+        {
+            if (text.EndsWith(tail, StringComparison.Ordinal)) text = text[..^tail.Length].TrimEnd();
+        }
+
+        return text.Trim(edges);
     }
 
     // ---------- an agent's switch ----------
