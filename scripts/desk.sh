@@ -264,7 +264,6 @@ _deploy_if_behind() {
   to_short="$(git rev-parse --short "$head")"
   local changed; changed="$(git diff --name-only "$deployed_sha" "$head")"
   local how="pulled"; [ "$local_sha" = "$head" ] && how="committed here"
-  say "building $from_short -> $to_short ($how): $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
 
   local web_changed api_changed engine_changed
   web_changed="$(printf '%s\n' "$changed" | console_build_inputs)"
@@ -302,6 +301,9 @@ _deploy_if_behind() {
     fi
     rm -f "$DEPLOY_NOW_FILE"
   fi
+  # Said only once the gate lets the build through: said before it, the line repeated every
+  # check while a deploy was deferred and read as a build loop (12 Oct 2026).
+  say "building $from_short -> $to_short ($how): $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
   deploy_pending "building $from_short -> $to_short"
 
   if [ "$web_changed" -gt 0 ]; then
