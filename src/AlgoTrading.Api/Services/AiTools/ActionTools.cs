@@ -39,6 +39,8 @@ public abstract class ProposalTool(IraActions actions, TimeProvider? time) : IAi
                     ? "The desk now sends the owner this summary and asks him to type his PIN in this chat, or /cancel."
                     : "The owner confirms it with his PIN in the card the console shows under this answer, or cancels it there.",
                 note = "Nothing has happened yet. Do not ask for the PIN, and do not say it is done.",
+                // What the console's confirm card lists in full (an account close); left out for the other actions.
+                items = proposal.Details,
             },
             _time.GetUtcNow().UtcDateTime,
             1,
@@ -112,6 +114,30 @@ public sealed class ProposeSquareOffTool(IraActions actions, IraActionResolver r
 
     protected override Task<IraProposal> ResolveAsync(IraOwner owner, AiToolArgs args, CancellationToken cancellationToken) =>
         resolver.SquareOffAsync(owner, args.Long("position_id", 1), args.String("symbol", 60), args.Bool("all") ?? false, args.String("account"), cancellationToken);
+}
+
+/// <summary>
+/// <c>propose_close_account</c>: close everything open in one account together, its live strategy runs and its manual
+/// book's open positions, on one PIN (owner, 12 Oct 2026).
+/// </summary>
+public sealed class ProposeCloseAccountTool(IraActions actions, IraActionResolver resolver, TimeProvider? time = null) : ProposalTool(actions, time)
+{
+    public override string Name => AiToolNames.ProposeCloseAccount;
+
+    public override string Description =>
+        "Propose closing everything open in one account on the paper desk, together, on one PIN: every live strategy run " +
+        "of the account is stopped (its legs squared off, as the Desk's Stop button does) and every open position of its " +
+        "manual book is squared off at the market. Use it when the owner asks to close all trades or positions of an " +
+        "account. Code lists what is open now; nothing open is an error. Nothing happens until the owner confirms with " +
+        "his PIN.";
+
+    public override JsonObject Parameters => AiToolSchema.Object(
+        ("account", AiToolSchema.Text("The account's user name as get_runs shows it (admin, coderforchange), or \"my account\" for the owner's own."), true));
+
+    protected override Task<IraProposal> ResolveAsync(IraOwner owner, AiToolArgs args, CancellationToken cancellationToken) =>
+        resolver.CloseAccountAsync(owner,
+            args.String("account", 60) ?? throw new AiToolArgumentException("account is required: the account's user name, or \"my account\" for your own."),
+            cancellationToken);
 }
 
 /// <summary><c>propose_agent_switch</c>: switch an AI agent on or off, the AI Trader's pause among them.</summary>

@@ -153,7 +153,7 @@ public sealed class TelegramAssistant(
     private const string AlertsHelp = "/alerts on or /alerts off turns my spoken alerts and briefings on or off for you.";
 
     /// <summary>The line about Ira's actions (<see cref="IraActions"/>) in the help the bot gives.</summary>
-    private const string ActionsHelp = "I can also stop or start a run, square off manual positions or switch an agent once you confirm with your PIN: /pin 1234 sets it, /cancel drops an action waiting for it.";
+    private const string ActionsHelp = "I can also stop or start a run, square off manual positions, close everything in an account or switch an agent once you confirm with your PIN: /pin 1234 sets it, /cancel drops an action waiting for it.";
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -393,7 +393,7 @@ public sealed class TelegramAssistant(
         {
             return has
                 ? "Your Action PIN is set. Change it with /pin <old> <new>; I delete the message."
-                : "No Action PIN yet. Set one with /pin 1234 (4 to 8 digits): I ask for it before I stop or start a run, square off or switch an agent.";
+                : "No Action PIN yet. Set one with /pin 1234 (4 to 8 digits): I ask for it before I stop or start a run, square off, close an account or switch an agent.";
         }
 
         if (parts.Length > 2) return IraActionText.PinUsage;
