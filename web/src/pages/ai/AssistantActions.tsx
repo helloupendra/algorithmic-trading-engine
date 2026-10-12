@@ -7,7 +7,12 @@
  * confirm endpoint alone: it never joins the conversation, so no model sees
  * it. A wrong PIN says how many tries are left; three lock actions for
  * fifteen minutes. Once it ran, the card says what the desk did ("Done: …")
- * or why it did not ("Not done: …").
+ * or why it did not ("Not done: …"); an account close that closed only part
+ * says so ("Partly done: …").
+ *
+ * An account close lists everything it will close, in full and scrollable:
+ * each run with its open legs and net, each manual position with its side,
+ * lots and unrealized P&L, and the count.
  */
 
 import { useEffect, useId, useRef, useState } from 'react'
@@ -15,6 +20,8 @@ import type { FormEvent } from 'react'
 import { clockTime } from '../../lib/ai'
 import {
   actionKindLabel,
+  closeCountText,
+  isPartlyDone,
   isPinShape,
   pinProblem,
   secondsLeft,
@@ -24,19 +31,20 @@ import {
   useSetActionPin,
   waitText,
 } from '../../lib/aiActions'
-import type { ActionOutcome, ProposedAction } from '../../lib/aiActions'
+import type { ActionOutcome, CloseItems, ProposedAction } from '../../lib/aiActions'
 import { ApiError } from '../../lib/api'
+import { formatInrSigned } from '../../lib/format'
 import { Badge, Panel } from '../../components/ui'
 import { errorText, useNow } from './common'
 
-type CardState = 'waiting' | 'done' | 'failed' | 'cancelled' | 'expired' | 'locked' | 'closed' | 'replaced'
+type CardState = 'waiting' | 'done' | 'partly' | 'failed' | 'cancelled' | 'expired' | 'locked' | 'closed' | 'replaced'
 
 function stateOf(outcome: ActionOutcome | null, expired: boolean, replaced: boolean): CardState {
   if (replaced) return 'replaced'
   if (!outcome || outcome.kind === 'wrong') return expired ? 'expired' : 'waiting'
   switch (outcome.kind) {
     case 'ran':
-      return outcome.done ? 'done' : 'failed'
+      return outcome.done ? 'done' : isPartlyDone(outcome.message) ? 'partly' : 'failed'
     case 'cancelled':
       return 'cancelled'
     case 'locked':
@@ -49,6 +57,7 @@ function stateOf(outcome: ActionOutcome | null, expired: boolean, replaced: bool
 const BADGES: Record<CardState, { label: string; tone: 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' }> = {
   waiting: { label: 'needs your PIN', tone: 'warn' },
   done: { label: 'done', tone: 'pos' },
+  partly: { label: 'partly done', tone: 'warn' },
   failed: { label: 'not done', tone: 'neg' },
   cancelled: { label: 'cancelled', tone: 'neutral' },
   expired: { label: 'expired', tone: 'neutral' },
@@ -126,6 +135,7 @@ export function ActionCard({
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </div>
       <p className="ai-action__summary">{action.summary}</p>
+      {action.items && <CloseList items={action.items} />}
 
       {waiting && (
         <form className="ai-action__form" onSubmit={submit}>
@@ -172,6 +182,11 @@ export function ActionCard({
           {outcome.message}
         </div>
       )}
+      {state === 'partly' && outcome?.kind === 'ran' && (
+        <div className="alert alert--warn ai-flush" role="alert">
+          {outcome.message}
+        </div>
+      )}
       {state === 'failed' && outcome?.kind === 'ran' && (
         <div className="alert alert--error ai-flush" role="alert">
           {outcome.message}
@@ -189,6 +204,62 @@ export function ActionCard({
       )}
       {state === 'replaced' && <p className="small-note ai-flush">A newer proposal in this answer replaced it: only the last one can be confirmed.</p>}
     </section>
+  )
+}
+
+function toneOf(value: number | null): string {
+  if (value == null || Math.round(value) === 0) return 'faint'
+  return value > 0 ? 'pos' : 'neg'
+}
+
+/**
+ * Everything an account close will close, as code listed it when it proposed:
+ * the count, then every run and manual position in a list that scrolls past
+ * a dozen rows. The figures are the proposal's, not live.
+ */
+function CloseList({ items }: { items: CloseItems }) {
+  const id = useId()
+  const total = items.runCount + items.positionCount
+  return (
+    <div className="ai-close">
+      <p className="ai-close__count" id={`${id}-count`}>
+        <strong>
+          {total} to close in {items.account}’s account
+        </strong>
+        : {closeCountText(items)}
+      </p>
+      {/* Focusable so the keyboard can scroll it. */}
+      <ul className="ai-close__list" aria-labelledby={`${id}-count`} tabIndex={0}>
+        {items.runs.map((r) => (
+          <li key={`run-${r.runId}`} className="ai-close__item">
+            <span className="ai-close__what">
+              Run <span className="mono">#{r.runId}</span> · {r.strategy} · {r.underlying}
+            </span>
+            <span className="ai-close__meta faint">
+              {r.openLegs === 0 ? 'no open leg' : `${r.openLegs} open leg${r.openLegs === 1 ? '' : 's'}`}
+            </span>
+            <span className={`ai-close__pnl mono ${toneOf(r.net)}`}>{formatInrSigned(r.net)}</span>
+          </li>
+        ))}
+        {items.positions.map((p) => (
+          <li key={`position-${p.positionId}`} className="ai-close__item">
+            <span className="ai-close__what">{p.contract}</span>
+            <span className="ai-close__meta faint">
+              manual · {p.side} ×{p.lots}
+            </span>
+            <span className={`ai-close__pnl mono ${toneOf(p.unrealized)}`}>{formatInrSigned(p.unrealized)}</span>
+          </li>
+        ))}
+      </ul>
+      {items.notListed > 0 && (
+        <p className="small-note ai-flush">
+          And {items.notListed} more not listed here: the count above includes them, and the action closes them all.
+        </p>
+      )}
+      <p className="small-note faint ai-flush">
+        As proposed: runs at their net after charges, manual positions unrealized before charges.
+      </p>
+    </div>
   )
 }
 
@@ -242,7 +313,8 @@ export function ActionPinCard() {
             {locked && <Badge tone="neg">locked until {clockTime(s.lockedUntilUtc, now)} IST</Badge>}
           </p>
           <p className="small-note ai-flush">
-            The Desk Assistant may propose to stop or start a run, square off manual positions or switch an agent. Nothing runs
+            The Desk Assistant may propose to stop or start a run, square off manual positions, close everything in an account
+            or switch an agent. Nothing runs
             until you type this PIN: in the card under its answer, or in the Telegram chat. It never reaches a model; the desk
             keeps only a salted hash. An action waits {Math.round(s.confirmSeconds / 60) || 1} min; three wrong PINs lock
             actions for 15 min.
