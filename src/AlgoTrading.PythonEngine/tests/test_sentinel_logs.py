@@ -494,6 +494,29 @@ class SignatureTests(LogsAgentTestCase):
         self.assertIn("24 hours", found["logs:vendor-auth:dhan"].suggestion)
         self.assertIn("10 Sep", found["logs:vendor-auth:fyers"].suggestion)
 
+    def test_a_lapsed_dhan_data_plan_is_not_called_a_dead_token(self):
+        # 14 Oct: the plan had lapsed; the incident said to generate a new token.
+        self.start_watching("api.log")
+        self.append("api.log", info(
+            FEEDS,
+            "[Dhan feed] [dhan] universe: 209 symbol(s) from the API; warnings: [\"Dhan's last prices were not "
+            "available (Dhan rejected the access token or client id (806: Data APIs not Subscribed). A console "
+            "token lasts 24 hours; generate a new one.)\"]"))
+        found = self.check()
+        self.assertEqual(["logs:vendor-plan:dhan"], list(found))
+        finding = found["logs:vendor-plan:dhan"]
+        self.assertEqual("Dhan's data subscription is not active", finding.title)
+        self.assertEqual(Severity.HIGH, finding.severity)
+        self.assertIn("a new token will not help", finding.suggestion)
+
+    def test_the_apis_own_words_for_a_lapsed_plan_open_the_same_incident(self):
+        self.start_watching("api.log")
+        self.append("api.log", warn(
+            "AlgoTrading.Infrastructure.Providers.Dhan.DhanChainRecorder",
+            "Dhan chain NIFTY: Dhan's Data API subscription is not active (806: Data APIs not Subscribed). Renew "
+            "Data APIs in your Dhan account; a new token will not help."))
+        self.assertEqual(["logs:vendor-plan:dhan"], list(self.check()))
+
     def test_the_desks_own_401_is_not_a_vendor(self):
         self.start_watching("api.log")
         self.append("api.log", info(REG, "[strategy:Ghost:NIFTY] 401 Client Error: Unauthorized for url: "
@@ -587,6 +610,27 @@ class SignatureTests(LogsAgentTestCase):
         self.assertEqual(["Telegram refused a message: HTTP 429.", "in logs/api.log"], finding.evidence)
         self.assertIn("logs:rate-limited:telegram", self.idle(3 * 3600), "bursts all day are one incident")
         self.assertEqual({}, self.idle(2 * 3600), "15:30 IST: let go at the close")
+
+    IRA = "AlgoTrading.Api.Services.AiVoice.IraAlertService"
+    IRA_RELAY = ("Ira: told admin (incident, text and voice): Sentinel opened a high incident: Rate limited (429 Too "
+                 "Many Requests) by chain poller. chain poller is being rate-limited by chain poller.")
+
+    def test_iras_relay_of_an_incident_opens_nothing_and_the_original_still_does(self):
+        # 14 Oct 12:07: the relay matched the 429 rule and opened "Rate limited (429) by
+        # IraAlertService" 31 times in 16 minutes, and Ira relayed each of those.
+        self.start_watching("api.log")
+        self.append("api.log", info(self.IRA, self.IRA_RELAY) * 3)
+        self.assertEqual({}, self.check())
+
+        self.append("api.log", info(FEEDS, "[chain poller] NIFTY chain: 429 Too Many Requests, backing off"))
+        found = self.check()
+        self.assertEqual(["logs:rate-limited:chain poller"], list(found))
+        self.assertIn("by chain poller", found["logs:rate-limited:chain poller"].title)
+
+    def test_a_relay_whose_logger_line_was_not_read_opens_nothing(self):
+        self.start_watching("api.log")
+        self.append("api.log", f"{B}{self.IRA_RELAY}\n")   # the check began after its "info: …IraAlertService" line
+        self.assertEqual({}, self.check())
 
 
 class DeskTests(LogsAgentTestCase):
