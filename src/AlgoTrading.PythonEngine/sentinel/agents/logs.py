@@ -25,6 +25,8 @@ Each signature is one of this desk's own failures:
 * ``feed-reconnect-loop`` / ``feed-stalled`` — 24 Sep 11:27: the Dhan feed
   reconnected in a loop without a tick and every runner went deaf.
 * ``vendor-auth`` — 10 Sep: an expired FYERS token; Dhan's 24-hour tokens.
+* ``vendor-plan`` — 14 Oct: Dhan's Data API plan had lapsed ("806: Data APIs
+  not Subscribed"), and the desk called it a dead token.
 * ``job-failed`` / ``desk-warning`` / ``desk-relaunched`` — what desk.sh, the
   morning job and the archive say went wrong; desk.sh started several times
   in seconds.
@@ -123,6 +125,7 @@ HOLD_SECONDS = {
     "feed-stalled": 3600,
     "rate-limited": 900,
     "vendor-auth": 3600,       # a dead token stays dead until someone renews it
+    "vendor-plan": 3600,       # and a lapsed data plan until someone pays for it
     "order-rate-limit": 3600,  # a churning strategy hits the limit in bursts all day
     "desk-warning": 3600,
     # A recurring bug (25 Sep: alert events too long for their column, ~20 a
@@ -282,6 +285,12 @@ _VENDOR_AUTH = re.compile(
     r"(?i)token (?:is )?(?:expired|invalid)|(?:invalid|expired) (?:access )?token|rejected the access token"
     r"|credential was rejected|refused the login|authentication failed|invalid_authentication"
     r"|holds the token \w+ rejected|\b401\b.*unauthori[sz]ed|unauthori[sz]ed.*\b401\b")
+#: Dhan refusing data because the account's Data API plan is not active: its
+#: "806: Data APIs not Subscribed" (sometimes with a 401), DH-902 on the
+#: trading APIs, and the API's own words for it (DhanApiClient). A new token
+#: does not fix it, so it is never vendor-auth.
+_DATA_PLAN = re.compile(r"(?i)data apis? (?:is |are )?not subscribed|data api subscription is not active"
+                        r"|not subscribed to data apis|\bDH-902\b|\b806: data")
 _LOCALHOST = re.compile(r"(?i)localhost|127\.0\.0\.1")
 _FAILED_WORD = re.compile(r"\bFAILED\b")
 _DESK_START = re.compile(r"^=== desk started \(pid \d+")
@@ -311,6 +320,16 @@ _CHAIN_PHRASES = ("The above exception was the direct cause of the following exc
 #: is reported from its own entry, once.
 _COMPANION_CATEGORIES = ("Microsoft.EntityFrameworkCore.Database.Command",
                          "Microsoft.EntityFrameworkCore.Database.Connection")
+#: Loggers that repeat Sentinel's own incidents to a person. What they write is
+#: what Sentinel already said, so no rule reads it. On 14 Oct Ira relayed
+#: "Rate limited (429 Too Many Requests) by chain poller" into api.log, the
+#: rate-limit rule matched the relay and opened "Rate limited (429) by
+#: IraAlertService" 31 times in 16 minutes, and Ira relayed each of those. A
+#: notifier that starts repeating incidents into api.log belongs here.
+RELAY_CATEGORIES = frozenset({"AlgoTrading.Api.Services.AiVoice.IraAlertService"})
+#: Ira's relay when its logger line was not read (a check that started mid-entry):
+#: "Ira: told admin (incident, text and voice): …" (IraAlertService).
+_RELAY_LINE = re.compile(r"^Ira: told \S+ \(")
 
 # --- normalising a line into a signature ------------------------------------
 _TIMESTAMP = re.compile(
@@ -645,6 +664,11 @@ def _desk_advice(text: str, default: str) -> tuple[str, Optional[float]]:
     return default, None
 
 
+_DATA_PLAN_ADVICE = ("Renew the Data APIs subscription in your Dhan account; a new token will not help. Until it is "
+                     "active, FYERS is the only source of data: sign in on Connectors → FYERS and switch the feed on "
+                     "Data → Feeds.")
+
+
 def _vendor_advice(vendor: str) -> str:
     if vendor == "dhan":
         return ("A Dhan console token lasts 24 hours: generate a new one on the Broker page, then restart the Dhan "
@@ -931,6 +955,8 @@ class LogsAgent(Agent):
         # so the last one stays open until the next header or a quiet check.
 
     def _api_message(self, f: _LogFile, level: str, category: str, text: str, scan: _Scan) -> None:
+        if _is_relay(category, text):
+            return   # Sentinel's own incident, repeated to a person: read again, it would open itself
         runner = _RUNNER_PREFIX.match(text)
         if runner:
             origin = _Origin(f.label, "runner", f"{runner['name']} on {runner['ul']}", underlying=runner["ul"])
@@ -968,7 +994,7 @@ class LogsAgent(Agent):
         block = self._blocks.pop(label, None)
         if block is None or block.level not in ("fail", "crit"):
             return
-        if block.category.startswith(_COMPANION_CATEGORIES):
+        if block.category.startswith(_COMPANION_CATEGORIES) or block.category in RELAY_CATEGORIES:
             return
         self._api_error(_Origin(label, "api", _short_category(block.category)), block.level, block.category,
                         block.lines, scan)
@@ -1211,6 +1237,20 @@ class LogsAgent(Agent):
         if _FEED_RECOVERED.search(text):
             m = _BRACKET_UL.search(text)
             scan.stall_events.append(((m["ul"] if m else None) or o.underlying or "?", False))
+            return True
+
+        if o.kind in ("feed", "runner", "daemon", "api") and _DATA_PLAN.search(text) \
+                and (o.vendor or _vendor_in_text(text) or "dhan") == "dhan":
+            # Before vendor-auth: on 14 Oct Dhan's "806: Data APIs not Subscribed" came
+            # inside "rejected the access token", and the incident said to make a new one.
+            scan.add(
+                fingerprint=f"{AGENT}:vendor-plan:dhan",
+                rule="vendor-plan", severity=Severity.HIGH,
+                title="Dhan's data subscription is not active",
+                what=(f"{o.component} reports that Dhan refused market data because the account's Data API "
+                      f"subscription is not active (806): no Dhan prices, chain or history until it is renewed."),
+                where=o.where, suggestion=_DATA_PLAN_ADVICE,
+                raw=raw, file=o.file, hold=scan.hold("vendor-plan", text), line_time=t)
             return True
 
         if o.kind in ("feed", "runner") and _VENDOR_AUTH.search(text) \
@@ -1577,6 +1617,11 @@ def _read_lines(path: Path, start: int, size: int, mid_line: bool = False) -> tu
     if text.endswith("\n"):
         lines.pop()
     return [line.rstrip("\r") for line in lines], start + consumed
+
+
+def _is_relay(category: str, text: str) -> bool:
+    """A line in which a notifier repeats an incident (RELAY_CATEGORIES), by its logger or, without one, its words."""
+    return category in RELAY_CATEGORIES or (not category and _RELAY_LINE.match(text) is not None)
 
 
 def _is_daemon_label(label: str) -> bool:
