@@ -168,6 +168,186 @@ class DhanTokenTests(Base):
         self.assertIs(State.SKIP, self.one(items).state)
 
 
+OCT15 = dict(day=15, month=10)   # Thursday 15 Oct 2026
+
+
+def dhan_status(plan="Active", validity="2026-11-15 00:00:00.0", **extra):
+    """GET /api/Dhan/status as DhanController.Status answers it."""
+    return {"ok": True, "tokenSource": "sign-in", "dataPlan": plan, "dataValidity": validity, **extra}
+
+
+class DhanDataPlanTests(Base):
+    def test_dhans_validity_is_read_as_an_ist_date(self):
+        self.assertEqual(datetime(2026, 11, 15, 0, 0, tzinfo=IST), checks.parse_dhan_validity("2026-11-15 00:00:00.0"))
+        self.assertEqual(datetime(2026, 11, 15, 9, 37, 52, tzinfo=IST),
+                         checks.parse_dhan_validity("2026-11-15 09:37:52"))
+        self.assertEqual(datetime(2026, 11, 15, tzinfo=IST), checks.parse_dhan_validity("2026-11-15"))
+        self.assertIsNone(checks.parse_dhan_validity("soon"))
+        self.assertIsNone(checks.parse_dhan_validity(None))
+
+    def test_the_validity_window(self):
+        state = lambda plan, validity, now: checks.data_plan_state(plan, validity, now)   # noqa: E731
+        ends = "2026-11-15 00:00:00.0"
+        self.assertEqual((State.OK, "Active until Sun 15 Nov 2026."), state("Active", ends, ist(16, 0, day=11, month=11)))
+        # Three days before, and the close checkup the evening before: worth a look, with the date.
+        self.assertEqual((State.WARN, "Dhan's data plan ends on Sun 15 Nov 2026."),
+                         state("Active", ends, ist(0, 0, day=12, month=11)))
+        self.assertIs(State.WARN, state("Active", ends, ist(16, 0, day=14, month=11))[0])
+        failed, detail = state("Active", ends, ist(0, 0, day=15, month=11))
+        self.assertIs(State.FAIL, failed)
+        self.assertIn("ended on Sun 15 Nov 2026", detail)
+        self.assertIs(State.FAIL, state("Inactive", ends, ist(16, 0, day=11, month=11))[0])
+        self.assertIs(State.FAIL, state("", ends, ist(16, 0, day=11, month=11))[0])
+        self.assertEqual("Dhan's data plan ends on Sat 17 Oct 2026 18:00 IST.",
+                         state("active", "2026-10-17 18:00:00.0", ist(16, 0, **OCT15))[1])
+
+    def test_the_item_says_to_renew_not_to_sign_in(self):
+        api = {"/api/Dhan/status": dhan_status(validity="2026-10-17 00:00:00.0")}
+        item = self.one(checks.dhan_plan(self.inputs("close", api, now=ist(16, 0, **OCT15))))
+        self.assertEqual(("dhan-plan", "Dhan data plan", State.WARN), (item.key, item.title, item.state))
+        self.assertIn("Sat 17 Oct 2026", item.detail)
+        self.assertIn("Renew Data APIs in your Dhan account before it ends; a new token will not help.", item.action)
+
+    def test_dhan_refusing_with_806_is_a_failure(self):
+        api = {"/api/Dhan/status": {"ok": False, "authFailure": False, "notSubscribed": True,
+                                    "error": "Dhan's Data API subscription is not active (806: Data APIs not Subscribed)."}}
+        item = self.one(checks.dhan_plan(self.inputs("morning", api)))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("(806)", item.detail)
+        self.assertIn("a new token will not help", item.action)
+
+    def test_a_signed_out_dhan_is_not_checked_here(self):
+        api = {"/api/Dhan/status": {"ok": False, "authFailure": True, "notSubscribed": False,
+                                    "error": "Dhan is not signed in. Press Connect on the Dhan connector page."}}
+        item = self.one(run_checks(self.inputs("morning", api), ("dhan-plan",)))
+        self.assertIs(State.SKIP, item.state)
+        self.assertIn("Dhan is not signed in", item.detail)
+
+    def test_it_is_in_the_morning_and_close_checkups(self):
+        for slot in (MORNING, CLOSE, WEEKLY, ON_REQUEST):
+            self.assertIn("dhan-plan", slot.checks, slot.name)
+            self.assertIn("option-contracts", slot.checks, slot.name)
+
+
+class FyersBackupTests(Base):
+    def api(self, status):
+        return {"/api/Providers": [provider("dhan"), provider("fyers", connected=False)], "/api/Dhan/status": status}
+
+    def test_signed_out_says_fyers_can_no_longer_renew_itself(self):
+        item = self.one(checks.fyers_backup(self.inputs("morning", self.api(dhan_status()), now=ist(8, 55, **OCT15))))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("can no longer renew its token by itself", item.detail)
+        self.assertIn("needs a sign-in each morning", item.detail)
+
+    def test_a_dhan_plan_that_is_ending_makes_it_worth_a_look(self):
+        ending = dhan_status(validity="2026-10-17 00:00:00.0")
+        item = self.one(checks.fyers_backup(self.inputs("close", self.api(ending), now=ist(16, 0, **OCT15))))
+        self.assertIs(State.WARN, item.state)
+        self.assertIn("Dhan's data plan ends on Sat 17 Oct 2026.", item.detail)
+        self.assertIn("FYERS is the only way to get data", item.detail)
+
+    def test_a_lapsed_dhan_plan_makes_it_worth_a_look(self):
+        lapsed = {"ok": False, "notSubscribed": True, "error": "806"}
+        self.assertIs(State.WARN, self.one(checks.fyers_backup(self.inputs("morning", self.api(lapsed)))).state)
+        self.assertIs(State.WARN, self.one(checks.fyers_backup(
+            self.inputs("morning", self.api(dhan_status(plan="Inactive"))))).state)
+
+    def test_a_dhan_that_cannot_say_leaves_it_a_note(self):
+        unknown = {"ok": False, "authFailure": True, "error": "Dhan is not signed in."}
+        self.assertIs(State.INFO, self.one(checks.fyers_backup(self.inputs("morning", self.api(unknown)))).state)
+
+
+class OptionContractsTests(Base):
+    MASTERS = "/api/Instruments/masters"
+
+    def masters(self, finished=None, ok=True):
+        finished = finished or ist(8, 47, **OCT15)
+        last = {"ok": ok, "startedUtc": iso(finished - timedelta(minutes=1)), "finishedUtc": iso(finished),
+                "error": None if ok else "Response status code does not indicate success: 503"}
+        return {"masters": [{"name": n, "lastRefresh": dict(last, name=n)} for n in ("NSE_CM", "NSE_FO", "BSE_FO")]}
+
+    def api(self, dhan=None, ours=None, masters=None, runs=()):
+        dhan = dhan or {"NIFTY": ["2026-10-13", "2026-10-20", "2026-10-27"], "BANKNIFTY": ["2026-10-27"],
+                        "SENSEX": ["2026-10-22", "2026-10-29"]}
+        ours = ours or {"NIFTY": ["2026-10-13", "2026-10-20", "2026-10-27"], "BANKNIFTY": ["2026-10-27"],
+                        "SENSEX": ["2026-10-22"]}
+        routes = {RUNNING_PATH: list(runs), self.MASTERS: masters or self.masters()}
+        for u, days in dhan.items():
+            routes[f"/api/Dhan/expiries?underlying={u}"] = days if isinstance(days, Exception) \
+                else {"underlying": u, "expiries": days}
+        for u, days in ours.items():
+            routes[f"/api/Instruments/derivatives/expiries?underlying={u}"] = [
+                {"underlying": u, "expiryDate": d} for d in days]
+        return routes
+
+    def check(self, api, slot="morning"):
+        return self.one(run_checks(self.inputs(slot, api, now=ist(8, 55, **OCT15)), ("option-contracts",)))
+
+    def test_every_index_with_contracts_for_dhans_nearest_expiry_is_fine(self):
+        item = self.check(self.api())
+        self.assertIs(State.OK, item.state, item.detail)
+        self.assertEqual("The platform has contracts for Dhan's nearest expiry: NIFTY 20 Oct, BANKNIFTY 27 Oct, "
+                         "SENSEX 22 Oct.", item.detail)
+
+    def test_a_weekly_series_the_master_never_got_is_a_failure(self):
+        # 14 Oct: the master was from 9 Sep; NIFTY ran on the 27 Oct monthly and no NIFTY chain was recorded.
+        stale = self.masters(finished=ist(2, 0, day=9))
+        item = self.check(self.api(ours={"NIFTY": ["2026-10-27"], "BANKNIFTY": ["2026-10-27"], "SENSEX": []},
+                                   masters=stale))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("NIFTY 20 Oct (the platform's nearest is 27 Oct)", item.detail)
+        self.assertIn("SENSEX 22 Oct (the platform has none from today)", item.detail)
+        self.assertIn("NSE_FO was last refreshed 02:00 on 9 Sep", item.detail)
+        self.assertIn("POST /api/Instruments/masters/refresh", item.action)
+        self.assertIn("Download latest", item.action)
+
+    def test_a_master_older_than_two_days_is_worth_a_look(self):
+        item = self.check(self.api(masters=self.masters(finished=ist(8, 47, day=12, month=10))))
+        self.assertIs(State.WARN, item.state)
+        self.assertIn("The master is old: NSE_FO was last refreshed 08:47 on 12 Oct", item.detail)
+        failed = self.check(self.api(masters=self.masters(ok=False)))
+        self.assertIs(State.WARN, failed.state)
+        self.assertIn("NSE_FO's last refresh (08:47 today) failed: Response status code", failed.detail)
+
+    def test_a_weekend_does_not_age_the_master(self):
+        # Friday 9 Oct's refresh, read at the Sunday 11 Oct weekly checkup and on Tuesday 13 Oct.
+        friday = self.masters(finished=ist(8, 47, day=9, month=10))
+        api = self.api(dhan={"NIFTY": ["2026-10-13"], "BANKNIFTY": ["2026-10-27"], "SENSEX": ["2026-10-15"]},
+                       ours={"NIFTY": ["2026-10-13"], "BANKNIFTY": ["2026-10-27"], "SENSEX": ["2026-10-15"]},
+                       masters=friday)
+        sunday = self.one(run_checks(self.inputs("weekly", api, now=ist(18, 0, day=11, month=10)),
+                                     ("option-contracts",)))
+        self.assertIs(State.OK, sunday.state, sunday.detail)
+        tuesday = self.one(run_checks(self.inputs("morning", api, now=ist(8, 55, day=13, month=10)),
+                                      ("option-contracts",)))
+        self.assertIs(State.OK, tuesday.state, tuesday.detail)
+        wednesday = self.one(run_checks(self.inputs("morning", api, now=ist(8, 55, day=14, month=10)),
+                                        ("option-contracts",)))
+        self.assertIs(State.WARN, wednesday.state)
+
+    def test_the_plans_and_live_runs_indices_are_checked_too(self):
+        (self.repo / "config" / "morning-plan.txt").write_text("accounts: admin\nGhost FINNIFTY 2\n", encoding="utf-8")
+        api = self.api(runs=[run_row(1, underlying="MIDCPNIFTY"), run_row(2, underlying="CRUDEOIL")])
+        api.update({"/api/Dhan/expiries?underlying=FINNIFTY": {"expiries": ["2026-10-27"]},
+                    "/api/Instruments/derivatives/expiries?underlying=FINNIFTY": [{"expiryDate": "2026-10-27"}],
+                    "/api/Dhan/expiries?underlying=MIDCPNIFTY": {"expiries": ["2026-10-27"]},
+                    "/api/Instruments/derivatives/expiries?underlying=MIDCPNIFTY": []})
+        item = self.check(api)
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("MIDCPNIFTY 27 Oct", item.detail)
+        self.assertNotIn("FINNIFTY 27 Oct (", item.detail)
+
+    def test_a_dhan_that_does_not_answer_is_not_checked(self):
+        down = ValueError("502")
+        item = self.check(self.api(dhan={"NIFTY": down, "BANKNIFTY": down, "SENSEX": down}))
+        self.assertIs(State.SKIP, item.state)
+        self.assertIn("Not checked: Dhan did not list its expiries", item.detail)
+        # One that answers is still compared; the rest are named.
+        some = self.check(self.api(dhan={"NIFTY": ["2026-10-20"], "BANKNIFTY": down, "SENSEX": down}))
+        self.assertIs(State.OK, some.state)
+        self.assertIn("Not compared: BANKNIFTY", some.detail)
+
+
 class StrategyTests(Base):
     def setUp(self):
         super().setUp()
