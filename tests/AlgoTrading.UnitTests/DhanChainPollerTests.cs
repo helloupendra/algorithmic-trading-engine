@@ -174,6 +174,23 @@ public class DhanChainPollerTests
     }
 
     [Fact]
+    public async Task A_lapsed_data_plan_ends_the_round_and_says_so()
+    {
+        await using var db = Db();
+        var handler = new Routes(HttpStatusCode.Unauthorized)
+        {
+            ["/optionchain/expirylist"] = """{"data":{"806":"Data APIs not Subscribed"},"status":"failed"}""",
+        };
+        var recorder = Recorder(db, handler, State(), marketOpen: true);
+
+        var outcomes = await recorder.RecordAsync(new[] { "NIFTY", "BANKNIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+
+        var outcome = Assert.Single(outcomes);
+        Assert.Equal("not-subscribed", outcome.State);
+        Assert.Contains("a new token will not help", outcome.Detail);
+    }
+
+    [Fact]
     public void Configured_lists_are_replaced_not_appended_to()
     {
         var settings = new DhanChainPollerSettings { Underlyings = " nifty, CRUDEOIL ,,NIFTY" };

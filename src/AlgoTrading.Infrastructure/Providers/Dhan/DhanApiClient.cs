@@ -78,16 +78,25 @@ public sealed class DhanApiException : InvalidOperationException
     /// The token is missing, expired or revoked, or the client id is wrong:
     /// nothing else will work until it is replaced. DH-901 on the trading APIs;
     /// 807 (expired), 808 (authentication failed), 809 (invalid token) and 810
-    /// (invalid client id) on the data APIs.
+    /// (invalid client id) on the data APIs. Never a lapsed data plan, even when
+    /// Dhan sends that with a 401 (14 Oct: "806: Data APIs not Subscribed" was
+    /// read as a dead token, and the advice was to make a new one).
     /// </summary>
     public bool IsAuthFailure =>
-        HttpStatus == 401 || Code is "DH-901" or "807" or "808" or "809" or "810";
+        !IsNotSubscribed && (HttpStatus == 401 || Code is "DH-901" or "807" or "808" or "809" or "810");
 
     /// <summary>
     /// The account has no active data plan (DH-902 / 806). Distinct from an auth
     /// failure: a fresh token will not fix it, a subscription will.
     /// </summary>
     public bool IsNotSubscribed => Code is "DH-902" or "806";
+
+    /// <summary>
+    /// Nothing more will work on this account until a person acts: a dead
+    /// credential or a lapsed data plan. A caller that stops on this does not
+    /// repeat the refusal for every symbol or underlying.
+    /// </summary>
+    public bool StopsEverything => IsAuthFailure || IsNotSubscribed;
 }
 
 /// <summary>
@@ -262,16 +271,17 @@ public sealed class DhanApiClient
     private static DhanApiException Build(int status, string? code, string message)
     {
         var failure = new DhanApiException(status, code, message);
+        // Before the token: Dhan can answer a lapsed plan with a 401.
+        if (failure.IsNotSubscribed)
+        {
+            return new DhanApiException(status, code,
+                $"Dhan's Data API subscription is not active ({message}). Renew Data APIs in your Dhan account; a new token will not help.");
+        }
+
         if (failure.IsAuthFailure)
         {
             return new DhanApiException(status, code,
                 $"Dhan rejected the access token or client id ({message}). A console token lasts 24 hours; generate a new one.");
-        }
-
-        if (failure.IsNotSubscribed)
-        {
-            return new DhanApiException(status, code,
-                $"The Dhan account has no active data plan ({message}). Market data needs the Data APIs subscription.");
         }
 
         return failure;

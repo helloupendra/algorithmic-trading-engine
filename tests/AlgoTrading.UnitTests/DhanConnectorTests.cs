@@ -178,10 +178,43 @@ public class DhanConnectorTests
 
         var plan = DhanApiClient.Describe(200, """{"data":{"806":"Data APIs not subscribed"},"status":"failed"}""");
         Assert.True(plan.IsNotSubscribed);
-        Assert.Contains("data plan", plan.Message);
+        Assert.Contains("Data API subscription is not active", plan.Message);
 
         var expired = DhanApiClient.Describe(200, """{"data":{"807":"Access token expired"},"status":"failed"}""");
         Assert.True(expired.IsAuthFailure);
+    }
+
+    // 14 Oct: the Data API plan had lapsed, Dhan answered 806 with a 401, and
+    // the desk said the token was dead and to generate a new one.
+    [Theory]
+    [InlineData(401, """{"data":{"806":"Data APIs not Subscribed"},"status":"failed"}""")]
+    [InlineData(200, """{"data":{"806":"Data APIs not Subscribed"},"status":"failed"}""")]
+    [InlineData(401, """{"errorType":"Data_Error","errorCode":"806","errorMessage":"Data APIs not Subscribed"}""")]
+    [InlineData(403, """{"errorType":"Invalid_Access","errorCode":"DH-902","errorMessage":"User has not subscribed to Data APIs"}""")]
+    public void A_lapsed_data_plan_is_its_own_failure_not_a_dead_token(int status, string body)
+    {
+        var failure = DhanApiClient.Describe(status, body);
+
+        Assert.True(failure.IsNotSubscribed);
+        Assert.False(failure.IsAuthFailure);
+        Assert.True(failure.StopsEverything);   // callers still stop instead of retrying per symbol
+        Assert.StartsWith("Dhan's Data API subscription is not active (", failure.Message);
+        Assert.EndsWith("Renew Data APIs in your Dhan account; a new token will not help.", failure.Message);
+        Assert.DoesNotContain("access token", failure.Message);
+        Assert.DoesNotContain("24 hours", failure.Message);
+    }
+
+    [Fact]
+    public void A_dead_token_still_reads_as_one_and_stops_everything()
+    {
+        var expired = DhanApiClient.Describe(401, """{"data":{"808":"Authentication Failed - Client ID or Token invalid"},"status":"failed"}""");
+        Assert.True(expired.IsAuthFailure);
+        Assert.False(expired.IsNotSubscribed);
+        Assert.True(expired.StopsEverything);
+        Assert.Contains("generate a new one", expired.Message);
+
+        var badRequest = DhanApiClient.Describe(400, """{"data":{"814":"Invalid Request"},"status":"failed"}""");
+        Assert.False(badRequest.StopsEverything);
     }
 
     // -------------------------------------------------------------- instruments

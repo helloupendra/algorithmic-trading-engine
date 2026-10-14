@@ -323,9 +323,10 @@ public sealed class DhanChainRecorder
             _state.Record(outcome);
             outcomes.Add(outcome);
 
-            // A rejected token is rejected for every underlying: stop spending
-            // the three-second chain budget on answers that will all say so.
-            if (outcome.State == "auth-failed") break;
+            // A rejected token (or a lapsed data plan) is refused for every
+            // underlying: stop spending the three-second chain budget on answers
+            // that will all say so.
+            if (outcome.State is "auth-failed" or "not-subscribed") break;
         }
 
         return outcomes;
@@ -396,7 +397,8 @@ public sealed class DhanChainRecorder
         catch (DhanApiException ex)
         {
             _logger.LogWarning("Dhan chain {Underlying}: {Message}", underlying.Name, ex.Message);
-            return new DhanChainOutcome(underlying.Name, now, ex.IsAuthFailure ? "auth-failed" : "failed", ex.Message);
+            string state = ex.IsNotSubscribed ? "not-subscribed" : ex.IsAuthFailure ? "auth-failed" : "failed";
+            return new DhanChainOutcome(underlying.Name, now, state, ex.Message);
         }
     }
 
@@ -539,7 +541,7 @@ public sealed class DhanChainPoller : BackgroundService
                         _logger.LogInformation("Dhan chain: recorded {Summary}.",
                             string.Join(", ", recorded.Select(o => $"{o.Underlying} {o.Rows}")));
                     }
-                    foreach (var failure in outcomes.Where(o => o.State is "failed" or "auth-failed"))
+                    foreach (var failure in outcomes.Where(o => o.State is "failed" or "auth-failed" or "not-subscribed"))
                     {
                         _logger.LogWarning("Dhan chain {Underlying}: {Detail}", failure.Underlying, failure.Detail);
                     }
