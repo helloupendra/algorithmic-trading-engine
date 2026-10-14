@@ -322,6 +322,64 @@ if [ "$DAY_ASK_AGAIN" = 1 ]; then
   if [ "$DAY_STATE" = trading ]; then say "the calendar says today is a trading day"; fi
 fi
 
+# --- 3b2. the instrument master ------------------------------------------------
+# A new weekly series (NIFTY's every week, SENSEX's every week) reaches the
+# platform only through FYERS's symbol masters, and until 15 Oct they were
+# refreshed by hand from the console. The last refresh had been on 9 Sep: on
+# 14 Oct NIFTY ran on the monthly contract and the Dhan chain recorder logged
+# "the platform has no contracts for this expiry" all day. So every trading
+# morning, before today's contracts are mapped to Dhan ids (3c). A refresh
+# that fails or runs long is a warning, never a reason to hold the open:
+# yesterday's master still trades. scripts/lib/morning_checks.py reads it.
+# >>> masters-refresh (also loaded by scripts/tests/market-open-masters.test.sh)
+MASTERS_WAIT_SECONDS="${MARKET_OPEN_MASTERS_WAIT:-300}"
+MASTERS_WAIT_UNTIL="${MARKET_OPEN_MASTERS_UNTIL:-0912}"
+
+refresh_masters() {
+  local since out report verdict waited=0 line
+  since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  say "refreshing the instrument masters from FYERS (a few minutes) ..."
+  if ! out="$(api_post /api/Instruments/masters/refresh '{}' 2>/dev/null)"; then
+    case "$out" in
+      *"already running"*)
+        # Started from the console: its result is as good as ours.
+        say "  a refresh was already running; waiting for it"
+        since="" ;;
+      *)
+        warn "the instrument masters could not be refreshed ($(printf '%s' "${out:-the API did not answer}" | head -c 160)) — carrying on with the master as it is"
+        return 0 ;;
+    esac
+  fi
+  while :; do
+    report="$(api_get /api/Instruments/masters 2>/dev/null \
+      | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" masters --since "$since" 2>/dev/null)"
+    verdict="$(printf '%s\n' "$report" | sed -n 1p)"
+    case "$verdict" in done|failed) break ;; esac
+    if [ "$waited" -ge "$MASTERS_WAIT_SECONDS" ] || [ "$(date +%H%M)" -ge "$MASTERS_WAIT_UNTIL" ]; then
+      warn "the instrument master refresh had not finished after ${waited}s — carrying on; it finishes in the background (Data > Overview > Symbol masters)"
+      return 0
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      *"refresh failed"*|*"not refreshed"*|*"listed no masters"*) warn "instrument master $line" ;;
+      *) say "  $line" ;;
+    esac
+  done < <(printf '%s\n' "$report" | sed 1d)
+}
+# <<< masters-refresh
+
+if [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: the instrument masters are not refreshed"
+elif [ "$DRY_RUN" = 1 ]; then
+  say "dry run: would refresh the instrument masters from FYERS and wait up to ${MASTERS_WAIT_SECONDS}s for them"
+else
+  refresh_masters
+fi
+
 start_daemon() {
   label="$1"; path="$2"
   body="${3:-{\}}"

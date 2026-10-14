@@ -212,20 +212,28 @@ Service account behind the live feed may call too.
 `scripts/market-open.sh` runs at 08:45 IST on the server:
 
 1. Holiday check (System → Calendar). On a holiday nothing starts.
-2. **Dhan status.** If Dhan is not signed in, the script asks the API for the
+2. **Instrument master refresh** from FYERS's symbol masters
+   (`POST /api/Instruments/masters/refresh`, the console's Data → Overview →
+   Symbol masters → Download latest), so a new weekly series is on the
+   platform before step 4 maps it. The script waits up to five minutes (never
+   past 09:12) and logs each master's inserted, updated and skipped counts. A
+   failure or a timeout is a warning, and the day goes on with the master as it
+   is. Until 15 Oct this was done by hand only; on 14 Oct the master was from
+   9 Sep, NIFTY ran on the monthly contract and no NIFTY chain was recorded.
+3. **Dhan status.** If Dhan is not signed in, the script asks the API for the
    automatic sign-in first (when it is set up). If that fails too, a
    notification asks for Connect, and the script waits until 09:12. If the token
    ends before the MCX close, it takes a fresh one the same way (nothing streams
    on Dhan yet), and otherwise says so.
-3. **Instrument import**, so the day's new strikes and expiries have Dhan ids.
-4. **Dhan feed** started from Data → Feeds, and the **chain recorder** switched on.
-5. FYERS sign-in wait, as before, for the strategies.
-6. The FYERS feed and its chain poller are **not** started while Dhan is the
+4. **Instrument import**, so the day's new strikes and expiries have Dhan ids.
+5. **Dhan feed** started from Data → Feeds, and the **chain recorder** switched on.
+6. FYERS sign-in wait, as before, for the strategies.
+7. The FYERS feed and its chain poller are **not** started while Dhan is the
    feed.
-7. After the open, the script counts fresh prices. If the Dhan feed delivered
+8. After the open, the script counts fresh prices. If the Dhan feed delivered
    none, it stops it and starts the FYERS feed instead; Dhan's chain keeps
    recording.
-8. It deploys the plan (`config/morning-plan.txt`) into every account, then,
+9. It deploys the plan (`config/morning-plan.txt`) into every account, then,
    a minute later, **counts the live runs against the plan** and sends the
    answer to Telegram: `Morning plan 23/23 live`, or `Morning plan SHORT 21/23
    live — <account> <strategy> <underlying>: <why it ended>`. A short or unread
@@ -243,7 +251,7 @@ itself; nothing needs restarting.
 
 ### When Dhan goes silent during the session (automatic failover)
 
-Step 7 covers the open. For the rest of the session the API's
+Step 8 covers the open. For the rest of the session the API's
 `FeedFailoverService` does the same job: on 24 Sep the last Dhan tick was
 11:27:36 and FYERS took over at 11:34:06 only because someone switched by hand;
 unattended, all 26 runs would have stayed blind until the 15:30 square-off.

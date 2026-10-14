@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-The morning job's two gates, read from the API's own answers.
+The morning job's two gates, and its instrument master refresh, read from the
+API's own answers.
 
     session   Is today a trading day?        GET /api/MarketSession/check
     feed      Has every spot the plan trades priced since today's open?
                                              GET /api/LiveData/latest/all
+    masters   Has this morning's master refresh finished, and how did it go?
+                                             GET /api/Instruments/masters
 
 scripts/market-open.sh calls them with the answer on stdin;
 scripts/tests/market-open-gates.test.sh feeds them fixtures.
@@ -33,6 +36,19 @@ feed  (--underlyings A,B,C; --now ISO-8601, default the clock)
       partial  some are missing, but the equity session is flowing
       fail     none of the plan's NSE/BSE spots is fresh (for an MCX-only
                plan: none at all) — the feed is not delivering the session
+
+masters  (--since ISO-8601 UTC, when the refresh was asked for; empty: any)
+    Reads GET /api/Instruments/masters while the morning job's refresh runs.
+    Prints running | done | failed, then one line per master: its inserted,
+    updated and skipped counts, or why it failed.
+
+      running  the refresh job is still going
+      done     every master was refreshed at or after --since, without error
+      failed   the job is over and a master failed, or was not refreshed
+
+    Until 15 Oct the masters were refreshed only by hand, and on 14 Oct the
+    newest had been on 9 Sep: NIFTY's weekly series were missing, NIFTY ran on
+    the monthly contract, and Dhan's chain recorder recorded no NIFTY chain.
 """
 from __future__ import annotations
 
@@ -162,6 +178,40 @@ def feed_verdict(quotes: object, underlyings: list[str], now: datetime) -> tuple
     return verdict, [summary] + lines
 
 
+def masters_verdict(body: object, since: Optional[datetime]) -> tuple[str, list[str]]:
+    """(running | done | failed | unknown, a line per master) for GET /api/Instruments/masters."""
+    if not isinstance(body, dict):
+        return "unknown", ["the API's answer about the masters could not be read"]
+    job = body.get("job") if isinstance(body.get("job"), dict) else {}
+    if job.get("isRunning"):
+        current = job.get("current")
+        return "running", [f"refreshing {current}" if current else "refreshing"]
+    lines: list[str] = []
+    problem = False
+    for m in body.get("masters") or []:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("name") or "?")
+        last = m.get("lastRefresh") if isinstance(m.get("lastRefresh"), dict) else None
+        started = _parse(last.get("startedUtc")) if last else None
+        if last is None or (since is not None and (started is None or started < since)):
+            problem = True
+            lines.append(f"{name}: not refreshed by this run"
+                         + (f" (its last refresh began {started:%Y-%m-%d %H:%M} UTC)" if started else ""))
+        elif not last.get("ok"):
+            problem = True
+            error = " ".join(str(last.get("error") or "no reason given").split())[:160]
+            # "failed", not "FAILED": the job's WARN line is a warning, and Sentinel
+            # reads a FAILED in the morning log as the job failing.
+            lines.append(f"{name}: refresh failed — {error}")
+        else:
+            lines.append(f"{name}: {int(last.get('inserted') or 0):,} inserted, {int(last.get('updated') or 0):,} "
+                         f"updated, {int(last.get('skipped') or 0):,} skipped")
+    if not lines:
+        return "failed", ["the API listed no masters"]
+    return ("failed" if problem else "done"), lines
+
+
 def _ist(moment: datetime, today: date) -> str:
     local = moment.astimezone(IST)
     return local.strftime("%H:%M:%S IST") if local.date() == today else local.strftime("%d %b %H:%M:%S IST")
@@ -185,7 +235,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     f = sub.add_parser("feed")
     f.add_argument("--underlyings", required=True)
     f.add_argument("--now", default=None, help="ISO-8601, default the clock")
+    m = sub.add_parser("masters")
+    m.add_argument("--since", default="", help="ISO-8601 UTC, when the refresh was asked for; empty: any")
     args = parser.parse_args(argv)
+
+    if args.gate == "masters":
+        since = _parse(args.since) if args.since else None
+        if args.since and since is None:
+            parser.error("--since must be ISO-8601")
+        verdict, lines = masters_verdict(_read_json(), since)
+        print(verdict)
+        print("\n".join(lines))
+        return 0
 
     if args.gate == "session":
         today = date.fromisoformat(args.today) if args.today else datetime.now(IST).date()
