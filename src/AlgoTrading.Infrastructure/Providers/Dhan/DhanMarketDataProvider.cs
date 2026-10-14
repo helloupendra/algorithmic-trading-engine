@@ -48,7 +48,7 @@ public class DhanMarketDataProvider : IMarketDataProvider
                     intraday ? "/charts/intraday" : "/charts/historical", body, DhanRateClass.Data, cancellationToken);
                 bars.AddRange(DhanHistory.Parse(document.RootElement, windowFrom, windowTo, intraday));
             }
-            catch (DhanApiException ex) when (!ex.IsAuthFailure && ex.HttpStatus is 400 or 404)
+            catch (DhanApiException ex) when (!ex.StopsEverything && ex.HttpStatus is 400 or 404)
             {
                 // A refusal about this instrument, not the connection: the caller
                 // skips it and keeps its sweep going.
