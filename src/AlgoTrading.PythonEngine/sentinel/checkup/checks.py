@@ -294,6 +294,79 @@ def dhan_token(inp: Inputs) -> list[Item]:
     return item(State.OK, detail)
 
 
+#: How long before Dhan's data plan ends the checkup starts saying so: enough
+#: for the close checkup to warn the evening before.
+PLAN_NOTICE = timedelta(days=3)
+_VALIDITY_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
+                     "%d/%m/%Y")
+_RENEW_PLAN = "Renew Data APIs in your Dhan account; a new token will not help."
+
+
+def parse_dhan_validity(value: Any) -> Optional[datetime]:
+    """Dhan's ``dataValidity`` from /profile, "2026-11-15 00:00:00.0" (IST), as UTC; None when it is not a date."""
+    text = str(value or "").strip()
+    for fmt in _VALIDITY_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=IST).astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _plan_end(ends: datetime) -> str:
+    """ "Sun 15 Nov 2026", with the time when Dhan gave one other than midnight."""
+    local = to_ist(ends)
+    day = local.strftime("%a %-d %b %Y")
+    return day if local.time() == time(0, 0) else f"{day} {local:%H:%M} IST"
+
+
+def data_plan_state(plan: Any, validity: Any, now: datetime) -> tuple[State, str]:
+    """
+    Dhan's data plan as /profile states it (``dataPlan``, ``dataValidity``):
+    FAIL when it is not active or its validity has passed, WARN when it ends
+    within PLAN_NOTICE, OK otherwise. On 14 Oct it had lapsed and the desk
+    found out from "806: Data APIs not Subscribed" during the session.
+    """
+    words = str(plan or "").strip()
+    ends = parse_dhan_validity(validity)
+    if words.lower() != "active":
+        return State.FAIL, f"Dhan's data plan is {words.lower() or 'not active'}: Dhan sends no market data."
+    if ends is not None and ends <= now:
+        return State.FAIL, f"Dhan's data plan ended on {_plan_end(ends)}: Dhan sends no market data."
+    if ends is not None and ends - now <= PLAN_NOTICE:
+        return State.WARN, f"Dhan's data plan ends on {_plan_end(ends)}."
+    if ends is None:
+        return State.OK, f"Active (Dhan gave no end date we could read: {str(validity or 'none')[:40]})."
+    return State.OK, f"Active until {_plan_end(ends)}."
+
+
+def _data_plan(inp: Inputs) -> tuple[State, str]:
+    """The Dhan data plan's state from GET /api/Dhan/status, or Unavailable when Dhan could not say."""
+    status = inp.api("/api/Dhan/status")
+    if not isinstance(status, dict):
+        raise Unavailable("the API's Dhan status could not be read", problem=True)
+    if not status.get("ok"):
+        if status.get("notSubscribed"):
+            return State.FAIL, "Dhan refused: the Data API subscription is not active (806). Dhan sends no market data."
+        said = " ".join(str(status.get("error") or "no reason given").split())
+        raise Unavailable(f"Dhan did not answer for its profile ({said[:140]})")
+    if not str(status.get("dataPlan") or "").strip():
+        raise Unavailable("Dhan's profile does not say whether the data plan is active")
+    return data_plan_state(status.get("dataPlan"), status.get("dataValidity"), inp.now)
+
+
+def dhan_plan(inp: Inputs) -> list[Item]:
+    state, detail = _data_plan(inp)
+    action = ""
+    if state is State.FAIL:
+        action = (f"{_RENEW_PLAN} Until it is active, FYERS is the only source of data: sign in on Connectors → FYERS "
+                  "and switch the feed on Data → Feeds.")
+    elif state is State.WARN:
+        action = ("Renew Data APIs in your Dhan account before it ends; a new token will not help. After it ends "
+                  "FYERS is the only source of data, and it needs a sign-in every morning.")
+    return [Item("dhan-plan", DATA, "Dhan data plan", state, detail, action, CONNECTORS)]
+
+
 def fyers_backup(inp: Inputs) -> list[Item]:
     fyers = _provider(inp, "fyers")
     if fyers is None or not fyers.get("isConfigured"):
@@ -302,14 +375,164 @@ def fyers_backup(inp: Inputs) -> list[Item]:
     if signed_in:
         return [Item("fyers-backup", DATA, "FYERS backup", State.OK, "Signed in: ready as the backup feed.",
                      link=CONNECTORS)]
+    # FYERS answers a refresh with "Refresh token API is currently disabled to
+    # comply with SEBI regulations": its token cannot renew itself any more.
+    detail = ("Not signed in. FYERS can no longer renew its token by itself (its refresh is switched off under "
+              "SEBI's rules), so it needs a sign-in each morning to be ready as the backup.")
     enabled, dry_run = _failover_settings(inp)
     if enabled and not dry_run:
         return [Item("fyers-backup", DATA, "FYERS backup", State.WARN,
-                     "Not signed in, and the feed failover is live: if Dhan goes silent it has nothing to switch to.",
+                     detail + " The feed failover is live: if Dhan goes silent it has nothing to switch to.",
                      "Sign in on Connectors → FYERS before the open.", CONNECTORS)]
-    return [Item("fyers-backup", DATA, "FYERS backup", State.INFO,
-                 "Not signed in. The data runs on Dhan; FYERS is only the backup.",
-                 "If you want the backup ready, sign in on Connectors → FYERS.", CONNECTORS)]
+    try:
+        plan_state, plan_detail = _data_plan(inp)
+    except Unavailable:
+        plan_state, plan_detail = State.OK, ""
+    if plan_state in (State.FAIL, State.WARN):
+        return [Item("fyers-backup", DATA, "FYERS backup", State.WARN,
+                     f"{detail} {plan_detail} Without Dhan's data plan, FYERS is the only way to get data.",
+                     "Sign in on Connectors → FYERS every morning until the Dhan data plan is renewed.", CONNECTORS)]
+    return [Item("fyers-backup", DATA, "FYERS backup", State.INFO, detail + " Dhan carries the data; FYERS is only the backup.",
+                 "If you want the backup ready, sign in on Connectors → FYERS each morning.", CONNECTORS)]
+
+
+#: The index underlyings always checked for contracts, whatever the plan says.
+CONTRACT_UNDERLYINGS = ("NIFTY", "BANKNIFTY", "SENSEX")
+#: The indices Dhan lists option expiries for (DhanInstruments.IndexUnderlyings).
+DHAN_INDICES = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"})
+#: The FYERS masters an index's options come from (InstrumentMasterService.Known).
+_FO_MASTER = {"SENSEX": "BSE_FO", "BANKEX": "BSE_FO"}
+#: A master older than this many weekdays has missed new series (a weekly
+#: expiry's come out every week). Weekends do not count: Friday's refresh is not
+#: old at the Sunday checkup.
+MASTER_STALE_DAYS = 2
+DATA_PAGE = "/data"
+_REFRESH_MASTERS = ("Refresh the instrument master: Data → Overview → Symbol masters → Download latest, or POST "
+                    "/api/Instruments/masters/refresh. The morning job does it before it maps today's contracts to "
+                    "Dhan ids; after a refresh by hand, POST /api/Dhan/instruments/import maps them.")
+
+
+def _traded_indices(inp: Inputs) -> list[str]:
+    """The indices the desk always trades, the plan's and the live runs' (those Dhan lists expiries for)."""
+    names = list(CONTRACT_UNDERLYINGS)
+    wanted = inp.ctx.plan()
+    if wanted is not None:
+        names += [u.upper() for _, _, u in wanted.expected_runs()]
+    try:
+        names += [r.underlying.upper() for r in _live_strategy_runs(inp)]
+    except Unavailable:
+        pass
+    return [u for u in dict.fromkeys(names) if u in DHAN_INDICES]
+
+
+def _api_said(exc: BaseException) -> str:
+    """What an API error said: its JSON message (the Dhan endpoints pass Dhan's on), else its status or type."""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            message = response.json().get("message")
+        except Exception:
+            message = None
+        if message:
+            return " ".join(str(message).split())[:140]
+        return f"HTTP {getattr(response, 'status_code', '?')}"
+    return _short(exc)[:100]
+
+
+def _dates(values: Any, today: date) -> list[date]:
+    found = []
+    for value in values if isinstance(values, list) else []:
+        try:
+            day = date.fromisoformat(str(value)[:10])
+        except ValueError:
+            continue
+        if day >= today:
+            found.append(day)
+    return sorted(set(found))
+
+
+def _weekdays_since(then: datetime, now: datetime) -> int:
+    """Weekdays (IST) after ``then``'s date, up to and including ``now``'s."""
+    start, end = to_ist(then).date(), to_ist(now).date()
+    return sum(1 for i in range(1, (end - start).days + 1) if (start + timedelta(days=i)).weekday() < 5)
+
+
+def _stale_masters(inp: Inputs, names: set[str]) -> list[str]:
+    """Words for each of these F&O masters that is older than MASTER_STALE_DAYS or failed its last refresh."""
+    try:
+        body = inp.api("/api/Instruments/masters")
+    except Unavailable:
+        return []
+    rows = [m for m in body.get("masters") or [] if isinstance(m, dict)] if isinstance(body, dict) else []
+    stale = []
+    for m in rows:
+        name = str(m.get("name"))
+        if name not in names:
+            continue
+        last = m.get("lastRefresh") if isinstance(m.get("lastRefresh"), dict) else None
+        if last is None:
+            stale.append(f"{name} has no refresh on record")
+            continue
+        when = _parse_utc(last.get("finishedUtc")) or _parse_utc(last.get("startedUtc"))
+        if not last.get("ok"):
+            stale.append(f"{name}'s last refresh ({_when(when, inp.now)}) failed: "
+                         f"{' '.join(str(last.get('error') or 'no reason given').split())[:100]}")
+        elif when is None or _weekdays_since(when, inp.now) > MASTER_STALE_DAYS:
+            stale.append(f"{name} was last refreshed {_when(when, inp.now)}")
+    return stale
+
+
+def option_contracts(inp: Inputs) -> list[Item]:
+    """
+    Does the platform have contracts for the nearest expiry Dhan lists? On 14
+    Oct the master was last refreshed on 9 Sep: the weekly series that had come
+    out since were missing, NIFTY runs traded the monthly contract, and the
+    chain recorder recorded no NIFTY chain all day.
+    """
+    today = inp.ist.date()
+    indices = _traded_indices(inp)
+    missing, fine, unchecked = [], [], []
+    for underlying in indices:
+        try:
+            # Straight to the API, not inp.api: Dhan's expiry list waits its turn
+            # behind the chain recorder, and a slow answer must not read as the
+            # whole API being down for the checks after this one.
+            listed = inp.ctx.api_get(f"/api/Dhan/expiries?underlying={underlying}")
+            dhan = _dates(listed.get("expiries") if isinstance(listed, dict) else None, today)
+        except Exception as exc:
+            unchecked.append(f"{underlying} ({_api_said(exc)})")
+            continue
+        if not dhan:
+            unchecked.append(f"{underlying} (Dhan lists no expiry from today)")
+            continue
+        rows = inp.api(f"/api/Instruments/derivatives/expiries?underlying={underlying}")
+        ours = _dates([r.get("expiryDate") for r in rows if isinstance(r, dict)] if isinstance(rows, list) else [],
+                      today)
+        nearest = dhan[0]
+        if nearest in ours:
+            fine.append(f"{underlying} {nearest:%-d %b}")
+        else:
+            has = f"the platform's nearest is {ours[0]:%-d %b}" if ours else "the platform has none from today"
+            missing.append(f"{underlying} {nearest:%-d %b} ({has})")
+    stale = _stale_masters(inp, {_FO_MASTER.get(u, "NSE_FO") for u in indices})
+
+    def item(state: State, detail: str, action: str = "") -> list[Item]:
+        return [Item("option-contracts", DATA, "Option contracts", state, detail, action, DATA_PAGE)]
+
+    tail = (f" Not compared: {_listed(unchecked)}." if unchecked else "") + \
+           (f" The master is old: {_listed(stale)}." if stale else "")
+    if missing:
+        return item(State.FAIL, f"No platform contracts for Dhan's nearest expiry: {_listed(missing)}. Runs on them "
+                                f"trade a later expiry and the chain recorder records nothing for them.{tail}",
+                    _REFRESH_MASTERS)
+    if not fine:
+        if stale:
+            return item(State.WARN, f"Could not compare with Dhan.{tail}", _REFRESH_MASTERS)
+        raise Unavailable(f"Dhan did not list its expiries: {_listed(unchecked)}")
+    if stale:
+        return item(State.WARN, f"Contracts for Dhan's nearest expiry are here ({_listed(fine)}).{tail}",
+                    _REFRESH_MASTERS)
+    return item(State.OK, f"The platform has contracts for Dhan's nearest expiry: {_listed(fine)}.{tail}")
 
 
 def _feeds_expected(inp: Inputs) -> Optional[bool]:
@@ -988,6 +1211,8 @@ def calendar_week(inp: Inputs) -> list[Item]:
 #: Every check by key: its area and title (for the item when it cannot run) and the function.
 CHECKS: dict[str, tuple[str, str, Check]] = {
     "dhan-token": (DATA, "Dhan token", dhan_token),
+    "dhan-plan": (DATA, "Dhan data plan", dhan_plan),
+    "option-contracts": (DATA, "Option contracts", option_contracts),
     "fyers-backup": (DATA, "FYERS backup", fyers_backup),
     "feeds": (DATA, "Live feeds", feeds),
     "failover": (DATA, "Feed failover", failover),

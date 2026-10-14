@@ -2,8 +2,9 @@
 When each checkup runs, and what it looks at.
 
 The times follow the desk's own day (IST): the Dhan sign-in between 08:00 and
-08:40, the morning job at 08:45, forecasts at 08:50 — so the morning checkup at
-08:55 sees all three. The NSE close at 15:30 and the forecast scoring at 15:50
+08:40, the morning job at 08:45 (which refreshes the instrument master), forecasts
+at 08:50 — so the morning checkup at 08:55 sees all three. The Dhan data plan is
+in the close checkup as well, so a plan that ends tomorrow is heard of today. The NSE close at 15:30 and the forecast scoring at 15:50
 come before the 16:00 checkup; market-close.sh at 23:58 before the 00:15 one.
 
 A checkup that could not run at its time (Sentinel was restarting, the box was
@@ -39,13 +40,13 @@ class Slot:
 
 MORNING = Slot(
     "morning", "before the open", "Before the open", time(8, 55), time(12, 0), "trading",
-    ("dhan-token", "fyers-backup", "feeds", "plan", "forecasts-issued", "recorders", "manual-books", "stale-runs",
-     "orphaned-legs", "incidents", "deploy", "disk", "archive", "calendar-today"))
+    ("dhan-token", "dhan-plan", "option-contracts", "fyers-backup", "feeds", "plan", "forecasts-issued", "recorders",
+     "manual-books", "stale-runs", "orphaned-legs", "incidents", "deploy", "disk", "archive", "calendar-today"))
 
 CLOSE = Slot(
     "close", "after the close", "After the close", time(16, 0), time(20, 0), "trading",
     ("runs-after-close", "legs-after-close", "manual-books", "carried-today", "forecasts-scored", "day-result",
-     "dhan-token", "failover", "incidents", "deploy", "desk-code"))
+     "dhan-token", "dhan-plan", "option-contracts", "failover", "incidents", "deploy", "desk-code"))
 
 # After market-close.sh (23:58): everything should be off. At a quarter past
 # midnight nobody wants a message that says so — only one that says it is not.
@@ -55,15 +56,15 @@ NIGHT = Slot(
 
 WEEKLY = Slot(
     "weekly", "for the week ahead", "Weekly review", time(18, 0), time(23, 0), "sunday",
-    ("dhan-token", "calendar-week", "recorders", "stale-runs", "orphaned-legs", "manual-books", "incidents",
-     "incident-notes", "failover", "deploy", "desk-code", "disk", "archive"))
+    ("dhan-token", "dhan-plan", "option-contracts", "calendar-week", "recorders", "stale-runs", "orphaned-legs",
+     "manual-books", "incidents", "incident-notes", "failover", "deploy", "desk-code", "disk", "archive"))
 
 # Asked for from the console: everything that means something at any hour;
 # the time-bound checks (the plan, the forecasts) decide for themselves.
 ON_REQUEST = Slot(
     "on-request", "right now", "On request", checks=(
-        "dhan-token", "fyers-backup", "feeds", "plan", "recorders", "manual-books", "stale-runs", "orphaned-legs",
-        "incidents", "failover", "deploy", "desk-code", "disk", "archive"),
+        "dhan-token", "dhan-plan", "option-contracts", "fyers-backup", "feeds", "plan", "recorders", "manual-books",
+        "stale-runs", "orphaned-legs", "incidents", "failover", "deploy", "desk-code", "disk", "archive"),
     telegram=False)
 
 SCHEDULED = (MORNING, CLOSE, NIGHT, WEEKLY)
