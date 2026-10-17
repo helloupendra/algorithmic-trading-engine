@@ -131,6 +131,26 @@ public sealed class AiMemoryTests
     }
 
     [Fact]
+    public async Task A_question_is_refused_as_a_note_or_a_correction_and_nothing_is_kept()
+    {
+        var ai = Build();
+        ai.Provider.On(Judge1, Answer("The desk made ₹2,22,414 today."));
+        var answer = await ai.Gateway.AskAsync(Question("How much did the desk make today?"), new RecordingSink(), CancellationToken.None);
+        var memory = Memory(ai);
+
+        var asNote = await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(null, "Which expiry does NIFTY use?  ", "upendra", "telegram", CancellationToken.None));
+        var asCorrection = await Assert.ThrowsAsync<AiMemoryException>(() => memory.FeedbackAsync(answer.CallId, -1, "What are those numbers f5531 etc how i understand?", "upendra", "console", CancellationToken.None));
+
+        Assert.Contains("reads as a question", asNote.Message);
+        Assert.Contains("reads as a question", asCorrection.Message);
+        Assert.Empty(await ai.Db.AiMemories.ToListAsync());
+
+        // A question inside a rule is still a rule.
+        var rule = await memory.RememberAsync(null, "When asked \"how much today?\", give net after charges.", "upendra", "console", CancellationToken.None);
+        Assert.Equal(AiMemoryStatus.Active, rule.Status);
+    }
+
+    [Fact]
     public async Task A_thumbs_down_with_a_correction_becomes_an_active_memory_on_that_question()
     {
         var ai = Build();
