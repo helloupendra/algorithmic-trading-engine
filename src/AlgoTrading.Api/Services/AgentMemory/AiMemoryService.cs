@@ -68,7 +68,7 @@ public sealed class AiMemoryService(
             AgentKey = agent,
             Kind = AiMemoryKind.Note,
             Status = AiMemoryStatus.Active,
-            Text = CleanText(text),
+            Text = OwnerText(text),
             Source = AiMemorySource.Owner,
             Via = via,
             CreatedBy = by,
@@ -126,7 +126,7 @@ public sealed class AiMemoryService(
         if (correcting)
         {
             string agent = AgentWithMemory(call.AgentKey);
-            string text = CleanText(correction);
+            string text = OwnerText(correction);
             call.FeedbackNote = text;
             memory = await db.AiMemories.FirstOrDefaultAsync(
                 m => m.SourceCallId == callId && m.Kind == AiMemoryKind.Correction, cancellationToken);
@@ -398,6 +398,23 @@ public sealed class AiMemoryService(
         if (flat.Length == 0) throw new AiMemoryException("The memory is empty: write what the agent should remember.");
         if (flat.Length > AiMemoryBook.MaxText) throw new AiMemoryException($"A memory is at most {AiMemoryBook.MaxText} characters; this is {flat.Length}. Keep it to one rule or fact.");
         return AiToolFormat.Text(flat, AiMemoryBook.MaxText) ?? flat;
+    }
+
+    /// <summary>
+    /// The owner's own words kept as a note or a correction, refused when they read as a question: a memory goes into
+    /// every answer's prompt. On 6 Oct a question typed into the correction box ("What are those numbers f5531 etc how
+    /// i understand?") was kept as a News Analyst correction and sent with 1,395 prompts until it was retired on 17 Oct.
+    /// </summary>
+    private static string OwnerText(string? text)
+    {
+        string clean = CleanText(text);
+        if (clean.EndsWith('?'))
+        {
+            throw new AiMemoryException("That reads as a question, not something to remember. Ask it in the chat; a note or a "
+                + "correction says what is true or what the answer should have been, for example \"Net P&L is after charges.\"");
+        }
+
+        return clean;
     }
 
     private static string Cut(string text, int max) => text.Length <= max ? text : text[..max];
