@@ -207,9 +207,12 @@ public sealed partial class PortfolioLinkService(
     public async Task<IReadOnlyList<PortfolioBrokerCount>> CountsAsync(CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var rows = await db.PortfolioConnections.AsNoTracking()
+        // Three columns only: no token, no account label, no user leaves the table for this.
+        var rows = (await db.PortfolioConnections.AsNoTracking()
+                .Select(c => new { c.Broker, c.Status, c.ExpiresUtc })
+                .ToListAsync(cancellationToken))
             .Select(c => new PortfolioConnection { Broker = c.Broker, Status = c.Status, ExpiresUtc = c.ExpiresUtc })
-            .ToListAsync(cancellationToken);
+            .ToList();
         return PortfolioBrokers.All.Select(b =>
         {
             var statuses = rows.Where(r => r.Broker == b).Select(r => StatusOf(r, now)).ToList();
