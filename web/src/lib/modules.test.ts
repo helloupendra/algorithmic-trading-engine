@@ -13,8 +13,16 @@ const pagesOf = (nav: NavWorkspace[], key: string) => nav.find((w) => w.key === 
 const allUrls = (nav: NavWorkspace[]) => nav.flatMap((w) => w.pages.map((p) => p.to))
 
 describe('the registry', () => {
-  it('is the eight workspaces, in order, Today first', () => {
-    expect(WORKSPACES.map((w) => w.label)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+  it('is the nine workspaces, in order, Today first', () => {
+    expect(WORKSPACES.map((w) => w.label)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Portfolio', 'Research', 'AI', 'Data', 'System'])
+  })
+
+  it('keeps Portfolio one page at /portfolio that every signed-in user has', () => {
+    const portfolio = WORKSPACES.find((w) => w.key === 'portfolio')!
+    expect(portfolio).toMatchObject({ label: 'Portfolio', home: '/portfolio' })
+    expect(portfolio.tabs).toHaveLength(1)
+    expect(portfolio.tabs[0].requires).toBeUndefined()
+    expect(portfolio.tabs[0].pages.map((p) => [p.to, p.only])).toEqual([['/portfolio', undefined]])
   })
 
   it('keeps Today one admin-only page at /today', () => {
@@ -90,9 +98,10 @@ describe('accessFor and allows', () => {
 })
 
 describe('navFor', () => {
-  it('gives an admin all eight workspaces, Today first, opening Markets on the chain', () => {
+  it('gives an admin all nine workspaces, Today first, opening Markets on the chain', () => {
     const nav = navFor(admin)
-    expect(labels(nav)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+    expect(labels(nav)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Portfolio', 'Research', 'AI', 'Data', 'System'])
+    expect(nav.find((w) => w.key === 'portfolio')!.to).toBe('/portfolio')
     expect(nav.find((w) => w.key === 'ai')!.to).toBe('/ai')
     expect(nav.find((w) => w.key === 'markets')!.to).toBe('/markets/chain')
     expect(nav[0].to).toBe('/today')
@@ -126,7 +135,7 @@ describe('navFor', () => {
 
   it("shows a trader their pages when the grants are not known", () => {
     const nav = navFor(traderUnknown)
-    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research'])
+    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Portfolio', 'Research'])
     expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Chart', 'Option chain', 'Movers', 'Factors', 'News'])
     expect(pagesOf(nav, 'trade')).toEqual(['Library', 'History', 'Positions', 'Orders', 'Manual order'])
     expect(pagesOf(nav, 'research')).toEqual(['Filter lab'])
@@ -134,21 +143,21 @@ describe('navFor', () => {
 
   it('drops a workspace whose every tab needs a grant the trader lacks', () => {
     const nav = navFor(traderWith('strategies'))
-    expect(labels(nav)).toEqual(['Desk', 'Trade', 'Research'])
-    expect(labels(navFor(traderWith('market-data')))).toEqual(['Desk', 'Markets'])
+    expect(labels(nav)).toEqual(['Desk', 'Trade', 'Portfolio', 'Research'])
+    expect(labels(navFor(traderWith('market-data')))).toEqual(['Desk', 'Markets', 'Portfolio'])
   })
 
-  it('leaves a trader with no grants the Desk alone', () => {
+  it('leaves a trader with no grants the Desk and their own Portfolio', () => {
     const nav = navFor(traderWith())
-    expect(labels(nav)).toEqual(['Desk'])
-    expect(nav[0].pages.map((p) => p.to)).toEqual(['/desk'])
+    expect(labels(nav)).toEqual(['Desk', 'Portfolio'])
+    expect(nav.flatMap((w) => w.pages.map((p) => p.to))).toEqual(['/desk', '/portfolio'])
   })
 
   it('gives both consoles the same URL for a page both have', () => {
     const adminUrls = new Set(allUrls(navFor(admin)))
     const shared = allUrls(navFor(traderUnknown)).filter((u) => adminUrls.has(u))
     expect(shared).toEqual(['/desk', '/markets', '/markets/chart', '/markets/chain', '/markets/movers', '/markets/factors', '/markets/news',
-      '/trade/library', '/trade/history', '/trade/positions', '/trade/orders', '/trade/ticket', '/research/lab'])
+      '/trade/library', '/trade/history', '/trade/positions', '/trade/orders', '/trade/ticket', '/portfolio', '/research/lab'])
   })
 })
 
@@ -207,6 +216,15 @@ describe('locate', () => {
     expect(at(adminNav, '/today/')).toBe('Today / Today')
     expect(at(adminNav, '/today/nowhere')).toBeNull()
     expect(at(traderNav, '/today')).toBeNull()
+  })
+
+  it('finds Portfolio for both consoles, at its exact path', () => {
+    for (const nav of [adminNav, traderNav]) {
+      expect(at(nav, '/portfolio')).toBe('Portfolio / Portfolio')
+      expect(at(nav, '/portfolio/')).toBe('Portfolio / Portfolio')
+      expect(at(nav, '/portfolio/nowhere')).toBeNull()
+    }
+    expect(nameRoute('/portfolio', traderNav)).toEqual({ page: 'Portfolio' })
   })
 
   it('holds the Desk to its exact path', () => {

@@ -189,6 +189,14 @@ export const IconTrash = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+/** A briefcase: the Portfolio workspace, what a user owns at their brokers. */
+export const IconBriefcase = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3.5" y="7" width="17" height="12.5" rx="2" />
+    <path d="M9 7V5.5A1.5 1.5 0 0110.5 4h3A1.5 1.5 0 0115 5.5V7M3.5 12.5h17" />
+  </Icon>
+)
+
 export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M12 5v14M5 12h14" />

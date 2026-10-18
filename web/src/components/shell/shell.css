@@ -43,17 +43,29 @@
 .shell__brand .shell__brand-mark svg { width: 14px; height: 14px; }
 .shell__brand b { color: var(--live); font-weight: 600; }
 
-/* Workspaces: the bar's own height, underlined when current. */
+/* Workspaces: the bar's own height, underlined when current. An admin has
+   nine since Portfolio (18 Oct): the links tighten as the bar narrows (below),
+   and where they still do not fit the row scrolls sideways under a fade (it
+   is a .scroll-x) instead of pushing the page wider than the window. The row,
+   not each link, reaches 1px down over the bar's rule, so the scroll box
+   does not clip the underline. */
 .shell__ws {
   display: flex;
   align-self: stretch;
   gap: 2px;
+  min-width: 0;
+  margin-bottom: -1px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.shell__ws::-webkit-scrollbar { display: none; }
 .shell__ws-link {
   display: flex;
+  flex: none;
   align-items: center;
   padding: 0 10px;
-  margin-bottom: -1px;
+  white-space: nowrap;
   border-bottom: 2px solid transparent;
   color: var(--text-2);
   text-decoration: none;
@@ -512,6 +524,38 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   .st__narrow { display: inline; }
 }
 
+/* An admin's bar: nine workspaces since Portfolio (18 Oct), about 75px more
+   than before and twice a trader's. The same things give way, earlier, and
+   the links tighten, measured on the admin bar (private/screens/portfolio/
+   measure-topbar.mjs) so that above 1000px no workspace scrolls out of sight.
+   A trader's bar keeps the breakpoints above. */
+@media (max-width: 1560px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search { width: auto; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search span { display: none; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search kbd { margin-left: 0; }
+}
+@media (max-width: 1440px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws { gap: 0; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws-link { padding: 0 6px; }
+}
+@media (max-width: 1320px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws-link { padding: 0 5px; font-size: 12.5px; }
+}
+@media (max-width: 1280px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) .st--clock { display: none; }
+}
+@media (max-width: 1200px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__brand-word { display: none; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .st__long { display: none; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .st__short { display: inline; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .st--health .st__wide { display: none; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .st--health .st__narrow { display: inline; }
+}
+@media (max-width: 1000px) {
+  .shell__top:has(.shell__ws > :nth-child(9)) { gap: 12px; }
+  .shell__top:has(.shell__ws > :nth-child(9)) .shell__status { gap: 11px; }
+}
+
 /* A phone: the workspaces move to the bottom bar, the top bar keeps what the
    phone's own clock cannot tell you (markets, health, incidents, the kill
    switch), and the tab strip scrolls. */
@@ -611,6 +655,13 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   .shell__bottom .shell__ws-link svg { width: 18px; height: 18px; }
   .shell__bottom .shell__ws-link[aria-current] { color: var(--text); font-weight: 600; }
   .shell__bottom .shell__ws-link[aria-current] svg { color: var(--brand-hi); }
+  /* Nine workspaces (an admin's) leave each about 42px on a 375px phone, less
+     than "Research" or "Portfolio" needs: the words step down half a size, and
+     a column is never narrower than its word (with 2px a side), taking the
+     room from short ones like "AI". Measured from 320px up
+     (private/screens/portfolio/measure-bottombar.mjs). */
+  .shell__bottom:has(> :nth-child(9)) { grid-auto-columns: minmax(min-content, 1fr); }
+  .shell__bottom:has(> :nth-child(9)) .shell__ws-link { padding: 0 2px; font-size: 9.5px; }
 
   /* Under the notch and the home bar (index.html sets viewport-fit=cover). */
   .palette {

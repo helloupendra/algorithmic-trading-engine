@@ -2,8 +2,8 @@
  * Workspace registry: the single source of truth for what this console is made
  * of, where each part lives and who may see it.
  *
- * The console is eight workspaces (Today, Desk, Markets, Trade, Research, AI,
- * Data, System), each holding tabs. A tab declares what it requires: the Admin role, or one of
+ * The console is nine workspaces (Today, Desk, Markets, Trade, Portfolio,
+ * Research, AI, Data, System), each holding tabs. A tab declares what it requires: the Admin role, or one of
  * the module grants the API enforces (PlatformModules on the server). The top
  * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
  * here, so a part the user may not use is absent everywhere at once rather
@@ -21,7 +21,17 @@
 
 import type { ComponentType, SVGProps } from 'react'
 import type { MeResponse } from './api'
-import { IconCalendar, IconCandles, IconChip, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
+import {
+  IconBriefcase,
+  IconCalendar,
+  IconCandles,
+  IconChip,
+  IconDashboard,
+  IconDatabase,
+  IconFlask,
+  IconServer,
+  IconSwitch,
+} from '../components/icons'
 
 /** The module keys the server grants to traders (PlatformModules.cs). */
 export const GRANT_KEYS = ['strategies', 'backtesting', 'market-data', 'notebook', 'analysis'] as const
@@ -30,7 +40,7 @@ export type GrantKey = (typeof GRANT_KEYS)[number]
 /** What a tab needs beyond being signed in: the Admin role, or one grant. */
 export type Requirement = 'admin' | GrantKey
 
-export type WorkspaceKey = 'today' | 'desk' | 'markets' | 'trade' | 'research' | 'ai' | 'data' | 'system'
+export type WorkspaceKey = 'today' | 'desk' | 'markets' | 'trade' | 'portfolio' | 'research' | 'ai' | 'data' | 'system'
 
 /** The two consoles one registry serves. */
 export type Side = 'admin' | 'trader'
@@ -263,6 +273,32 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/trade/risk',
         requires: 'admin',
         pages: [{ label: 'Risk', to: '/trade/risk', keywords: ['kill switch', 'limits'] }],
+      },
+    ],
+  },
+  {
+    // A user's own demat and broker accounts, linked read-only (owner, 18 Oct
+    // 2026): facts about what they hold, never advice. Every signed-in user
+    // has it, admins too, with no grant: the API answers for the caller alone.
+    // After Trade, the other workspace about the user's own money.
+    key: 'portfolio',
+    label: 'Portfolio',
+    home: '/portfolio',
+    description: 'Your own demat and broker accounts, read-only: holdings, value, P&L and how they are spread.',
+    icon: IconBriefcase,
+    tabs: [
+      {
+        key: 'portfolio',
+        label: 'Portfolio',
+        home: '/portfolio',
+        pages: [
+          {
+            label: 'Portfolio',
+            to: '/portfolio',
+            exact: true,
+            keywords: ['holdings', 'demat', 'investments', 'allocation', 'angel one', 'dhan', 'fyers', 'funds'],
+          },
+        ],
       },
     ],
   },
