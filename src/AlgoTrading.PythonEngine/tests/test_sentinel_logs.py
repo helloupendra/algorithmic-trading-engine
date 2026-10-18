@@ -517,6 +517,50 @@ class SignatureTests(LogsAgentTestCase):
             "Data APIs in your Dhan account; a new token will not help."))
         self.assertEqual(["logs:vendor-plan:dhan"], list(self.check()))
 
+    # 13 Oct 2026, logs/market-open-2026-10-13.log: the morning job asked the API to refresh FYERS's token.
+    SEBI_REFUSAL = ('09:05:41    refresh unavailable: {"connected":false,"message":"FYERS declined the refresh: Refresh '
+                    'token API is currently disabled to comply with SEBI regulations"}\n')
+
+    def test_a_broker_refusing_something_under_sebi_s_rules_opens_one_held_incident(self):
+        self.start_watching("api.log")
+        self.write("market-open-2026-09-24.log", self.SEBI_REFUSAL)
+        found = self.check()
+        self.assertEqual(["logs:vendor-regulatory:fyers"], list(found))
+        finding = found["logs:vendor-regulatory:fyers"]
+        self.assertEqual(("vendor-regulatory", Severity.MEDIUM), (finding.rule, finding.severity))
+        self.assertEqual("A broker changed something under SEBI's rules", finding.title)
+        self.assertIn("FYERS refused something and cited SEBI", finding.summary)
+        self.assertIn("acknowledge this incident", finding.suggestion)
+        # The same refusal from the feed, in api.log, is the same incident.
+        self.append("api.log", info(FEEDS, "[FYERS feed] [fyers] {'code': -50, 'message': 'Refresh token API is currently "
+                                           "disabled to comply with SEBI regulations'}"))
+        self.assertEqual(["logs:vendor-regulatory:fyers"], list(self.check()))
+        # It comes back every trading morning: held open across a long weekend, not raised again each day.
+        self.assertIn("logs:vendor-regulatory:fyers", self.idle(4 * 24 * 3600, step=3600))
+        self.assertEqual({}, self.idle(4 * 24 * 3600, step=3600))
+
+    def test_iras_relay_and_the_desks_own_words_about_circulars_open_nothing(self):
+        self.start_watching("api.log")
+        # Ira repeating it, with and without its logger line.
+        self.append("api.log", info(self.IRA, "Ira: told admin (incident, text and voice): FYERS: Refresh token API is "
+                                              "currently disabled to comply with SEBI regulations"))
+        self.append("api.log", f"{B}Ira: told admin (compliance, text only): FYERS market orders are no longer allowed as "
+                               f"per SEBI framework.\n")
+        # The Compliance Triage and the circulars recorder quoting a rule.
+        self.append("api.log", info("AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent",
+                                    "Compliance triage: FYERS market orders are no longer allowed as per SEBI framework"))
+        self.append("api.log", warn("AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder",
+                                    "fyers:x: FYERS page not available under SEBI rules"))
+        # Half a rule: SEBI named with nothing refused, a refusal with no regulator named, the API with no vendor.
+        self.append("api.log", info(CTRL, "Charges for run 7: SEBI fee 0.0001% of turnover, as per SEBI regulations"))
+        self.append("api.log", info(FEEDS, "[FYERS feed] [fyers] refresh disabled; sign in again"))
+        self.append("api.log", warn(CTRL, "Order refused: not allowed as per SEBI regulations"))
+        self.assertEqual(set(), {f.rule for f in self.check().values()} & {"vendor-regulatory"})
+
+        # The words the relay and the triage carried, from any other logger, are the vendor's own.
+        self.append("api.log", warn(CTRL, "FYERS market orders are no longer allowed as per SEBI framework"))
+        self.assertIn("logs:vendor-regulatory:fyers", self.check())
+
     def test_the_desks_own_401_is_not_a_vendor(self):
         self.start_watching("api.log")
         self.append("api.log", info(REG, "[strategy:Ghost:NIFTY] 401 Client Error: Unauthorized for url: "

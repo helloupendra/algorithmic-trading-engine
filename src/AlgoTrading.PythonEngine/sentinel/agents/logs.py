@@ -27,6 +27,10 @@ Each signature is one of this desk's own failures:
 * ``vendor-auth`` — 10 Sep: an expired FYERS token; Dhan's 24-hour tokens.
 * ``vendor-plan`` — 14 Oct: Dhan's Data API plan had lapsed ("806: Data APIs
   not Subscribed"), and the desk called it a dead token.
+* ``vendor-regulatory`` — 13 Oct: FYERS refused a token refresh because the
+  "Refresh token API is currently disabled to comply with SEBI regulations".
+  A broker that refuses something and cites the regulator has changed a rule
+  the desk must follow; it had been on FYERS's notice board since 10 Mar.
 * ``job-failed`` / ``desk-warning`` / ``desk-relaunched`` — what desk.sh, the
   morning job and the archive say went wrong; desk.sh started several times
   in seconds.
@@ -126,6 +130,10 @@ HOLD_SECONDS = {
     "rate-limited": 900,
     "vendor-auth": 3600,       # a dead token stays dead until someone renews it
     "vendor-plan": 3600,       # and a lapsed data plan until someone pays for it
+    # A broker's rule change citing SEBI does not go away: FYERS refuses the
+    # refresh every trading morning. Held a week, so a long weekend or a
+    # holiday between two mornings is still the one incident.
+    "vendor-regulatory": 7 * 24 * 3600,
     "order-rate-limit": 3600,  # a churning strategy hits the limit in bursts all day
     "desk-warning": 3600,
     # A recurring bug (25 Sep: alert events too long for their column, ~20 a
@@ -291,6 +299,31 @@ _VENDOR_AUTH = re.compile(
 #: does not fix it, so it is never vendor-auth.
 _DATA_PLAN = re.compile(r"(?i)data apis? (?:is |are )?not subscribed|data api subscription is not active"
                         r"|not subscribed to data apis|\bDH-902\b|\b806: data")
+#: A vendor citing the regulator for what it refuses or has stopped: FYERS on 13
+#: Oct 2026, "Refresh token API is currently disabled to comply with SEBI
+#: regulations". Both halves are needed: a refusal, and the regulator named as
+#: its reason. SEBI's fee in a contract note is neither.
+_CITES_REGULATOR = re.compile(
+    r"(?i)\b(?:comply|compliance|accordance|as per|under|due to|mandated by|required by|in line with)\b[^.;|\"]{0,40}?"
+    r"\b(?:sebi|regulat\w*|exchange (?:rules|guidelines|circulars?))\b"
+    r"|\bsebi(?:'s)?\s+(?:regulations?|rules?|guidelines?|circulars?|mandates?|framework|directives?|norms)\b"
+    r"|\bregulatory\s+(?:requirements?|guidelines?|compliance|reasons?|changes?|restrictions?)\b")
+_REFUSED = re.compile(
+    r"(?i)\b(?:disabled|declined|refused|rejected|denied|blocked|restricted|discontinued|deprecated|unavailable"
+    r"|no longer|not (?:allowed|permitted|supported|available|enabled))\b")
+#: Loggers that write about the regulator themselves — the circulars recorder,
+#: the Compliance Triage and its alerts, the AI gateway and the Telegram
+#: assistant quoting a circular or the owner's question. What they write is
+#: the desk's own reading of a rule, never a vendor refusing something.
+REGULATION_WRITERS = frozenset({
+    "AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder",
+    "AlgoTrading.Api.Services.RegulatoryCircularsRecorderService",
+    "AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent",
+    "AlgoTrading.Api.Services.AiAgents.ComplianceAlerts",
+    "AlgoTrading.Infrastructure.Ai.AiGateway",
+    "AlgoTrading.Api.Services.AiTelegram.TelegramAssistant",
+})
+_REGULATION_WRITERS_SHORT = frozenset(c.rsplit(".", 1)[-1] for c in REGULATION_WRITERS)
 _LOCALHOST = re.compile(r"(?i)localhost|127\.0\.0\.1")
 _FAILED_WORD = re.compile(r"\bFAILED\b")
 _DESK_START = re.compile(r"^=== desk started \(pid \d+")
@@ -1239,6 +1272,9 @@ class LogsAgent(Agent):
             scan.stall_events.append(((m["ul"] if m else None) or o.underlying or "?", False))
             return True
 
+        if self._vendor_regulatory(o, text, raw, scan, t):
+            return True
+
         if o.kind in ("feed", "runner", "daemon", "api") and _DATA_PLAN.search(text) \
                 and (o.vendor or _vendor_in_text(text) or "dhan") == "dhan":
             # Before vendor-auth: on 14 Oct Dhan's "806: Data APIs not Subscribed" came
@@ -1377,6 +1413,38 @@ class LogsAgent(Agent):
             frame = _trim(last_frame)
             if frame not in hit.lines and len(hit.lines) < EVIDENCE_LINES:
                 hit.lines.append(frame)
+
+    def _vendor_regulatory(self, o: _Origin, text: str, raw: str, scan: _Scan, t: Optional[str]) -> bool:
+        """
+        A broker or vendor refusing something and citing SEBI or its rules as the
+        reason: one incident per vendor, held a week (it comes back every
+        morning). The API's own words count only when they name the vendor, and
+        never from a logger that writes about circulars itself.
+        """
+        if not (_REFUSED.search(text) and _CITES_REGULATOR.search(text)):
+            return False
+        if o.kind == "api" and o.component in _REGULATION_WRITERS_SHORT:
+            return False
+        vendor = o.vendor or _vendor_in_text(text)
+        if vendor is None and o.kind == "api":
+            return False
+        vendor = vendor or "broker"
+        name = _vendor_name(vendor) if vendor != "broker" else "A broker"
+        scan.add(
+            fingerprint=f"{AGENT}:vendor-regulatory:{vendor.lower()}",
+            rule="vendor-regulatory", severity=Severity.MEDIUM,
+            title="A broker changed something under SEBI's rules",
+            what=(f"{o.component} reports that {name} refused something and cited SEBI or its rules — "
+                  f"{_trim(text, 180)}. A rule the broker now follows can stop the desk's sign-in, data or orders "
+                  f"until the desk follows it too."),
+            where=o.where,
+            suggestion=("13 Oct 2026: FYERS refused a token refresh \"to comply with SEBI regulations\", the retail algo "
+                        "framework on its notice board since 10 Mar (daily 2FA, no refresh tokens, static IP for "
+                        "orders). Read the broker's notice and the Compliance Triage's reports (AI → Reports), change "
+                        "the desk to follow it, then acknowledge this incident: it comes back every morning, and a "
+                        "resolved one opens again on the next refusal."),
+            raw=raw, file=o.file, hold=scan.hold("vendor-regulatory", text), line_time=t)
+        return True
 
     def _rate_limited(self, o: _Origin, text: str, raw: str, scan: _Scan, t: Optional[str]) -> None:
         url = _URL_PATH.search(text)
