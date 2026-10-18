@@ -24,9 +24,34 @@ namespace AlgoTrading.Api.Services;
 /// </remarks>
 public static class ConsoleSite
 {
-    /// <summary>The routes the console's index.html answers: everything but the API, the hubs, Swagger, the docs, /ira and a missing manifest or worker.</summary>
-    public const string FallbackPattern =
-        @"{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)|docs(/|$)|ira(/|$)|[^/]*\.webmanifest$|ira-sw\.js$).*$)}";
+    /// <summary>
+    /// The console's own top-level routes (web/src/App.tsx), and the old /admin and /trader that redirect inside it.
+    /// Only these get the console's index.html with a 200; /ira has its own shell.
+    /// </summary>
+    public static readonly string[] Routes =
+        ["account", "admin", "ai", "data", "desk", "forbidden", "invite", "login", "markets", "notebook", "portfolio",
+         "research", "system", "today", "trade", "trader"];
+
+    private static readonly string RouteAlternatives = string.Join('|', Routes);
+
+    /// <summary>A console route and anything under it: the React app's index.html.</summary>
+    public static readonly string FallbackPattern = $"{{*path:regex(^({RouteAlternatives})(/.*)?$)}}";
+
+    /// <summary>
+    /// Any other address outside the API, the hubs, Swagger, the docs, /ira and a missing manifest or worker: the
+    /// app's index.html (its own "not found" page) with a 404 and noindex. Until 19 Oct 2026 every such address
+    /// answered the landing page with a 200, which Google counted as duplicates of / ("soft 404").
+    /// </summary>
+    public static readonly string NotFoundPattern =
+        $@"{{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)|docs(/|$)|ira(/|$)|[^/]*\.webmanifest$|ira-sw\.js$|({RouteAlternatives})(/|$)).+$)}}";
+
+    /// <summary>
+    /// A missing page under /docs: a 404 page of its own. Before 19 Oct 2026 it fell through to the API's sign-in
+    /// policy and answered 401, which Google reports as "blocked due to unauthorized request".
+    /// </summary>
+    public const string DocsPattern = "docs/{*path}";
+
+    public const string NoIndex = "noindex, nofollow";
 
     /// <summary>/ira and anything under it: the phone app's shell.</summary>
     public const string IraPattern = "ira/{*path}";
@@ -38,7 +63,35 @@ public static class ConsoleSite
     {
         app.MapFallbackToFile(FallbackPattern, "index.html").AllowAnonymous();
         app.MapFallback(IraPattern, ServeIraShellAsync).AllowAnonymous();
+        app.MapFallback(NotFoundPattern, ServeAppNotFoundAsync).AllowAnonymous();
+        app.MapFallback(DocsPattern, ServeDocsNotFoundAsync).AllowAnonymous();
     }
+
+    private static async Task ServeAppNotFoundAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.Headers["X-Robots-Tag"] = NoIndex;
+        var file = context.RequestServices.GetRequiredService<IWebHostEnvironment>().WebRootFileProvider.GetFileInfo("index.html");
+        if (!file.Exists) return;
+        context.Response.ContentType = "text/html; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-cache";
+        await context.Response.SendFileAsync(file, context.RequestAborted);
+    }
+
+    private static async Task ServeDocsNotFoundAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.Headers["X-Robots-Tag"] = NoIndex;
+        context.Response.ContentType = "text/html; charset=utf-8";
+        await context.Response.WriteAsync(DocsNotFoundHtml, context.RequestAborted);
+    }
+
+    private const string DocsNotFoundHtml =
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\">"
+        + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Page not found · OpenFNO Docs</title>"
+        + "<link rel=\"stylesheet\" href=\"/docs/assets/docs.css\"></head><body><main style=\"max-width:40rem;margin:4rem auto;padding:0 1rem\">"
+        + "<h1>Page not found</h1><p>There is no docs page at this address.</p><p><a href=\"/docs/\">Go to the documentation</a></p>"
+        + "</main></body></html>";
 
     private static async Task ServeIraShellAsync(HttpContext context)
     {

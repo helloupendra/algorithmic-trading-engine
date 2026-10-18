@@ -663,7 +663,7 @@ app.Use(async (context, next) =>
 
 // Signed-in console paths: never indexed (X-Robots-Tag below).
 string[] ConsolePrefixes = ["/admin", "/trader", "/desk", "/markets", "/trade", "/research", "/data", "/system", "/account",
-    "/notebook", "/login", "/invite", "/api", "/hubs", "/ira", "/portfolio"];
+    "/notebook", "/login", "/invite", "/api", "/hubs", "/ira", "/portfolio", "/ai", "/today", "/forbidden", "/r/"];
 app.Use(async (context, next) =>
 {
     var p = context.Request.Path.Value ?? string.Empty;
