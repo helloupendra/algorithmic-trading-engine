@@ -40,6 +40,21 @@ check "anything else for the switch is ignored" \
   '{}' \
   "$(dhan DHAN_CHAIN_POLLER_ENABLED=yes)"
 
+echo "Portfolio section"
+portfolio() {  # key=value ... -> the Portfolio section as sorted JSON
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+print(json.dumps(build_api_settings(env).get("Portfolio"), sort_keys=True))
+PY
+}
+check "nothing set writes nothing (the page falls back to the platform's apps)" '{}' "$(portfolio PORTFOLIO_FYERS_APP_ID=)"
+check "the FYERS app and the Angel key are written" \
+  '{"Angel": {"ApiKey": "ak"}, "Fyers": {"AppId": "A-100", "RedirectUri": "https://x/api/Portfolio/callback/fyers", "SecretKey": "s"}}' \
+  "$(portfolio PORTFOLIO_FYERS_APP_ID=A-100 PORTFOLIO_FYERS_SECRET_KEY=s PORTFOLIO_FYERS_REDIRECT_URI=https://x/api/Portfolio/callback/fyers PORTFOLIO_ANGEL_API_KEY=ak)"
+
 echo "Telegram section"
 telegram() {  # key=value ... -> the Telegram section's chat ids
   python3 - "$@" <<'PY'

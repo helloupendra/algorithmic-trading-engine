@@ -140,6 +140,29 @@ def build_dhan_settings(env: dict[str, str]) -> dict:
     return dhan
 
 
+def build_portfolio_settings(env: dict[str, str]) -> dict:
+    """The Portfolio page's own apps at the brokers, with only the values .env sets.
+
+    Platform users sign in to these apps to link their own accounts, read only
+    (docs/modules/portfolio.md). Left empty, the page uses the platform's FYERS
+    app and Angel API key; FYERS lets only its creator sign in to an individual
+    app. No user's credential is ever here: their tokens are encrypted in the
+    database.
+    """
+    portfolio: dict = {}
+    fyers = only_set({
+        "AppId": env.get("PORTFOLIO_FYERS_APP_ID", ""),
+        "SecretKey": env.get("PORTFOLIO_FYERS_SECRET_KEY", ""),
+        "RedirectUri": env.get("PORTFOLIO_FYERS_REDIRECT_URI", ""),
+    })
+    if fyers:
+        portfolio["Fyers"] = fyers
+    angel = only_set({"ApiKey": env.get("PORTFOLIO_ANGEL_API_KEY", "")})
+    if angel:
+        portfolio["Angel"] = angel
+    return portfolio
+
+
 def build_api_settings(env: dict[str, str]) -> dict:
     """appsettings.Local.json for the API, from the parsed .env."""
     connection_string = build_connection_string(env)
@@ -217,6 +240,7 @@ def build_api_settings(env: dict[str, str]) -> dict:
             "StaticIp": env.get("SIMBROKER_STATIC_IP", ""),
         },
         "Dhan": build_dhan_settings(env),
+        "Portfolio": build_portfolio_settings(env),
         # NVIDIA's hosted models for the AI workspace (admin-only: the free
         # tier's terms cover development and evaluation, not serving users).
         # The key is used by the API alone and never returned by an endpoint.
