@@ -127,6 +127,46 @@ public class RegulatoryCircularsTests
     }
 
     [Fact]
+    public async Task A_text_the_old_cap_cut_short_is_read_again_whole_once()
+    {
+        // 17 Oct 2026: SEBI's circular on market timings was kept as its first 4,000 characters; its dates are on page 6.
+        const string document = "https://www.sebi.gov.in/sebi_data/attachdocs/oct-2026/1792079571420.pdf";
+        var db = Db();
+        db.RegulatoryCirculars.AddRange(
+            new RegulatoryCircular
+            {
+                Source = RegulatoryCircularSource.Sebi, Key = "sebi:105210", Title = "Review of certain aspects of the Closing Auction Session",
+                Url = "https://www.sebi.gov.in/legal/circulars/oct-2026/review_105210.html", DocumentUrl = document,
+                Excerpt = new string('x', RegulatoryCircularsRecorder.LegacyTextChars), FirstSeenUtc = Now.AddDays(-5),
+            },
+            // Shorter than the old cap: it was read whole the first time.
+            new RegulatoryCircular
+            {
+                Source = RegulatoryCircularSource.Nse, Key = "nse:1", Title = "Short", DocumentUrl = "https://nsearchives.nseindia.com/content/circulars/FAOP1.pdf",
+                Excerpt = "All of it.", FirstSeenUtc = Now.AddDays(-5),
+            });
+        await db.SaveChangesAsync();
+        var web = Web().Serve(document, Pages(
+            string.Join(' ', Enumerable.Repeat("4.2.4. Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days.", 40)),
+            string.Join(' ', Enumerable.Repeat("4.2.6. The post close session in the cash segment shall operate between 3:50 p.m. to 4:00 p.m.", 20)),
+            "6.1. The modifications specified in this circular, other than those specified at para 4.8, shall come into effect from December 07, 2026."));
+
+        var first = await Recorder(db, web).RecordAsync(CancellationToken.None);
+
+        var sebi = await db.RegulatoryCirculars.AsNoTracking().SingleAsync(c => c.Key == "sebi:105210");
+        Assert.Equal(1, first.Reread);
+        Assert.Equal(Now, sebi.TextRereadUtc);
+        Assert.True(sebi.Excerpt.Length > RegulatoryCircularsRecorder.LegacyTextChars);
+        Assert.Contains("shall come into effect from December 07, 2026", sebi.Excerpt);
+        Assert.Null((await db.RegulatoryCirculars.AsNoTracking().SingleAsync(c => c.Key == "nse:1")).TextRereadUtc);
+
+        var second = await Recorder(db, web, Now.AddDays(1)).RecordAsync(CancellationToken.None);
+
+        Assert.Equal(0, second.Reread);
+        Assert.Single(web.Requests, u => u == document);
+    }
+
+    [Fact]
     public async Task A_source_that_fails_costs_only_its_own_circulars()
     {
         var db = Db();
@@ -199,6 +239,34 @@ public class RegulatoryCircularsTests
         var font = builder.AddStandard14Font(UglyToad.PdfPig.Fonts.Standard14Fonts.Standard14Font.Helvetica);
         var page = builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
         page.AddText(text, 10, new PdfPoint(25, 700), font);
+        return builder.Build();
+    }
+
+    /// <summary>A PDF of one page per text, each written in lines of about 90 characters down the page.</summary>
+    internal static byte[] Pages(params string[] pages)
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(UglyToad.PdfPig.Fonts.Standard14Fonts.Standard14Font.Helvetica);
+        foreach (string text in pages)
+        {
+            var page = builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
+            var lines = new List<string>();
+            var line = new System.Text.StringBuilder();
+            foreach (string word in text.Split(' '))
+            {
+                if (line.Length + word.Length > 90)
+                {
+                    lines.Add(line.ToString().TrimEnd());
+                    line.Clear();
+                }
+
+                line.Append(word).Append(' ');
+            }
+
+            lines.Add(line.ToString().TrimEnd());
+            for (int i = 0; i < lines.Count; i++) page.AddText(lines[i], 8, new PdfPoint(25, 810 - 10 * i), font);
+        }
+
         return builder.Build();
     }
 

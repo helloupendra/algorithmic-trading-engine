@@ -6,9 +6,10 @@ namespace AlgoTrading.Domain.Entities;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written once and never changed: a circular seen again on the next day's poll matches <see cref="Key"/> and is
-/// skipped. The Compliance Triage reads these on Saturdays and quotes <see cref="Title"/> and
-/// <see cref="Excerpt"/>; its quote must be found in them.
+/// Written once: a circular seen again on the next day's poll matches <see cref="Key"/> and is skipped. The one change
+/// afterwards is its text read again, whole, when the first read was cut at the old cap (<see cref="TextRereadUtc"/>).
+/// The Compliance Triage reads these on Saturdays and quotes <see cref="Title"/> and <see cref="Excerpt"/>; its quote,
+/// dates and times must be found in them.
 /// </para>
 /// <para>
 /// Only the circulars that might concern an F&amp;O desk are kept: SEBI's circulars, NSE's from its F&amp;O,
@@ -51,6 +52,12 @@ public class RegulatoryCircular
 
     /// <summary>When the recorder first saw it.</summary>
     public DateTime FirstSeenUtc { get; set; }
+
+    /// <summary>
+    /// When its document was read again, to the larger cap, because the first read stopped at the old one (4,000
+    /// characters until 18 Oct 2026); null when it never was. A triage written before this is written again.
+    /// </summary>
+    public DateTime? TextRereadUtc { get; set; }
 }
 
 /// <summary>Where a circular came from.</summary>

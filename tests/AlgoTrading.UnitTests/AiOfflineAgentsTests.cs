@@ -464,6 +464,38 @@ public class AiOfflineAgentsTests
     }
 
     [Fact]
+    public async Task A_circular_read_again_whole_after_its_report_is_triaged_again_any_day_and_not_again_after()
+    {
+        var ai = BuildOnAll();
+        var row = Circular23843Row();
+        var reread = IstTime.FromIst(new DateTime(2026, 10, 18, 20, 31, 0));
+        row.TextRereadUtc = reread;
+        ai.Db.RegulatoryCirculars.Add(row);
+        ai.Db.AiReports.Add(new AiReport
+        {
+            AgentKey = AiCatalog.ComplianceTriage, SubjectType = AiReportSubject.Check, SubjectId = "circular:41", Status = AiReportStatus.Ok,
+            Title = "Applies: Review of certain aspects", DataJson = """{"applies":"yes","area":"market hours"}""", Attempts = 1,
+            CreatedUtc = IstTime.FromIst(new DateTime(2026, 10, 17, 10, 5, 0)), UpdatedUtc = IstTime.FromIst(new DateTime(2026, 10, 17, 10, 5, 0)),
+        });
+        await ai.Db.SaveChangesAsync();
+        var sunday = IstTime.FromIst(new DateTime(2026, 10, 18, 21, 0, 0));
+        var agent = Compliance(ai, sunday);
+
+        Assert.Equal("c41", Assert.Single(await agent.NextBatchAsync(sunday, CancellationToken.None)).Id);
+        // A try that got no answer left the good report as it was: not offered again for fifteen minutes.
+        Assert.Empty(await agent.NextBatchAsync(sunday.AddMinutes(1), CancellationToken.None));
+        Assert.Single(await agent.NextBatchAsync(sunday.AddMinutes(16), CancellationToken.None));
+
+        ai.Provider.On(Extract1, Answer(new JsonObject { ["circulars"] = new JsonArray(Record23843()) }.ToJsonString()));
+        var later = sunday.AddMinutes(20);
+        var written = await Compliance(ai, later).RunForAsync("41", CancellationToken.None);
+
+        Assert.Equal(AiReportStatus.Ok, written!.Status);
+        Assert.Contains("\"format\":2", written.DataJson);
+        Assert.Empty(await Compliance(ai, later.AddMinutes(30)).NextBatchAsync(later.AddMinutes(30), CancellationToken.None));
+    }
+
+    [Fact]
     public void A_long_circular_is_handed_over_as_its_start_and_its_end()
     {
         string text = new string('a', 20_000) + " shall come into effect from December 07, 2026.";

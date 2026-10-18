@@ -3989,6 +3989,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)");
 
+                    b.Property<DateTime?>("TextRereadUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("text");

@@ -25,8 +25,8 @@ public sealed record CircularListing(
     string DocumentUrl,
     string Relevance);
 
-/// <summary>What one circulars run did.</summary>
-public sealed record CircularsRecordReport(int Listed, int Stored, int TextRead, IReadOnlyList<string> Errors);
+/// <summary>What one circulars run did: listed, stored new, read with text, and texts read again whole (<see cref="RegulatoryCircular.TextRereadUtc"/>).</summary>
+public sealed record CircularsRecordReport(int Listed, int Stored, int TextRead, IReadOnlyList<string> Errors, int Reread = 0);
 
 /// <summary>
 /// Reads the three sources' circular listings: SEBI's circulars page, NSE's circulars API and BSE's notices feed.
@@ -161,11 +161,21 @@ public static partial class RegulatoryCircularParsers
         return list;
     }
 
+    /// <summary>The most of a document's text kept: a SEBI circular of seven pages is about 11,000 characters.</summary>
+    public const int MaxTextChars = 16_000;
+
+    /// <summary>The pages of a document read at most.</summary>
+    public const int MaxTextPages = 12;
+
     /// <summary>
     /// The text of a document: a PDF's first <paramref name="maxPages"/> pages, or the first PDF in a zip (NSE files
     /// some circulars that way), whitespace made single and cut at <paramref name="maxChars"/>. Empty when it cannot be read.
     /// </summary>
-    public static string DocumentText(byte[] bytes, int maxChars = 4000, int maxPages = 4)
+    /// <remarks>
+    /// Four pages and 4,000 characters until 18 Oct 2026: SEBI's circular of 15 Oct on market timings gives its dates
+    /// on page 6, so the triage never saw when its changes take effect.
+    /// </remarks>
+    public static string DocumentText(byte[] bytes, int maxChars = MaxTextChars, int maxPages = MaxTextPages)
     {
         try
         {
@@ -252,7 +262,9 @@ public static partial class RegulatoryCircularParsers
 /// <remarks>
 /// <para>
 /// Insert-only: a circular already stored (same <see cref="RegulatoryCircular.Key"/>) is left as it is, and its
-/// document is not fetched again. One source failing costs only its own circulars for that run.
+/// document is not fetched again, but for one thing: a text the old cap cut short (<see cref="LegacyTextChars"/>, until
+/// 18 Oct 2026) is read once more, whole, for the circulars of the last <see cref="RereadDays"/> days, at most
+/// <see cref="MaxRereadsPerRun"/> a run. One source failing costs only its own circulars for that run.
 /// </para>
 /// <para>
 /// Polite: once a day, documents fetched one at a time <see cref="DocumentGap"/> apart, at most
@@ -270,6 +282,14 @@ public sealed class RegulatoryCircularsRecorder
     public const int MaxDocumentsPerRun = 40;
 
     public const long MaxDocumentBytes = 8_000_000;
+
+    /// <summary>The characters a text was cut at until 18 Oct 2026: a stored text exactly this long was cut short.</summary>
+    public const int LegacyTextChars = 4000;
+
+    /// <summary>How far back, by when they were recorded, texts cut at the old cap are read again.</summary>
+    public const int RereadDays = 30;
+
+    public const int MaxRereadsPerRun = 10;
 
     private readonly TradingDbContext _db;
     private readonly IHttpClientFactory _http;
@@ -346,10 +366,13 @@ public sealed class RegulatoryCircularsRecorder
             if (await InsertAsync(listing, number, document, excerpt, ct)) stored++;
         }
 
-        string message = $"{stored} new circular(s), {textRead} with text, from {listed.Count} listed";
+        int reread = await RereadCutTextsAsync(errors, ct);
+
+        string message = $"{stored} new circular(s), {textRead} with text, from {listed.Count} listed" +
+                         (reread > 0 ? $"; {reread} text(s) cut short before read again whole" : string.Empty);
         health.Finished(Clock(), message, listed.Count == 0 && errors.Count > 0 ? "every source failed" : null);
         _logger.LogInformation("Circulars recorder: {Message}.", message);
-        return new CircularsRecordReport(listed.Count, stored, textRead, errors);
+        return new CircularsRecordReport(listed.Count, stored, textRead, errors, reread);
 
         async Task ReadAsync(string source, Func<Task> read)
         {
@@ -364,6 +387,44 @@ public sealed class RegulatoryCircularsRecorder
                 errors.Add($"{source}: {Describe(ex)}");
             }
         }
+    }
+
+    /// <summary>
+    /// The texts the old cap cut short, read again whole: on 17 Oct 2026 SEBI's circular on market timings was triaged
+    /// on its first 4,000 characters, and its dates are on page 6. Each is read again once (<see cref="RegulatoryCircular.TextRereadUtc"/>,
+    /// set whether the text grew or not); a document that cannot be fetched is tried again on the next run.
+    /// </summary>
+    private async Task<int> RereadCutTextsAsync(List<string> errors, CancellationToken ct)
+    {
+        var since = Clock().AddDays(-RereadDays);
+        string[] documents = [RegulatoryCircularSource.Sebi, RegulatoryCircularSource.Nse, RegulatoryCircularSource.Bse];
+        var cut = await _db.RegulatoryCirculars
+            .Where(c => c.TextRereadUtc == null && c.FirstSeenUtc >= since && c.DocumentUrl != string.Empty
+                        && c.Excerpt.Length == LegacyTextChars && documents.Contains(c.Source))
+            .OrderByDescending(c => c.FirstSeenUtc)
+            .Take(MaxRereadsPerRun)
+            .ToListAsync(ct);
+
+        int reread = 0;
+        foreach (var circular in cut)
+        {
+            try
+            {
+                if (DocumentGap > TimeSpan.Zero) await Task.Delay(DocumentGap, ct);
+                string text = RegulatoryCircularParsers.DocumentText(await GetBytesAsync(circular.DocumentUrl, ct));
+                if (text.Length > circular.Excerpt.Length) circular.Excerpt = text;
+                circular.TextRereadUtc = Clock();
+                await _db.SaveChangesAsync(ct);
+                reread++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                errors.Add($"{circular.Key} (read again): {Describe(ex)}");
+            }
+        }
+
+        _db.ChangeTracker.Clear();
+        return reread;
     }
 
     private async Task<bool> InsertAsync(CircularListing listing, string number, string document, string excerpt, CancellationToken ct)

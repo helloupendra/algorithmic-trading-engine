@@ -139,7 +139,15 @@ public sealed class ComplianceTriageAgent(
         return IstTime.FromIst(day.ToDateTime(at));
     }
 
-    /// <summary>The next circulars to read: recorded before the week's cutoff and within the lookback, not yet settled, oldest first.</summary>
+    /// <summary>The scheduler's key for the last time circulars read again were triaged again (<see cref="NextBatchAsync"/>).</summary>
+    public const string RereadKey = AiCatalog.ComplianceTriage + ":reread";
+
+    /// <summary>
+    /// The next circulars to read: recorded before the week's cutoff and within the lookback, not yet settled, oldest
+    /// first; then, whatever the day, those whose text was read again whole after their report was written
+    /// (<see cref="RegulatoryCircular.TextRereadUtc"/>), at most once every <see cref="AiReportWriter.RetryAfter"/>: a
+    /// try no model answers leaves a good report as it was, and must not be made again every minute.
+    /// </summary>
     public async Task<List<Item>> NextBatchAsync(DateTime nowUtc, CancellationToken cancellationToken, DateTime? cutoffUtc = null)
     {
         var s = settings.CurrentValue;
@@ -152,9 +160,42 @@ public sealed class ComplianceTriageAgent(
             .OrderBy(c => c.FirstSeenUtc).ThenBy(c => c.Id)
             .Take(400)
             .ToListAsync(cancellationToken);
-        if (candidates.Count == 0) return [];
-        var due = await reports.DueAsync(AgentKey, AiReportSubject.Check, candidates.Select(c => Subject(c.Id)).ToList(), cancellationToken);
-        return await ItemsAsync(candidates.Where(c => due.Contains(Subject(c.Id))).Take(size).ToList());
+        var batch = new List<RegulatoryCircular>();
+        if (candidates.Count > 0)
+        {
+            var due = await reports.DueAsync(AgentKey, AiReportSubject.Check, candidates.Select(c => Subject(c.Id)).ToList(), cancellationToken);
+            batch.AddRange(candidates.Where(c => due.Contains(Subject(c.Id))).Take(size));
+        }
+
+        if (batch.Count < size && (schedule.LastWork(RereadKey) is not DateTime last || nowUtc - last >= AiReportWriter.RetryAfter))
+        {
+            var again = await RereadSinceReportAsync(since, cancellationToken);
+            var more = again.Where(c => batch.All(b => b.Id != c.Id)).Take(size - batch.Count).ToList();
+            if (more.Count > 0)
+            {
+                schedule.Worked(RereadKey, nowUtc);
+                batch.AddRange(more);
+            }
+        }
+
+        return await ItemsAsync(batch);
+    }
+
+    /// <summary>The circulars of the lookback whose text was read again after their report was last written, oldest first.</summary>
+    private async Task<List<RegulatoryCircular>> RereadSinceReportAsync(DateTime since, CancellationToken cancellationToken)
+    {
+        var reread = await db.RegulatoryCirculars.AsNoTracking()
+            .Where(c => c.TextRereadUtc != null && c.FirstSeenUtc >= since)
+            .OrderBy(c => c.FirstSeenUtc).ThenBy(c => c.Id)
+            .Take(200)
+            .ToListAsync(cancellationToken);
+        if (reread.Count == 0) return [];
+        var subjects = reread.Select(c => Subject(c.Id)).ToList();
+        var written = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AgentKey && r.SubjectType == AiReportSubject.Check && subjects.Contains(r.SubjectId))
+            .Select(r => new { r.SubjectId, r.UpdatedUtc })
+            .ToDictionaryAsync(r => r.SubjectId, r => r.UpdatedUtc, cancellationToken);
+        return reread.Where(c => written.TryGetValue(Subject(c.Id), out var at) && at < c.TextRereadUtc).ToList();
     }
 
     private static Task<List<Item>> ItemsAsync(List<RegulatoryCircular> circulars) => Task.FromResult(circulars.Select(ItemOf).ToList());
