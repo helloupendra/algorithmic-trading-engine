@@ -272,6 +272,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, 
 // (Saturdays), the week's backtests and paper results (Sundays). None runs from 09:00 to 15:45 on a trading day.
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.DataCuratorChecks>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.DataCuratorAgent>();
+// A circular that applies is told once, directly: the Desk System channel, and Ira from its follow-up row.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.ComplianceAlerts>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IPaperResults, AlgoTrading.Api.Services.AiAgents.LivePaperResults>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.StrategyResearchData>();

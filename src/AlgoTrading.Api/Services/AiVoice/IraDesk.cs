@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AlgoTrading.Api.Services.AiVoice;
 
 /// <summary>Something Ira tells the owners first: what it was, when it happened, and the words.</summary>
-/// <param name="Kind"><c>ai-trader</c>, <c>risk</c> or <c>incident</c>.</param>
-/// <param name="Key">The record it came from: <c>decision:118</c>, <c>signal:40512</c>, <c>incident:206</c>.</param>
+/// <param name="Kind"><c>ai-trader</c>, <c>risk</c>, <c>incident</c> or <c>compliance</c>.</param>
+/// <param name="Key">The record it came from: <c>decision:118</c>, <c>signal:40512</c>, <c>incident:206</c>, <c>compliance:3</c>.</param>
 public sealed record IraEvent(string Kind, string Key, DateTime AtUtc, string Text);
 
 /// <summary>The morning briefing's facts; a null part is missing and said so.</summary>
@@ -62,7 +62,8 @@ public interface IIraDesk
 
 /// <summary>
 /// Ira's eyes on the desk (<see cref="IraAlertService"/>): the AI Trader's live decisions, the risk guard's stops and
-/// group closes, Sentinel's incidents, and the facts of the two briefings, all from the desk's own records.
+/// group closes, Sentinel's incidents, the circulars that apply to the desk, and the facts of the two briefings, all
+/// from the desk's own records.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -70,7 +71,8 @@ public interface IIraDesk
 /// (<see cref="AiTraderDecision.Executed"/>): a buy, an exit, a strategy started or stopped. A live strategy run (not a
 /// recap, not a replay or backtest) whose overall rules stopped it (its <c>RUN_STOPPED</c> signal by
 /// <c>risk-guard</c>) or whose group rules closed a group (a <c>CLOSE_GROUP</c> by <c>risk-guard</c> whose reason is a
-/// group rule's); a leg's own stop is not told. A Sentinel incident at high or critical when it is first seen.
+/// group rule's); a leg's own stop is not told. A Sentinel incident at high or critical when it is first seen. A
+/// circular's compliance alert (<see cref="ComplianceFollowUp"/> with an alert), once, when it went.
 /// </para>
 /// <para>
 /// <b>The marks.</b> Each source keeps an <see cref="IraCursor"/>: every row at or below <c>through</c> is dealt with,
@@ -89,6 +91,7 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
     public const string AiTraderKind = "ai-trader";
     public const string RiskKind = "risk";
     public const string IncidentKind = "incident";
+    public const string ComplianceKind = "compliance";
 
     private const string CloseGroup = "CLOSE_GROUP";
 
@@ -100,11 +103,13 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
         long decisions = await db.AiTraderDecisions.MaxAsync(d => (long?)d.Id, cancellationToken) ?? 0;
         long signals = await db.SimulationSignals.MaxAsync(s => (long?)s.Id, cancellationToken) ?? 0;
         long incidents = await db.Incidents.MaxAsync(i => (long?)i.Id, cancellationToken) ?? 0;
+        long compliance = await db.ComplianceFollowUps.MaxAsync(f => (long?)f.Id, cancellationToken) ?? 0;
         return new IraMarks
         {
             Decisions = IraCursor.At(decisions),
             Signals = IraCursor.At(signals),
             Incidents = IraCursor.At(incidents),
+            Compliance = IraCursor.At(compliance),
         };
     }
 
@@ -115,6 +120,7 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
         events.AddRange(await DecisionsAsync(marks.Decisions, fresh, cancellationToken));
         events.AddRange(await RiskAsync(marks.Signals, fresh, cancellationToken));
         events.AddRange(await IncidentsAsync(marks.Incidents, fresh, cancellationToken));
+        events.AddRange(await ComplianceAsync(marks.Compliance, fresh, cancellationToken));
         return events.OrderBy(e => e.AtUtc).ThenBy(e => e.Key, StringComparer.Ordinal).ToList();
     }
 
@@ -283,6 +289,45 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
         return rows.Where(i => tell.Contains(i.Id))
             .Select(i => new IraEvent(IncidentKind, $"incident:{i.Id}", Utc(i.FirstSeenUtc), IraAlertText.Incident(i.Severity, i.Title, i.Summary)))
             .ToList();
+    }
+
+    // ---------- the Compliance Triage ----------
+
+    /// <summary>
+    /// Each circular's one compliance alert (<see cref="ComplianceAlerts"/>), told when it went: what applies, and the
+    /// dates it takes effect from its triage. A row made by "Mark handled" with no alert is dealt with, nothing to tell.
+    /// </summary>
+    private async Task<List<IraEvent>> ComplianceAsync(IraCursor cursor, DateTime fresh, CancellationToken cancellationToken)
+    {
+        long newest = await db.ComplianceFollowUps.MaxAsync(f => (long?)f.Id, cancellationToken) ?? 0;
+        var rows = await db.ComplianceFollowUps.AsNoTracking()
+            .Where(f => f.Id > cursor.Through)
+            .OrderBy(f => f.Id)
+            .Take(Batch)
+            .Select(f => new { f.Id, f.CircularId, f.ReportId, f.AlertedUtc })
+            .ToListAsync(cancellationToken);
+
+        var tell = cursor.Pass(rows.Select(f => (f.Id, f.AlertedUtc is DateTime at && Utc(at) >= fresh ? IraVerdict.Tell : IraVerdict.Skip)).ToList(),
+            rows.Count == Batch, newest);
+        var told = rows.Where(f => tell.Contains(f.Id)).ToList();
+        if (told.Count == 0) return [];
+
+        var circularIds = told.Select(f => f.CircularId).ToList();
+        var circulars = await db.RegulatoryCirculars.AsNoTracking().Where(c => circularIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => new { c.Source, c.Title }, cancellationToken);
+        var reportIds = told.Where(f => f.ReportId != null).Select(f => f.ReportId!.Value).ToList();
+        var data = await db.AiReports.AsNoTracking().Where(r => reportIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, r => r.DataJson, cancellationToken);
+        var events = new List<IraEvent>();
+        foreach (var f in told)
+        {
+            if (!circulars.TryGetValue(f.CircularId, out var c)) continue;
+            var facts = f.ReportId is long id && data.TryGetValue(id, out var json) ? ComplianceTriageAgent.ReadFacts(json) : null;
+            var dates = facts?.EffectiveDates.Select(d => d.Date).ToList() ?? [];
+            events.Add(new IraEvent(ComplianceKind, $"compliance:{f.Id}", Utc(f.AlertedUtc!.Value),
+                IraAlertText.Fit(ComplianceAlertText.Spoken(c.Source, c.Title, dates))));
+        }
+
+        return events;
     }
 
     // ---------- the briefings ----------

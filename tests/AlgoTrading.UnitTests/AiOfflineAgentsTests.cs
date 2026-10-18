@@ -376,8 +376,13 @@ public class AiOfflineAgentsTests
     private const string Dates23843 =
         """[{"date":"2027-02-08","what":"Para 4.8 comes into effect from February 08, 2027."},{"date":"2026-12-07","what":"The modifications other than para 4.8 come into effect from December 07, 2026."}]""";
 
-    private const string Changes23843 =
-        """["Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days, except on expiry days when trading in expiring index derivatives contracts shall cease at 3:30 p.m.","The post close session in the cash segment shall operate between 3:50 p.m. to 4:00 p.m.","The expiry settlement price of index derivatives is the VWAP of the constituent securities during the last 30 minutes of the CTS."]""";
+    private const string Changes23843 = """
+        ["Index derivatives trade until 3:45 p.m. on all trading days; expiring index derivatives contracts stop at 3:30 p.m. on expiry days.",
+         "Stock derivatives trade until 3:45 p.m. on all trading days, including on expiry days.",
+         "The cash segment's Closing Auction Session runs from 3:30 p.m. to 3:40 p.m.",
+         "The post close session in the cash segment runs between 3:50 p.m. to 4:00 p.m.",
+         "The expiry settlement price of index derivatives is the VWAP of the constituent securities during the last 30 minutes of the CTS."]
+        """;
 
     private const string Quote23843 = "Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days";
 
@@ -405,9 +410,9 @@ public class AiOfflineAgentsTests
         Assert.Equal(ComplianceTriageAgent.Format, data["format"]!.GetValue<int>());
         // Earliest first.
         Assert.Equal(new[] { "2026-12-07", "2027-02-08" }, data["effectiveDates"]!.AsArray().Select(d => d!["date"]!.GetValue<string>()));
-        Assert.Equal(3, data["deskChanges"]!.AsArray().Count);
+        Assert.Equal(5, data["deskChanges"]!.AsArray().Count);
         Assert.Contains("**Takes effect:**\n- 2026-12-07: The modifications other than para 4.8", v.Body);
-        Assert.Contains("**On the desk:**\n- Trading in index derivatives contracts shall continue until 3:45 p.m.", v.Body);
+        Assert.Contains("**On the desk:**\n- Index derivatives trade until 3:45 p.m. on all trading days;", v.Body);
     }
 
     [Fact]

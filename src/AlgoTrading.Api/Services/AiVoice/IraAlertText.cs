@@ -177,8 +177,9 @@ public static partial class IraAlertText
 
     /// <summary>What /alerts says while they are on for the owner.</summary>
     public static string AlertsOn(AiVoiceAlertsSettings s) =>
-        "Alerts are on. I speak first when the AI Trader acts live, when risk rules stop a run or close a group, and when " +
-        $"Sentinel opens a high or critical incident, at most {Math.Max(1, s.MaxPerHour)} an hour. On NSE trading days I also " +
+        "Alerts are on. I speak first when the AI Trader acts live, when risk rules stop a run or close a group, when " +
+        "Sentinel opens a high or critical incident, and when a new circular applies to the desk, at most " +
+        $"{Math.Max(1, s.MaxPerHour)} an hour. On NSE trading days I also " +
         $"brief you at {s.MorningAt} and {s.CloseAt} IST. /alerts off stops them.";
 
     /// <summary>What /alerts says while they are off for the owner.</summary>

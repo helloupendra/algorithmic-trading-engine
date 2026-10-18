@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Controllers;
+using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Strategies;
@@ -153,14 +154,25 @@ public sealed class TodayBuilder(
         var circulars = await db.AiReports.AsNoTracking()
             .Where(r => r.AgentKey == AiCatalog.ComplianceTriage && r.SubjectType == AiReportSubject.Check && r.Status == AiReportStatus.Ok && r.UpdatedUtc >= week)
             .OrderByDescending(r => r.UpdatedUtc)
-            .Select(r => new { r.Id, r.Title, r.DataJson, r.UpdatedUtc })
+            .Select(r => new { r.Id, r.Title, r.SubjectId, r.DataJson, r.UpdatedUtc })
             .Take(200)
             .ToListAsync(cancellationToken);
-        foreach (var c in circulars)
+        var applies = circulars
+            .Select(c => (Report: c, Facts: ComplianceTriageAgent.ReadFacts(c.DataJson), Circular: ComplianceTriageAgent.CircularIdOf(c.SubjectId)))
+            .Where(x => x.Facts?.Applies == "yes")
+            .ToList();
+        var circularIds = applies.Where(x => x.Circular is not null).Select(x => x.Circular!.Value).ToList();
+        // One the owner marked handled is done with: it no longer needs a look.
+        var handled = circularIds.Count == 0 ? [] : (await db.ComplianceFollowUps.AsNoTracking()
+            .Where(f => circularIds.Contains(f.CircularId) && f.HandledUtc != null).Select(f => f.CircularId).ToListAsync(cancellationToken)).ToHashSet();
+        foreach (var (c, facts, circularId) in applies)
         {
-            var data = AiJson.Object(c.DataJson);
-            if (data is null || AiJson.Str(data, "applies") != "yes") continue;
-            list.Add(new TodayAttention("info", "compliance", Cut(c.Title, 200)!, Cut(AiJson.Str(data, "change") ?? AiJson.Str(data, "why"), 300),
+            if (circularId is long id && handled.Contains(id)) continue;
+            string? what = facts!.Change.Length > 0 ? facts.Change : facts.Why.Length > 0 ? facts.Why : null;
+            string? from = facts.EffectiveDates.Count > 0
+                ? $"Takes effect {string.Join(", ", facts.EffectiveDates.Select(d => ComplianceAlertText.Day(d.Date)))}. "
+                : null;
+            list.Add(new TodayAttention("info", "compliance", Cut(c.Title, 200)!, Cut(from + what, 300),
                 $"/ai/reports?id={c.Id}", Utc(c.UpdatedUtc)));
         }
 

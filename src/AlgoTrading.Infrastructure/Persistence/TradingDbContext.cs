@@ -96,6 +96,9 @@ public class TradingDbContext : DbContext
     /// <summary>SEBI, NSE and BSE circulars that might bind the desk, for the Compliance Triage. See <see cref="RegulatoryCircular"/>.</summary>
     public DbSet<RegulatoryCircular> RegulatoryCirculars => Set<RegulatoryCircular>();
 
+    /// <summary>The one alert sent for each circular that applies, and the owner's handled mark. See <see cref="ComplianceFollowUp"/>.</summary>
+    public DbSet<ComplianceFollowUp> ComplianceFollowUps => Set<ComplianceFollowUp>();
+
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 

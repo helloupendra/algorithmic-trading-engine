@@ -1654,6 +1654,59 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("candle_pattern_rules", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ComplianceFollowUp", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("AlertDelivered")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("AlertText")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("AlertedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("CircularId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HandledBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("HandledNote")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("HandledUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("ReportId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CircularId")
+                        .IsUnique();
+
+                    b.ToTable("compliance_follow_ups", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.CorporateAnnouncement", b =>
                 {
                     b.Property<long>("Id")
@@ -4838,6 +4891,15 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("StrategyPackage");
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ComplianceFollowUp", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.RegulatoryCircular", null)
+                        .WithMany()
+                        .HasForeignKey("CircularId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.EquityGroupMember", b =>

@@ -546,8 +546,102 @@ public class AiController : ControllerBase
             // Kept as written; the body still reads.
         }
 
-        return Ok(new AiReportDetail(ToReportSummary(r, links), r.Body, data));
+        var detail = new AiReportDetail(ToReportSummary(r, links), r.Body, data);
+        if (r.AgentKey == AiCatalog.ComplianceTriage && AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.CircularIdOf(r.SubjectId) is long circularId)
+        {
+            var followUp = await _db.ComplianceFollowUps.AsNoTracking().FirstOrDefaultAsync(f => f.CircularId == circularId, cancellationToken);
+            detail = detail with { FollowUp = followUp is null ? null : ToFollowUp(followUp) };
+        }
+
+        return Ok(detail);
     }
+
+    // ---------- compliance --------------------------------------------------
+
+    /// <summary>
+    /// The circulars and broker notices the Compliance Triage found apply to the desk, newest report first: the dates
+    /// each takes effect, what changes on the desk, the alert that went, and whether it was marked handled. Sentinel's
+    /// checkup reads it for "Rule changes ahead"; <c>today</c> is the IST day the dates are read against.
+    /// </summary>
+    [HttpGet("compliance")]
+    public async Task<IActionResult> Compliance(CancellationToken cancellationToken)
+    {
+        var reports = await _db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.ComplianceTriage && r.SubjectType == AiReportSubject.Check && r.Status == AiReportStatus.Ok
+                        && r.DataJson.Contains("\"applies\":\"yes\""))
+            .OrderByDescending(r => r.Id)
+            .Take(500)
+            .ToListAsync(cancellationToken);
+        var applies = reports
+            .Select(r => (Report: r, Circular: AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.CircularIdOf(r.SubjectId),
+                Facts: AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.ReadFacts(r.DataJson)))
+            .Where(x => x.Circular is not null && x.Facts?.Applies == "yes")
+            .ToList();
+        var ids = applies.Select(x => x.Circular!.Value).Distinct().ToList();
+        var circulars = await _db.RegulatoryCirculars.AsNoTracking().Where(c => ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id, cancellationToken);
+        var followUps = await _db.ComplianceFollowUps.AsNoTracking().Where(f => ids.Contains(f.CircularId)).ToDictionaryAsync(f => f.CircularId, cancellationToken);
+
+        var items = applies
+            .Where(x => circulars.ContainsKey(x.Circular!.Value))
+            .Select(x =>
+            {
+                var c = circulars[x.Circular!.Value];
+                var f = x.Facts!;
+                return new AiComplianceItem(x.Report.Id, c.Id, AlgoTrading.Api.Services.AiAgents.ComplianceAlertText.SourceName(c.Source),
+                    c.Number.Length > 0 ? c.Number : null, c.Title, c.PublishedOn?.ToString("yyyy-MM-dd"), c.Url.Length > 0 ? c.Url : null,
+                    f.Area, f.Change.Length > 0 ? f.Change : null,
+                    f.EffectiveDates.Select(d => new AiEffectiveDateDto(d.Date.ToString("yyyy-MM-dd"), d.What)).ToList(), f.DeskChanges,
+                    followUps.TryGetValue(c.Id, out var row) ? ToFollowUp(row) : null);
+            })
+            .ToList();
+        return Ok(new AiComplianceList(IstTime.DateOf(Now()).ToString("yyyy-MM-dd"), items));
+    }
+
+    /// <summary>
+    /// Marks the circular a Compliance Triage report is about as handled: the desk is ready for it, with what was done.
+    /// It then leaves the checkup's "Rule changes ahead", and no alert goes for it if none went yet. Marking it again
+    /// replaces the note.
+    /// </summary>
+    [HttpPost("compliance/{reportId:long}/handled")]
+    public async Task<IActionResult> MarkComplianceHandled(long reportId, [FromBody] AiComplianceHandledRequest? body, CancellationToken cancellationToken)
+    {
+        string note = (body?.Note ?? string.Empty).Trim();
+        if (note.Length == 0) return BadRequest(new { error = "Say what was done: a note is required." });
+        if (note.Length > MaxHandledNote) return BadRequest(new { error = $"Keep the note to {MaxHandledNote} characters." });
+
+        var report = await _db.AiReports.AsNoTracking().FirstOrDefaultAsync(r => r.Id == reportId, cancellationToken);
+        if (report is null) return NotFound(new { error = $"No report {reportId}." });
+        if (report.AgentKey != AiCatalog.ComplianceTriage
+            || AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.CircularIdOf(report.SubjectId) is not long circularId)
+        {
+            return Conflict(new { error = $"Report {reportId} is not the Compliance Triage's on a circular." });
+        }
+
+        if (!await _db.RegulatoryCirculars.AnyAsync(c => c.Id == circularId, cancellationToken)) return NotFound(new { error = $"No circular {circularId}." });
+
+        var now = Now();
+        var row = await _db.ComplianceFollowUps.FirstOrDefaultAsync(f => f.CircularId == circularId, cancellationToken);
+        if (row is null)
+        {
+            row = new ComplianceFollowUp { CircularId = circularId, ReportId = reportId, CreatedUtc = now };
+            _db.ComplianceFollowUps.Add(row);
+        }
+
+        row.HandledUtc = now;
+        row.HandledBy = Actor();
+        row.HandledNote = note;
+        await _db.SaveChangesAsync(cancellationToken);
+        HttpContext.Describe($"Marked circular {circularId} handled (Compliance Triage report #{reportId}).", "compliance",
+            circularId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return Ok(ToFollowUp(row));
+    }
+
+    /// <summary>The longest note "Mark handled" keeps.</summary>
+    public const int MaxHandledNote = 2000;
+
+    private static AiComplianceFollowUpDto ToFollowUp(ComplianceFollowUp f) => new(
+        f.Id, f.CircularId, f.ReportId, Utc(f.AlertedUtc), f.AlertDelivered, Utc(f.HandledUtc),
+        f.HandledBy.Length > 0 ? f.HandledBy : null, f.HandledNote.Length > 0 ? f.HandledNote : null);
 
     /// <summary>
     /// Each scheduled agent's reports over the last days, by status: the
@@ -1747,7 +1841,29 @@ public sealed record AiReportSummary(
 
 public sealed record AiReportPage(IReadOnlyList<AiReportSummary> Reports, long? NextBeforeId);
 
-public sealed record AiReportDetail(AiReportSummary Report, string Body, JsonElement? Data);
+public sealed record AiReportDetail(AiReportSummary Report, string Body, JsonElement? Data)
+{
+    /// <summary>A Compliance Triage report's circular: its alert and handled mark; null when it has neither, or for any other report.</summary>
+    public AiComplianceFollowUpDto? FollowUp { get; init; }
+}
+
+/// <summary>A circular's one compliance alert and the owner's handled mark.</summary>
+public sealed record AiComplianceFollowUpDto(
+    long Id, long CircularId, long? ReportId, DateTime? AlertedUtc, bool AlertDelivered, DateTime? HandledUtc, string? HandledBy, string? Note);
+
+/// <summary>A day something in a circular takes effect, yyyy-MM-dd, and what.</summary>
+public sealed record AiEffectiveDateDto(string Date, string What);
+
+/// <summary>A circular that applies to the desk, as its latest good triage reads it.</summary>
+public sealed record AiComplianceItem(
+    long ReportId, long CircularId, string Source, string? Number, string Title, string? PublishedOn, string? Url, string Area, string? Change,
+    IReadOnlyList<AiEffectiveDateDto> EffectiveDates, IReadOnlyList<string> DeskChanges, AiComplianceFollowUpDto? FollowUp);
+
+/// <summary>The circulars that apply, with the IST day their dates are read against.</summary>
+public sealed record AiComplianceList(string Today, IReadOnlyList<AiComplianceItem> Circulars);
+
+/// <summary>What was done about a circular, for "Mark handled".</summary>
+public sealed record AiComplianceHandledRequest(string? Note);
 
 public sealed record AiReportDay(string Date, int Ok, int Invalid, int Failed);
 

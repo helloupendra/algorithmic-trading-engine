@@ -50,7 +50,8 @@ public sealed class ComplianceTriageAgent(
     AiSchedulerState schedule,
     IOptionsMonitor<AiSettings> settings,
     ILogger<ComplianceTriageAgent> logger,
-    TimeProvider? time = null) : IAiScheduledAgent
+    TimeProvider? time = null,
+    ComplianceAlerts? alerts = null) : IAiScheduledAgent
 {
     public const string SubjectPrefix = "circular:";
 
@@ -102,11 +103,37 @@ public sealed class ComplianceTriageAgent(
     public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         if (AiAgentHours.InSession(nowUtc, sessions)) return false;
+        bool alerted = await AlertAsync(null, cancellationToken) > 0;
         var batch = await NextBatchAsync(nowUtc, cancellationToken);
-        if (batch.Count == 0) return false;
+        if (batch.Count == 0) return alerted;
         await TriageAsync(batch, cancellationToken);
         schedule.Worked(AgentKey, nowUtc);
         return true;
+    }
+
+    /// <summary>
+    /// The alerts owed (<see cref="ComplianceAlerts"/>): for the reports just written, or, with none given, any report
+    /// of the lookback that raises one and has none yet. An alert that fails is logged and never fails the triage.
+    /// </summary>
+    private async Task<int> AlertAsync(IReadOnlyList<AiReport>? written, CancellationToken cancellationToken)
+    {
+        if (alerts is null) return 0;
+        try
+        {
+            if (written is null) return await alerts.CatchUpAsync(cancellationToken);
+            int sent = 0;
+            foreach (var report in written)
+            {
+                if (await alerts.RaiseAsync(report, cancellationToken) is not null) sent++;
+            }
+
+            return sent;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Compliance alerts could not be raised; the next pass tries again");
+            return 0;
+        }
     }
 
     /// <summary>"Run now": one circular by its id, or the next batch recorded in the lookback, whatever the day.</summary>
@@ -294,6 +321,7 @@ public sealed class ComplianceTriageAgent(
                 v.Title, v.Body, v.Data, v.Error, cancellationToken));
         }
 
+        await AlertAsync(written, cancellationToken);
         return written;
     }
 
@@ -404,6 +432,25 @@ public sealed class ComplianceTriageAgent(
 
     /// <summary>One date something takes effect from, and what.</summary>
     public sealed record EffectiveDate(DateOnly Date, string What);
+
+    /// <summary>A report's data read back: its shape, the verdict, the area, why, the change, the dates and the desk changes.</summary>
+    public sealed record Facts(int Format, string Applies, string Area, string Why, string Change,
+        IReadOnlyList<EffectiveDate> EffectiveDates, IReadOnlyList<string> DeskChanges);
+
+    /// <summary>The facts a report's data holds; null when it is not a JSON object. A report of an older shape has no dates.</summary>
+    public static Facts? ReadFacts(string? dataJson)
+    {
+        if (AiJson.Object(dataJson) is not JsonObject data) return null;
+        int format = data["format"] is JsonValue f && f.TryGetValue(out int n) ? n : 1;
+        var dates = (data["effectiveDates"] as JsonArray ?? [])
+            .OfType<JsonObject>()
+            .Select(e => CircularFacts.IsoDate(AiJson.Str(e, "date")) is DateOnly d ? new EffectiveDate(d, AiJson.Str(e, "what") ?? string.Empty) : null)
+            .OfType<EffectiveDate>()
+            .OrderBy(e => e.Date)
+            .ToList();
+        return new Facts(format, AiJson.Str(data, "applies") ?? string.Empty, AiJson.Str(data, "area") ?? string.Empty, AiJson.Str(data, "why") ?? string.Empty,
+            AiJson.Str(data, "change") ?? string.Empty, dates, AiJson.Strings(data, "deskChanges"));
+    }
 
     /// <summary>
     /// The record's effective dates, earliest first: each a yyyy-MM-dd day the circular's text writes (in any of its

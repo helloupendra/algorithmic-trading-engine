@@ -519,8 +519,9 @@ public sealed class IraAlertTests : IDisposable
         Assert.Equal([IraAlertText.AlertsOff, IraAlertText.AlertsOff], rig.Bot.TextsTo(Partner));
         Assert.Equal(
         [
-            "Alerts are on. I speak first when the AI Trader acts live, when risk rules stop a run or close a group, and when Sentinel opens a high or " +
-            "critical incident, at most 8 an hour. On NSE trading days I also brief you at 09:10 and 15:40 IST. /alerts off stops them.",
+            "Alerts are on. I speak first when the AI Trader acts live, when risk rules stop a run or close a group, when Sentinel opens a high or " +
+            "critical incident, and when a new circular applies to the desk, at most 8 an hour. On NSE trading days I also brief you at 09:10 and " +
+            "15:40 IST. /alerts off stops them.",
             IraAlertText.AlertsUsage,
         ], rig.Bot.TextsTo(Owner));
         rig.Bot.Clear();

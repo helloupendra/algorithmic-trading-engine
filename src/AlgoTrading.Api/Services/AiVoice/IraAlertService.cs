@@ -31,6 +31,9 @@ public sealed class IraMarks
     /// <summary>Sentinel's incidents (<c>incidents</c>).</summary>
     public IraCursor Incidents { get; set; } = new();
 
+    /// <summary>The circulars the Compliance Triage found apply (<c>compliance_follow_ups</c> with an alert).</summary>
+    public IraCursor Compliance { get; set; } = new();
+
     /// <summary>The IST day (yyyy-MM-dd) the last morning briefing went.</summary>
     public string? Morning { get; set; }
 
@@ -138,7 +141,8 @@ public static class IraAlertPrefs
 /// <remarks>
 /// <para>
 /// <b>What.</b> The AI Trader acting live (a buy, an exit, a strategy started or stopped); a live run's risk rules
-/// stopping it or closing a group; a Sentinel incident opened at high or critical (<see cref="IraDesk"/>). And on NSE
+/// stopping it or closing a group; a Sentinel incident opened at high or critical; a circular or a broker's notice the
+/// Compliance Triage found applies to the desk, once (<see cref="IraDesk"/>, <see cref="ComplianceAlerts"/>). And on NSE
 /// trading days (the exchange calendar), a morning briefing at <c>MorningAt</c> (09:10 IST) and a close briefing at
 /// <c>CloseAt</c> (15:40 IST). All worded by code (<see cref="IraAlertText"/>); no model writes any of it.
 /// </para>
