@@ -689,6 +689,65 @@ class RecorderTests(Base):
         self.assertIn("breadth 1,738 sessions to go", item.detail)
 
 
+class RuleChangesTests(Base):
+    """SEBI's circular of 15 Oct 2026: index F&O trade until 3:45 p.m. from 7 Dec 2026, para 4.8 from 8 Feb 2027."""
+
+    PATH = checks.COMPLIANCE_PATH
+    TITLE = ("Review of certain aspects of the Closing Auction Session, market timings and settlement methodology for "
+             "derivatives contracts")
+
+    def circular(self, *dates, handled=None, report=412, title=None, source="SEBI"):
+        return {"reportId": report, "circularId": 41, "source": source, "title": title or self.TITLE,
+                "effectiveDates": [{"date": d, "what": "takes effect"} for d in dates],
+                "deskChanges": ["Index derivatives trade until 3:45 p.m."],
+                "followUp": {"alertedUtc": "2026-10-18T15:30:00Z", "handledUtc": handled} if handled is not None or report else None}
+
+    def item(self, today, *circulars, now=None):
+        body = {"today": today, "circulars": list(circulars)}
+        return self.one(checks.rule_changes(self.inputs("morning", {self.PATH: body}, now=now)))
+
+    def test_a_rule_more_than_14_days_ahead_is_a_note_with_its_date(self):
+        item = self.item("2026-10-19", self.circular("2026-12-07", "2027-02-08"), now=ist(8, 55, day=19, month=10))
+        self.assertIs(State.INFO, item.state)
+        self.assertEqual("1 rule change not marked handled — SEBI “Review of certain aspects of the Closing Auction "
+                         "Session, market timings and settlement methodology for derivatives contracts” from 7 Dec "
+                         "2026 (in 49 days).", item.detail)
+        self.assertIn("mark it handled", item.action)
+        self.assertEqual("/ai/reports?id=412", item.link)
+
+    def test_fourteen_days_or_fewer_before_it_is_worth_a_look(self):
+        self.assertIs(State.WARN, self.item("2026-11-23", self.circular("2026-12-07")).state)   # 14 days
+        self.assertIs(State.INFO, self.item("2026-11-22", self.circular("2026-12-07")).state)   # 15 days
+        today = self.item("2026-12-07", self.circular("2026-12-07"))
+        self.assertIs(State.WARN, today.state)
+        self.assertIn("(today)", today.detail)
+        self.assertTrue(today.action.startswith("7 Dec is today."))
+
+    def test_the_nearest_day_still_ahead_decides_and_every_circular_is_listed(self):
+        fyers = self.circular("2026-10-30", report=415, title="Changes to FYERS API Rate Limits and Usage", source="FYERS")
+        item = self.item("2026-10-19", self.circular("2026-12-07"), fyers)
+        self.assertIs(State.WARN, item.state)
+        self.assertTrue(item.detail.startswith("2 rule changes not marked handled — FYERS “Changes to FYERS API"))
+        self.assertIn("(in 11 days)", item.detail)
+        self.assertEqual(checks.COMPLIANCE_REPORTS, item.link)
+        # Once 7 Dec has passed, 8 Feb is the day ahead.
+        later = self.item("2026-12-08", self.circular("2026-12-07", "2027-02-08"))
+        self.assertIs(State.INFO, later.state)
+        self.assertIn("from 8 Feb 2027 (in 62 days)", later.detail)
+
+    def test_none_ahead_handled_past_or_undated_is_fine(self):
+        self.assertIs(State.OK, self.item("2026-10-19").state)
+        self.assertIs(State.OK, self.item("2026-10-19", self.circular("2026-12-07", handled="2026-10-20T04:00:00Z")).state)
+        self.assertIs(State.OK, self.item("2026-12-08", self.circular("2026-12-07")).state)
+        self.assertIs(State.OK, self.item("2026-10-19", self.circular()).state)
+
+    def test_it_is_in_the_morning_weekly_and_on_request_checkups(self):
+        for slot in (MORNING, WEEKLY, ON_REQUEST):
+            self.assertIn("rule-changes", slot.checks)
+        items = run_checks(self.inputs("morning", {self.PATH: ValueError("404")}), ("rule-changes",))
+        self.assertIs(State.WARN, self.one(items).state)
+
+
 class CalendarTests(Base):
     def test_holidays_in_the_week_ahead_are_listed_and_next_year_is_asked_for_in_november(self):
         body = {"holidays": [{"date": "2026-11-10", "exchange": "NSE", "name": "Diwali"},

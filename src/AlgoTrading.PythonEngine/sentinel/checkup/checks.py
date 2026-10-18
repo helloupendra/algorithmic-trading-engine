@@ -1206,6 +1206,72 @@ def calendar_week(inp: Inputs) -> list[Item]:
     return items
 
 
+# -------------------------------------------------------------- rule changes
+
+COMPLIANCE_PATH = "/api/Ai/compliance"
+COMPLIANCE_REPORTS = "/ai/reports?agent=compliance-triage"
+#: Fourteen days or fewer before a rule takes effect, the desk has to be ready: worth a look.
+RULE_CHANGE_WARN_DAYS = 14
+
+
+def _iso_day(value: Any) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _in_days(days: int) -> str:
+    return "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
+
+
+def rule_changes(inp: Inputs) -> list[Item]:
+    """
+    Every circular or broker notice the Compliance Triage found applies to the
+    desk, with a day it takes effect still ahead, that nobody has marked
+    handled. SEBI's circular of 15 Oct 2026 moves the index F&O close to 3:45
+    p.m. from 7 Dec 2026, and on 17 Oct it reached the owner only as a line on
+    Today: this item names it at every morning checkup until it is handled.
+    """
+    body = inp.api(COMPLIANCE_PATH)
+    body = body if isinstance(body, dict) else {}
+    today = _iso_day(body.get("today")) or inp.ist.date()
+    ahead: list[tuple[date, dict]] = []
+    for c in body.get("circulars") or []:
+        if not isinstance(c, dict):
+            continue
+        follow = c.get("followUp") if isinstance(c.get("followUp"), dict) else {}
+        if follow.get("handledUtc"):
+            continue
+        days = sorted(d for d in (_iso_day(e.get("date")) for e in c.get("effectiveDates") or [] if isinstance(e, dict))
+                      if d is not None and d >= today)
+        if days:
+            ahead.append((days[0], c))
+    title = "Rule changes ahead"
+    if not ahead:
+        return [Item("rule-changes", CALENDAR, title, State.OK,
+                     "No circular that applies to the desk takes effect ahead without being marked handled.")]
+    ahead.sort(key=lambda a: (a[0], str(a[1].get("title"))))
+    named = [f"{c.get('source') or '?'} “{_trim_title(c.get('title'))}” from {d.strftime('%-d %b %Y')} "
+             f"({_in_days((d - today).days)})" for d, c in ahead]
+    first_day, first = ahead[0]
+    left = (first_day - today).days
+    # " — ", never ": ": the notifier masks what follows a word like "token:", and a notice's title may hold one.
+    detail = f"{_n(len(ahead), 'rule change')} not marked handled — {_listed(named)}."
+    link = f"/ai/reports?id={first['reportId']}" if len(ahead) == 1 and first.get("reportId") else COMPLIANCE_REPORTS
+    action = ("Get the desk ready, then mark it handled with what was done on AI → Reports (the Compliance Triage's "
+              "report). It is listed here until then.")
+    if left <= RULE_CHANGE_WARN_DAYS:
+        return [Item("rule-changes", CALENDAR, title, State.WARN, detail,
+                     f"{first_day.strftime('%-d %b')} is {_in_days(left)}. " + action, link)]
+    return [Item("rule-changes", CALENDAR, title, State.INFO, detail, action, link)]
+
+
+def _trim_title(value: Any, limit: int = 140) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 # -------------------------------------------------------------------- runner
 
 #: Every check by key: its area and title (for the item when it cannot run) and the function.
@@ -1236,6 +1302,7 @@ CHECKS: dict[str, tuple[str, str, Check]] = {
     "archive": (DESK, "Archive to Drive", archive),
     "calendar-today": (CALENDAR, "Today's session", calendar_today),
     "calendar-week": (CALENDAR, "Holidays this week", calendar_week),
+    "rule-changes": (CALENDAR, "Rule changes ahead", rule_changes),
 }
 
 
