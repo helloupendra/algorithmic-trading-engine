@@ -61,6 +61,10 @@ public static class ConsoleSite
     /// <summary>Maps the two fallbacks; both are open to anyone, as a page's HTML is (the data behind it is not).</summary>
     public static void MapConsoleFallbacks(this WebApplication app)
     {
+        // The desk, the pager and Sentinel ask GET /health whether the API is up. It had no endpoint of its own and
+        // passed only because the fallback answered every unknown path with a 200; with unknown paths now a 404 it
+        // must be a real endpoint (19 Oct 2026: the first deploy without it read as "API restart FAILED").
+        app.MapGet("/health", () => Results.Text("ok")).AllowAnonymous().ExcludeFromDescription();
         app.MapFallbackToFile(FallbackPattern, "index.html").AllowAnonymous();
         app.MapFallback(IraPattern, ServeIraShellAsync).AllowAnonymous();
         app.MapFallback(NotFoundPattern, ServeAppNotFoundAsync).AllowAnonymous();

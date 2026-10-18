@@ -87,6 +87,15 @@ public sealed class ConsoleSiteTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Health_is_a_real_200_for_the_desk_pager_and_sentinel()
+    {
+        using var response = await _client.GetAsync("/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("ok", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task The_api_and_ira_keep_their_own_answers()
     {
         using var api = await _client.GetAsync("/api/nothing");
