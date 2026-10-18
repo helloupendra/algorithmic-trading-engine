@@ -19,7 +19,8 @@ The rule holds in three places:
   buy, sell, hold, exit, book profit, stop-loss, target, rebalance, accumulate, avoid, trim and their phrasings, and
   in Hindi and Hinglish kharid, bech, nikal, rakho, chahiye, book karo, in Latin or Devanagari script. A failed
   paragraph is sent back once with what failed; a second failure leaves the report without a summary and a data note
-  saying so. The page works the same either way.
+  saying so. The page works the same either way. The prompt asks the model to say what the portfolio "owns" or
+  "is invested in" and never "hold" or "holds", which the guard refuses (the page hides a summary with that word too).
 * **The disclaimer** on every report: "Information about your own holdings, not investment advice."
 
 ## Linking each broker
@@ -82,14 +83,19 @@ or exit call, and on any method named for one.
   JSON, with the price each holding was valued at and where that price came from. Kept **90 days**
   (`Portfolio:RetentionDays`): each sync deletes the user's older rows, and `PortfolioRetentionService` everyone's
   every six hours. They are not archived anywhere.
-* **Disconnect** deletes the row and the token. `?forget=true` also deletes that broker's snapshots, and any cached
-  summary that may name its holdings.
+* **Disconnect** deletes the row and the token. The broker's last snapshot stays in the report, marked in `sources`
+  and `dataNotes` as "disconnected; last read …", until `?forget=true` deletes that broker's snapshots (and any cached
+  summary that may name its holdings).
 * The written summary is cached on the newest snapshot it was written from.
 
 ## The report
 
-All amounts in rupees. Every weight and every "Pct" is a percentage (0 to 100) of current value; `hhi` is the sum of
-the squared percentage weights (0 to 10,000). A null is a figure that is not known, never a zero.
+All amounts in rupees. Units, as the page reads them (`PortfolioReportBuilder`, `PortfolioRiskMath`):
+
+* every **weight**, `coveredWeight` and `hhi` is a **fraction from 0 to 1** (0.34 is 34% of value);
+* every field named **`…Pct`** (`pnlPct`, `dayChangePct`, `volatilityAnnualPct`, `maxDrawdownPct`) is a **percent**
+  (12.5 is 12.5%), and `maxDrawdownPct` is the size of the fall, a positive number;
+* a null is a figure that is not known, never a zero.
 
 * **Holdings, merged by ISIN.** A security held at two brokers is one holding: the quantities and the amounts paid add
   up, the average price is the total paid over the total quantity, and the price is the freshest broker price. A
@@ -100,11 +106,12 @@ the squared percentage weights (0 to 10,000). A null is a figure that is not kno
 * **Sector and market-cap band** are `Unknown` for every holding, and a data note says so: the desk holds no sector or
   market-cap classification of listed stocks yet, and the page does not guess one. The allocation is still shown by
   broker.
-* **Concentration**: the largest holding's weight, the top five's, the HHI, and the five largest.
+* **Concentration**: the largest holding's weight, the top five's, the HHI (the sum of the squared weights, from
+  1/n for n equal holdings to 1 for one), and the five largest.
 * **Risk**: today's holdings at today's weights over past daily closes, against NIFTY 50: annual volatility (sample
   standard deviation × √252), beta (cov/var, n − 1) and the largest fall from a running peak, over up to 250
-  completed sessions and never fewer than 20. A holding counts only with a stored close on every session of the
-  window; `coveredWeight` is the share of value that does. A one-day move beyond 35% is read as a split or bonus the
+  trading days (`lookbackDays`) and never fewer than 20. A holding counts only with a stored close on every trading day
+  of the window; `coveredWeight` is the fraction of value that does. A one-day move beyond 35% is read as a split or bonus the
   stored prices are not adjusted for, and that holding is left out by name rather than shown as a crash. `note` says
   what was used. It is how today's portfolio would have moved, not how the account moved, and not a forecast.
   Daily closes come from the desk's candles table (resolution `D`, under the instrument master's symbol for the
@@ -115,8 +122,12 @@ the squared percentage weights (0 to 10,000). A null is a figure that is not kno
 * **Funds** per broker: available, used and total, in the broker's own terms (FYERS's Available Balance, Utilized
   Amount and Total Balance; Dhan's available balance, utilised amount and start-of-day limit; Angel's available cash,
   utilised debits and net).
+* **Sources**: one line per broker with the last good read (`takenUtc`). When the latest sync of that broker failed,
+  the report still uses the last good snapshot, and the line says `ok: false`, the `error` and `attemptedUtc`; a data
+  note says it in words ("Dhan: showing 16 Oct 11:30 IST data; the latest sync (16 Oct 11:32 IST) failed: …"). A
+  connection's `lastError` is set by a failed sync and cleared by the next good one.
 * **Data notes**: everything missing, said plainly: an unpriced holding, a holding valued at the desk's close, a day
-  change not known, a broker not read yet or whose last read failed, figures over a day old, history gaps.
+  change not known, a broker not read yet, failed or disconnected, figures over a day old, history gaps.
 
 ## The summary's model
 
@@ -140,12 +151,14 @@ The user is always the signed-in user, from the token. Any role. camelCase JSON.
 | `GET callback/{broker}` | The broker's redirect target: 302 to `/portfolio?connected={broker}` or `/portfolio?error={message}` |
 | `POST connections/{broker}/token` | `{ fields: { clientId, accessToken } }`: checked by one read, then the connection row; 400 `{ message }` |
 | `DELETE connections/{broker}?forget=` | 204 |
-| `POST sync` | `{ takenUtc, results: [{ broker, ok, error }] }`; 429 with Retry-After within a minute of the last |
-| `GET report` | The report; 404 `{ message }` before the first sync |
-| `GET history?days=90` | `[{ date, invested, current, pnl }]`: each day's last snapshot per broker read that day, nothing carried forward |
+| `POST sync` | `{ takenUtc, results: [{ broker, ok, error }] }`; within a minute of the last, 429 `{ message, retryAfterSeconds }` (and a Retry-After header) |
+| `GET report` | The report; 404 `{ message }` before the first sync, never a bare 404 |
+| `GET history?days=90` | `[{ date, invested, current, pnl }]`, `date` as YYYY-MM-DD in IST: each day's last snapshot per broker read that day, nothing carried forward |
 | `GET admin/connections` | Admin only: users per broker by status. No amounts, no holdings, no names |
 
-The page should call `POST sync` after a `?connected=` return: linking reads the profile only.
+The page should call `POST sync` after a `?connected=` return: linking reads the profile only. The callback's
+`connected=` carries the broker key (`fyers`, `dhan`, `angel`); `accountLabel` is already masked (`••••1234`);
+`tokenFields[].key` is camelCase (`clientId`, `accessToken`).
 
 ## Privacy
 

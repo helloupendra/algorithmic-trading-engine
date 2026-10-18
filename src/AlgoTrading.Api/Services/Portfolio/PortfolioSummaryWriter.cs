@@ -119,13 +119,13 @@ public sealed class PortfolioSummaryWriter(IPortfolioSummaryModel model, TimePro
                 pnlPct = report.Totals.PnlPct,
                 dayChange = report.Totals.DayChange,
                 dayChangePct = report.Totals.DayChangePct,
-                holdings = report.Totals.HoldingsCount,
+                stocks = report.Totals.HoldingsCount,
             },
-            largestHoldings = report.Holdings.Where(h => h.Value is not null).Take(10).Select(h => new
+            largestInvestments = report.Holdings.Where(h => h.Value is not null).Take(10).Select(h => new
             {
                 symbol = h.Symbol,
                 name = h.Name,
-                weightPct = h.Weight,
+                weightPct = Pct(h.Weight),
                 value = h.Value,
                 pnl = h.Pnl,
                 pnlPct = h.PnlPct,
@@ -133,25 +133,25 @@ public sealed class PortfolioSummaryWriter(IPortfolioSummaryModel model, TimePro
             }).ToList(),
             concentration = new
             {
-                largestHoldingPct = report.Concentration.Top1Weight,
-                top5Pct = report.Concentration.Top5Weight,
+                largestInvestmentPct = Pct(report.Concentration.Top1Weight),
+                top5Pct = Pct(report.Concentration.Top5Weight),
                 hhi = report.Concentration.Hhi,
             },
             sectors = KnownSlices(report.Allocation.BySector)
-                ? report.Allocation.BySector.Select(s => new { name = s.Name, weightPct = s.Weight }).ToList()
+                ? report.Allocation.BySector.Select(s => new { name = s.Name, weightPct = Pct(s.Weight) }).ToList()
                 : null,
             marketCapBands = KnownSlices(report.Allocation.ByMarketCap)
-                ? report.Allocation.ByMarketCap.Select(s => new { name = s.Name, weightPct = s.Weight }).ToList()
+                ? report.Allocation.ByMarketCap.Select(s => new { name = s.Name, weightPct = Pct(s.Weight) }).ToList()
                 : null,
-            byBroker = report.Allocation.ByBroker.Select(s => new { name = s.Name, weightPct = s.Weight }).ToList(),
+            byBroker = report.Allocation.ByBroker.Select(s => new { name = s.Name, weightPct = Pct(s.Weight) }).ToList(),
             risk = new
             {
                 benchmark = PortfolioRiskMath.Benchmark,
-                completedSessions = report.Risk.LookbackDays,
+                tradingDays = report.Risk.LookbackDays,
                 annualVolatilityPct = report.Risk.VolatilityAnnualPct,
                 betaVsBenchmark = report.Risk.BetaVsNifty,
                 maxDrawdownPct = report.Risk.MaxDrawdownPct,
-                coveredWeightPct = report.Risk.CoveredWeight,
+                coveredWeightPct = Pct(report.Risk.CoveredWeight),
                 note = report.Risk.Note,
             },
             derivatives = new { openPositions = report.Derivatives.OpenPositions, grossExposure = report.Derivatives.GrossExposure },
@@ -162,6 +162,12 @@ public sealed class PortfolioSummaryWriter(IPortfolioSummaryModel model, TimePro
 
         return JsonSerializer.Serialize(facts, Json);
     }
+
+    /// <summary>
+    /// A weight as the model is given it: a percentage. The API sends weights as fractions; a person writes "40%", and the
+    /// number check compares what is written with what was given.
+    /// </summary>
+    private static decimal? Pct(decimal? fraction) => fraction is decimal f ? Math.Round(f * 100, 2, MidpointRounding.AwayFromZero) : null;
 
     private PortfolioSummaryOutcome Passed(PortfolioModelAnswer answer) =>
         new(new PortfolioSummary(answer.Text.Trim(), answer.Model, Checked: true, _time.GetUtcNow().UtcDateTime), null);

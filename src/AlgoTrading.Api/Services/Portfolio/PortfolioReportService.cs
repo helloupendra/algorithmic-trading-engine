@@ -60,32 +60,37 @@ public sealed class PortfolioReportService(
         return WithNote(report, cached?.Note ?? NoSummaryYetNote);
     }
 
-    /// <summary>The report from each linked broker's newest snapshot, without a summary; null when there is none.</summary>
+    /// <summary>
+    /// The report from each broker's last good snapshot, without a summary; null when there is none. A broker linked now
+    /// and one disconnected without forget both count: the second's last figures stay, marked as disconnected.
+    /// </summary>
     public async Task<BuiltPortfolioReport?> BuildAsync(long userId, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
         var links = await db.PortfolioConnections.AsNoTracking().Where(c => c.UserId == userId).ToListAsync(cancellationToken);
-        if (links.Count == 0) return null;
+        var read = await db.PortfolioSnapshots.AsNoTracking().Where(s => s.UserId == userId).Select(s => s.Broker).Distinct().ToListAsync(cancellationToken);
 
-        var newest = new List<PortfolioSnapshot>();
+        var newest = new List<(PortfolioSnapshot Snapshot, PortfolioConnection? Link)>();
         var notes = new List<string>();
-        foreach (var link in links.OrderBy(l => PortfolioBrokers.All.ToList().IndexOf(l.Broker)))
+        foreach (string broker in PortfolioBrokers.All.Where(b => links.Any(l => l.Broker == b) || read.Contains(b)))
         {
+            var link = links.FirstOrDefault(l => l.Broker == broker);
+            // Snapshots are written only for reads that worked, so the newest is the last good one.
             var snapshot = await db.PortfolioSnapshots.AsNoTracking()
-                .Where(s => s.UserId == userId && s.Broker == link.Broker)
+                .Where(s => s.UserId == userId && s.Broker == broker)
                 .OrderByDescending(s => s.TakenUtc).ThenByDescending(s => s.Id)
                 .FirstOrDefaultAsync(cancellationToken);
-            string name = PortfolioBrokers.NameOf(link.Broker);
+            string name = PortfolioBrokers.NameOf(broker);
             if (snapshot is null)
             {
-                notes.Add(link.LastError is null
+                notes.Add(link?.LastError is null
                     ? $"{name} is connected but has not been read yet: press Sync."
                     : $"{name} has not been read yet: {link.LastError}");
                 continue;
             }
 
-            newest.Add(snapshot);
-            if (PortfolioLinkService.StatusOf(link, now) == PortfolioConnectionStatus.Expired)
+            newest.Add((snapshot, link));
+            if (link is not null && PortfolioLinkService.StatusOf(link, now) == PortfolioConnectionStatus.Expired)
             {
                 notes.Add($"The {name} sign-in has ended: its figures are from the last read. Connect {name} again to refresh them.");
             }
@@ -93,11 +98,13 @@ public sealed class PortfolioReportService(
 
         if (newest.Count == 0) return null;
 
-        var snapshots = newest.Select(s =>
-        {
-            var link = links.First(l => l.Broker == s.Broker);
-            return new PortfolioBrokerSnapshot(s.Broker, s.Id, s.TakenUtc, Read(s), link.LastError is null, link.LastError);
-        }).ToList();
+        var snapshots = newest.Select(n => n.Link is null
+            ? new PortfolioBrokerSnapshot(n.Snapshot.Broker, n.Snapshot.Id, n.Snapshot.TakenUtc, Read(n.Snapshot), LastSyncOk: false, Disconnected: true)
+            : new PortfolioBrokerSnapshot(n.Snapshot.Broker, n.Snapshot.Id, n.Snapshot.TakenUtc, Read(n.Snapshot),
+                LastSyncOk: n.Link.LastError is null,
+                LastSyncError: n.Link.LastError,
+                // A failed sync stamps the attempt on the link; the snapshot keeps the last good read's time.
+                AttemptedUtc: n.Link.LastError is null ? null : n.Link.LastSyncUtc)).ToList();
 
         var symbols = snapshots.SelectMany(s => s.Portfolio.Holdings)
             .Select(h => h.CanonicalSymbol).OfType<string>()
@@ -109,8 +116,8 @@ public sealed class PortfolioReportService(
         var index = closes.TryGetValue(PortfolioPrices.IndexSymbol, out var nifty) ? nifty : [];
 
         var report = PortfolioReportBuilder.Build(new PortfolioReportInputs(now, snapshots, closes, index, Notes: notes));
-        var key = string.Join(",", newest.Select(s => s.Id).Order());
-        long newestId = newest.OrderByDescending(s => s.TakenUtc).ThenByDescending(s => s.Id).First().Id;
+        var key = string.Join(",", newest.Select(n => n.Snapshot.Id).Order());
+        long newestId = newest.Select(n => n.Snapshot).OrderByDescending(s => s.TakenUtc).ThenByDescending(s => s.Id).First().Id;
         return new BuiltPortfolioReport(report, newestId, key);
     }
 

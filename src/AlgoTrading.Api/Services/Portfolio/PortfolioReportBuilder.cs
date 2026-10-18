@@ -6,15 +6,19 @@ using AlgoTrading.Infrastructure.Services;
 
 namespace AlgoTrading.Api.Services.Portfolio;
 
-/// <summary>One broker's newest snapshot, as the report reads it.</summary>
-/// <param name="LastSyncOk">Whether the broker's last read worked; false when it failed after this snapshot was taken.</param>
+/// <summary>One broker's last good snapshot, as the report reads it.</summary>
+/// <param name="LastSyncOk">Whether the broker's latest read worked; false when one failed after this snapshot was taken.</param>
+/// <param name="AttemptedUtc">When that failed read was made.</param>
+/// <param name="Disconnected">The broker was disconnected without forget: its last figures stay, marked as such.</param>
 public sealed record PortfolioBrokerSnapshot(
     string Broker,
     long SnapshotId,
     DateTime TakenUtc,
     BrokerPortfolio Portfolio,
     bool LastSyncOk = true,
-    string? LastSyncError = null);
+    string? LastSyncError = null,
+    DateTime? AttemptedUtc = null,
+    bool Disconnected = false);
 
 /// <summary>A holding's sector and market-cap band, when the desk knows them.</summary>
 public sealed record PortfolioClass(string? Sector, string? MarketCapBand)
@@ -102,7 +106,7 @@ public static class PortfolioReportBuilder
         decimal prevValueSum = withDay.Sum(r => r.PrevValue ?? 0);
         decimal? dayChangePct = dayChange is decimal dc && prevValueSum > 0 ? Pct(dc / prevValueSum) : null;
 
-        decimal? Weight(decimal? value) => value is decimal v && current > 0 ? Pct(v / current) : null;
+        decimal? Weight(decimal? value) => value is decimal v && current > 0 ? Fraction(v / current) : null;
 
         var holdings = rows
             .OrderByDescending(r => r.Value ?? -1)
@@ -141,8 +145,8 @@ public static class PortfolioReportBuilder
         var weights = pricedViews.Select(h => h.Weight!.Value).OrderByDescending(w => w).ToList();
         var concentration = new PortfolioConcentration(
             weights.Count > 0 ? weights[0] : null,
-            weights.Count > 0 ? weights.Take(5).Sum() : null,
-            weights.Count > 0 ? Math.Round(pricedViews.Sum(h => Sq(h.Value!.Value / current * 100)), 1) : null,
+            weights.Count > 0 ? Fraction(pricedViews.Take(5).Sum(h => h.Value!.Value) / current) : null,
+            weights.Count > 0 ? Fraction(pricedViews.Sum(h => Sq(h.Value!.Value / current))) : null,
             pricedViews.Take(5).Select(h => h.Symbol).ToList());
 
         // Risk at today's weights over past closes.
@@ -181,9 +185,7 @@ public static class PortfolioReportBuilder
 
         return new PortfolioReport(
             inputs.Snapshots.Count > 0 ? inputs.Snapshots.Max(s => s.TakenUtc) : inputs.NowUtc,
-            inputs.Snapshots
-                .Select(s => new PortfolioSource(s.Broker, s.TakenUtc, s.LastSyncOk, s.LastSyncError))
-                .ToList(),
+            inputs.Snapshots.Select(Source).ToList(),
             totals,
             holdings,
             new PortfolioAllocation(bySector, byBroker, byBand),
@@ -296,28 +298,47 @@ public static class PortfolioReportBuilder
         }
     }
 
+    /// <summary>
+    /// A broker's line in <c>sources</c>: its last good read, and when the latest attempt failed or the broker was
+    /// disconnected, what happened.
+    /// </summary>
+    private static PortfolioSource Source(PortfolioBrokerSnapshot s)
+    {
+        if (s.Disconnected) return new PortfolioSource(s.Broker, s.TakenUtc, false, $"disconnected; last read {Ist(s.TakenUtc)}", null);
+        return s.LastSyncOk
+            ? new PortfolioSource(s.Broker, s.TakenUtc, true, null, null)
+            : new PortfolioSource(s.Broker, s.TakenUtc, false, s.LastSyncError, s.AttemptedUtc);
+    }
+
     private static IEnumerable<string> SourceNotes(IReadOnlyList<PortfolioBrokerSnapshot> snapshots, DateTime nowUtc)
     {
         foreach (var s in snapshots)
         {
             string name = PortfolioBrokers.NameOf(s.Broker);
-            string at = $"{IstTime.ToIst(s.TakenUtc):yyyy-MM-dd HH:mm} IST";
-            if (!s.LastSyncOk)
+            if (s.Disconnected)
             {
-                yield return $"The last {name} read failed{(string.IsNullOrWhiteSpace(s.LastSyncError) ? string.Empty : $" ({s.LastSyncError})")}; its figures are from {at}.";
+                yield return $"{name}: disconnected; last read {Ist(s.TakenUtc)}. Its last figures stay until it is disconnected with forget.";
+            }
+            else if (!s.LastSyncOk)
+            {
+                string when = s.AttemptedUtc is DateTime at ? $" ({Ist(at)})" : string.Empty;
+                string why = string.IsNullOrWhiteSpace(s.LastSyncError) ? "." : $": {s.LastSyncError}";
+                yield return $"{name}: showing {Ist(s.TakenUtc)} data; the latest sync{when} failed{why}";
             }
             else if (nowUtc - s.TakenUtc > StaleAfter)
             {
-                yield return $"{name}'s figures are from {at}, more than a day old.";
+                yield return $"{name}: showing {Ist(s.TakenUtc)} data, more than a day old.";
             }
         }
     }
+
+    private static string Ist(DateTime utc) => $"{IstTime.ToIst(utc):dd MMM HH:mm} IST";
 
     private static IReadOnlyList<PortfolioSlice> Slices(IEnumerable<(string Name, decimal Value)> groups, decimal total) =>
         groups
             .Where(g => g.Value > 0)
             .OrderByDescending(g => g.Value)
-            .Select(g => new PortfolioSlice(g.Name, Money(g.Value), total > 0 ? Pct(g.Value / total) : 0))
+            .Select(g => new PortfolioSlice(g.Name, Money(g.Value), total > 0 ? Fraction(g.Value / total) : 0))
             .ToList();
 
     private static string Count(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
@@ -331,6 +352,9 @@ public static class PortfolioReportBuilder
 
     private static decimal Price(decimal x) => Math.Round(x, 2, MidpointRounding.AwayFromZero);
 
-    /// <summary>A fraction as a percentage, to two decimals.</summary>
+    /// <summary>A fraction as a percentage, to two decimals: for the fields named "...Pct".</summary>
     private static decimal Pct(decimal fraction) => Math.Round(fraction * 100, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>A share of value, from 0 to 1, to four decimals: for the weights and the HHI.</summary>
+    private static decimal Fraction(decimal fraction) => Math.Round(fraction, 4, MidpointRounding.AwayFromZero);
 }

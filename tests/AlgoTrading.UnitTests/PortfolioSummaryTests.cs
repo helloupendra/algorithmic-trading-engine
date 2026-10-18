@@ -25,6 +25,7 @@ public class PortfolioSummaryTests
     [InlineData("It would be wise to rebalance towards banks.")]
     [InlineData("Book profits in RELIANCE and accumulate TCS.")]
     [InlineData("Hold TCS for the long term.")]
+    [InlineData("The portfolio holds 12 stocks.")]
     [InlineData("You should avoid small caps.")]
     public void Advice_is_refused_in_english_hindi_and_hinglish(string text)
     {
@@ -111,6 +112,27 @@ public class PortfolioSummaryTests
 
         Assert.True(PortfolioSummaryWriter.StillHolds(summary, Report()));
         Assert.False(PortfolioSummaryWriter.StillHolds(summary, Report(firstValue: 50000)));
+    }
+
+    [Fact]
+    public void The_prompt_asks_for_owns_and_invested_in_and_never_hold()
+    {
+        Assert.Contains("\"the portfolio owns 12 stocks\"", AiCatalog.PortfolioAnalystPrompt);
+        Assert.Contains("is invested in", AiCatalog.PortfolioAnalystPrompt);
+        Assert.Contains("never write \"hold\", \"holds\"", AiCatalog.PortfolioAnalystPrompt);
+        // And the guard refuses the word whatever the prompt says.
+        Assert.Equal(["hold"], PortfolioAdviceGuard.Find("You hold 12 stocks."));
+    }
+
+    [Fact]
+    public void The_model_is_given_weights_as_percents_while_the_api_sends_fractions()
+    {
+        var report = Report();
+        string facts = PortfolioSummaryWriter.Facts(report);
+
+        Assert.Equal(0.4m, report.Concentration.Top1Weight);
+        Assert.Contains("\"largestInvestmentPct\":40", facts);
+        Assert.Contains("\"top5Pct\":95", facts);
     }
 
     [Fact]

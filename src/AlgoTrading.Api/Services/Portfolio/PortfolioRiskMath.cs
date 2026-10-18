@@ -9,8 +9,9 @@ public readonly record struct DailyClose(DateOnly Date, decimal Close);
 public sealed record RiskHolding(string Symbol, decimal Value, IReadOnlyDictionary<DateOnly, decimal>? Closes);
 
 /// <summary>The risk figures and what they rest on.</summary>
-/// <param name="Sessions">The daily returns the figures cover (one fewer than the closes).</param>
-/// <param name="CoveredWeight">The share of value, in per cent, held in holdings with a close on every one of those sessions.</param>
+/// <param name="Sessions">The trading days the figures cover: daily returns, one fewer than the closes.</param>
+/// <param name="CoveredWeight">The fraction of value (0 to 1) held in holdings with a close on every one of those days.</param>
+/// <param name="MaxDrawdownPct">The largest fall from a peak, in per cent, as a positive number.</param>
 /// <param name="Note">One sentence on what was used, for the report's <c>risk.note</c>.</param>
 /// <param name="Gaps">What was left out and why, for the report's data notes.</param>
 public sealed record RiskFigures(
@@ -71,7 +72,7 @@ public static class PortfolioRiskMath
         if (sessions < minSessions)
         {
             return new RiskFigures(sessions, null, null, null, 0,
-                $"The desk holds {sessions} completed sessions of {Benchmark} closes, fewer than the {minSessions} the figures need.", gaps);
+                $"The desk holds {sessions} trading days of {Benchmark} returns, fewer than the {minSessions} the figures need.", gaps);
         }
 
         var dates = axis.Select(c => c.Date).ToList();
@@ -105,16 +106,16 @@ public static class PortfolioRiskMath
 
         if (missing.Count > 0)
         {
-            gaps.Add($"{missing.Count} {(missing.Count == 1 ? "holding has" : "holdings have")} no stored close on every one of the {sessions} sessions and {(missing.Count == 1 ? "is" : "are")} left out of the risk figures: {string.Join(", ", missing.Take(8))}{(missing.Count > 8 ? ", …" : string.Empty)}.");
+            gaps.Add($"{missing.Count} {(missing.Count == 1 ? "holding has" : "holdings have")} no stored close on every one of the {sessions} trading days and {(missing.Count == 1 ? "is" : "are")} left out of the risk figures: {string.Join(", ", missing.Take(8))}{(missing.Count > 8 ? ", …" : string.Empty)}.");
         }
 
         decimal coveredValue = covered.Sum(c => c.Holding.Value);
-        decimal coveredWeight = Math.Round(coveredValue / totalValue * 100, 2);
+        decimal coveredWeight = Math.Round(coveredValue / totalValue, 4, MidpointRounding.AwayFromZero);
         string window = $"{dates[0]:yyyy-MM-dd} to {dates[^1]:yyyy-MM-dd}";
         if (covered.Count == 0)
         {
             return new RiskFigures(sessions, null, null, null, 0,
-                $"No holding has a stored close on every session from {window}, so the figures cannot be measured.", gaps);
+                $"No holding has a stored close on every trading day from {window}, so the figures cannot be measured.", gaps);
         }
 
         var portfolio = new double[sessions];
@@ -133,7 +134,7 @@ public static class PortfolioRiskMath
         double drawdown = MaxDrawdown(portfolio) * 100;
 
         string note = string.Create(CultureInfo.InvariantCulture,
-            $"Daily closes of {covered.Count} {(covered.Count == 1 ? "holding" : "holdings")} ({coveredWeight:0.##}% of value) over {sessions} completed sessions, " +
+            $"Daily closes of {covered.Count} {(covered.Count == 1 ? "holding" : "holdings")} ({coveredWeight * 100:0.##}% of value) over {sessions} trading days, " +
             $"{window}, weighted by today's values, against {Benchmark}. How today's portfolio would have moved, not how the account moved, and not a forecast.");
 
         return new RiskFigures(

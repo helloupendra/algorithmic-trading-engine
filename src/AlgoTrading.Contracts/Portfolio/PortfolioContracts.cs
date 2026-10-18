@@ -2,9 +2,10 @@ using System.Text.Json.Serialization;
 
 namespace AlgoTrading.Contracts.Portfolio;
 
-// The Portfolio page's API (/api/Portfolio), as the console reads it. Every amount is in rupees. Every weight and every
-// "Pct" is a percentage (0 to 100) of the portfolio's current value; hhi is the sum of the squared percentage weights
-// (0 to 10,000). A null is a figure that is not known, never a zero. docs/modules/portfolio.md describes each one.
+// The Portfolio page's API (/api/Portfolio), as the console reads it. Every amount is in rupees. Units, as the page reads
+// them: every weight, coveredWeight and hhi is a FRACTION from 0 to 1 (hhi is the sum of the squared weights); every
+// field named "...Pct" is a PERCENT (12.5 is 12.5%), and maxDrawdownPct is a positive magnitude of a fall. A null is a
+// figure that is not known, never a zero. docs/modules/portfolio.md describes each one.
 
 /// <summary>One value the user pastes to link a token-mode broker.</summary>
 public sealed record PortfolioTokenField(string Key, string Label, string Help);
@@ -39,8 +40,12 @@ public sealed record PortfolioSyncResult(string Broker, bool Ok, string? Error);
 
 public sealed record PortfolioSyncResponse(DateTime TakenUtc, IReadOnlyList<PortfolioSyncResult> Results);
 
-/// <summary>Where a report's figures came from: each broker's snapshot, and whether its last read worked.</summary>
-public sealed record PortfolioSource(string Broker, DateTime TakenUtc, bool Ok, string? Error);
+/// <summary>Where a report's figures came from: each broker's last good read, and whether the latest attempt worked.</summary>
+/// <param name="TakenUtc">The last good read: the snapshot the report's figures for this broker come from.</param>
+/// <param name="Ok">False when the latest sync of this broker failed, or the broker is disconnected.</param>
+/// <param name="Error">What failed, or "disconnected; last read …".</param>
+/// <param name="AttemptedUtc">When the failed attempt was made; null when the latest attempt worked.</param>
+public sealed record PortfolioSource(string Broker, DateTime TakenUtc, bool Ok, string? Error, DateTime? AttemptedUtc);
 
 /// <summary>The portfolio's totals, over the holdings that have a price.</summary>
 public sealed record PortfolioTotals(
@@ -79,8 +84,8 @@ public sealed record PortfolioAllocation(
 
 public sealed record PortfolioConcentration(decimal? Top1Weight, decimal? Top5Weight, decimal? Hhi, IReadOnlyList<string> Largest);
 
-/// <param name="LookbackDays">The completed sessions the figures cover.</param>
-/// <param name="CoveredWeight">The share of value whose holdings have a close on every one of those sessions.</param>
+/// <param name="LookbackDays">The trading days the figures cover (daily returns).</param>
+/// <param name="CoveredWeight">The fraction of value whose holdings have a close on every one of those trading days.</param>
 public sealed record PortfolioRisk(
     int LookbackDays,
     decimal? VolatilityAnnualPct,

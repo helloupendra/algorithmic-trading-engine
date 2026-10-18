@@ -272,7 +272,11 @@ public class PortfolioLinkTests
         Assert.IsType<OkObjectResult>((await asha.Sync(default)).Result);
         var again = Assert.IsType<ObjectResult>((await desk.Controller(Asha).Sync(default)).Result);
 
+        // The page cannot read the Retry-After header: the wait is in the body too.
         Assert.Equal(StatusCodes.Status429TooManyRequests, again.StatusCode);
+        using var body = JsonDocument.Parse(Json(again.Value));
+        Assert.Contains("less than a minute ago", body.RootElement.GetProperty("message").GetString());
+        Assert.InRange(body.RootElement.GetProperty("retryAfterSeconds").GetInt32(), 1, 60);
         // Another user is not held up by it.
         Assert.IsType<OkObjectResult>((await desk.Controller(Ravi).Sync(default)).Result);
     }
@@ -305,6 +309,93 @@ public class PortfolioLinkTests
     }
 
     [Fact]
+    public async Task A_failed_sync_keeps_the_last_good_read_and_says_when_the_attempt_failed()
+    {
+        var desk = new Desk();
+        desk.Link(Asha, "fyers");
+        desk.Link(Asha, "dhan");
+        await desk.Db.SaveChangesAsync();
+        desk.Broker
+            .Get(FyersPortfolioClient.HoldingsPath, Fixture("fyers_holdings.json"))
+            .Get(FyersPortfolioClient.PositionsPath, Fixture("fyers_positions.json"))
+            .Get(FyersPortfolioClient.FundsPath, Fixture("fyers_funds.json"))
+            // Dhan answers, then is down, then answers again.
+            .On("GET", DhanPortfolioClient.HoldingsPath, HttpStatusCode.OK, Fixture("dhan_holdings.json"))
+            .On("GET", DhanPortfolioClient.HoldingsPath, HttpStatusCode.ServiceUnavailable, "<html>busy</html>")
+            .On("GET", DhanPortfolioClient.HoldingsPath, HttpStatusCode.OK, Fixture("dhan_holdings.json"))
+            .Get(DhanPortfolioClient.PositionsPath, "[]")
+            .Get(DhanPortfolioClient.FundsPath, Fixture("dhan_fundlimit.json"));
+        var firstRead = desk.Time.GetUtcNow().UtcDateTime;
+
+        await desk.Controller(Asha).Sync(default);
+        desk.Time.Advance(TimeSpan.FromMinutes(2));
+        var failedAt = desk.Time.GetUtcNow().UtcDateTime;
+        var second = Assert.IsType<PortfolioSyncResponse>(Assert.IsType<OkObjectResult>((await desk.Controller(Asha).Sync(default)).Result).Value);
+
+        Assert.Equal([("fyers", true), ("dhan", false)], second.Results.Select(r => (r.Broker, r.Ok)));
+        var dhanLink = await desk.Db.PortfolioConnections.SingleAsync(c => c.Broker == "dhan");
+        Assert.Equal(("error", "Dhan refused the holdings (HTTP 503)."), (dhanLink.Status, dhanLink.LastError));
+
+        var report = Assert.IsType<PortfolioReport>(Assert.IsType<OkObjectResult>((await desk.Controller(Asha).Report(default)).Result).Value);
+        // Dhan's holdings are still in the report, from its last good read.
+        Assert.Contains(report.Holdings, h => h.Isin == "INE040A01034");
+        var dhan = report.Sources.Single(x => x.Broker == "dhan");
+        Assert.Equal((firstRead, false, "Dhan refused the holdings (HTTP 503).", (DateTime?)failedAt), (dhan.TakenUtc, dhan.Ok, dhan.Error, dhan.AttemptedUtc));
+        var fyers = report.Sources.Single(x => x.Broker == "fyers");
+        Assert.Equal((failedAt, true, (string?)null, (DateTime?)null), (fyers.TakenUtc, fyers.Ok, fyers.Error, fyers.AttemptedUtc));
+        Assert.Contains("Dhan: showing 16 Oct 11:30 IST data; the latest sync (16 Oct 11:32 IST) failed: Dhan refused the holdings (HTTP 503).", report.DataNotes);
+
+        // The next good read clears the error.
+        desk.Time.Advance(TimeSpan.FromMinutes(2));
+        await desk.Controller(Asha).Sync(default);
+        dhanLink = await desk.Db.PortfolioConnections.AsNoTracking().SingleAsync(c => c.Broker == "dhan");
+        Assert.Equal(("connected", (string?)null), (dhanLink.Status, dhanLink.LastError));
+        report = Assert.IsType<PortfolioReport>(Assert.IsType<OkObjectResult>((await desk.Controller(Asha).Report(default)).Result).Value);
+        Assert.All(report.Sources, x => Assert.True(x.Ok));
+    }
+
+    [Fact]
+    public async Task A_broker_disconnected_without_forget_keeps_its_last_read_in_the_report_marked_so()
+    {
+        var desk = new Desk();
+        desk.Link(Asha, "fyers");
+        desk.Snapshot(Asha, "fyers", 1);
+        await desk.Db.SaveChangesAsync();
+
+        await desk.Controller(Asha).Disconnect("fyers", forget: false, default);
+        var report = Assert.IsType<PortfolioReport>(Assert.IsType<OkObjectResult>((await desk.Controller(Asha).Report(default)).Result).Value);
+
+        Assert.Equal(1, report.Totals.HoldingsCount);
+        var source = Assert.Single(report.Sources);
+        Assert.Equal((false, "disconnected; last read 16 Oct 10:30 IST"), (source.Ok, source.Error));
+        Assert.Contains(report.DataNotes, n => n.StartsWith("FYERS: disconnected; last read 16 Oct 10:30 IST"));
+
+        // With forget, it is gone.
+        await desk.Controller(Asha).Disconnect("fyers", forget: true, default);
+        Assert.IsType<NotFoundObjectResult>((await desk.Controller(Asha).Report(default)).Result);
+    }
+
+    [Fact]
+    public async Task History_dates_are_ist_calendar_days_written_yyyy_mm_dd()
+    {
+        var desk = new Desk();
+        desk.Link(Asha, "fyers");
+        // 19:00 UTC on 15 Oct is 00:30 IST on 16 Oct: the IST day it counts for.
+        desk.Db.PortfolioSnapshots.Add(new PortfolioSnapshot
+        {
+            UserId = Asha,
+            Broker = "fyers",
+            TakenUtc = new DateTime(2026, 10, 15, 19, 0, 0, DateTimeKind.Utc),
+            HoldingsJson = """[{"symbol":"NSE:TCS-EQ","isin":"INE467B01029","quantity":2,"avgPrice":3400,"ltp":3550}]""",
+        });
+        await desk.Db.SaveChangesAsync();
+
+        var history = (await desk.Controller(Asha).History(90, default)).Result;
+
+        Assert.Equal("""[{"date":"2026-10-16","invested":6800,"current":7100,"pnl":300}]""", Json(Assert.IsType<OkObjectResult>(history).Value));
+    }
+
+    [Fact]
     public async Task A_user_cannot_read_another_user_s_report_or_history()
     {
         var desk = new Desk();
@@ -334,7 +425,10 @@ public class PortfolioLinkTests
 
         var missing = Assert.IsType<NotFoundObjectResult>((await desk.Controller(Asha).Report(default)).Result);
 
-        Assert.Contains("Sync", Json(missing));
+        // A JSON body with a message, never a bare 404.
+        Assert.Equal(StatusCodes.Status404NotFound, missing.StatusCode);
+        using var body = JsonDocument.Parse(Json(missing.Value));
+        Assert.Contains("Sync", body.RootElement.GetProperty("message").GetString());
     }
 
     [Fact]

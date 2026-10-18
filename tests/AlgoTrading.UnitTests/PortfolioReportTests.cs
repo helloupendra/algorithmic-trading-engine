@@ -33,8 +33,8 @@ public class PortfolioReportTests
         Assert.Equal(2520m, h.Ltp);
         Assert.Equal(75600m, h.Value);                // 30 × 2520
         Assert.Equal(1100m, h.Pnl);
-        Assert.Equal(1.48m, h.PnlPct);                // 1100 / 74500
-        Assert.Equal(100m, h.Weight);
+        Assert.Equal(1.48m, h.PnlPct);                // 1100 / 74500, a percent
+        Assert.Equal(1m, h.Weight);                   // the whole of the value, a fraction
         Assert.Equal(1, report.Totals.HoldingsCount);
         Assert.Equal((74500m, 75600m, 1100m), (report.Totals.Invested, report.Totals.Current, report.Totals.Pnl));
 
@@ -66,7 +66,7 @@ public class PortfolioReportTests
 
         Assert.Equal("Unknown", report.Holdings[0].Sector);
         Assert.Equal("Unknown", report.Holdings[0].MarketCapBand);
-        Assert.Equal([("Unknown", 100m)], report.Allocation.BySector.Select(s => (s.Name, s.Weight)));
+        Assert.Equal([("Unknown", 1m)], report.Allocation.BySector.Select(s => (s.Name, s.Weight)));
         Assert.Contains(report.DataNotes, n => n.StartsWith("Sector and market-cap band are Unknown for every holding"));
         Assert.Equal("Information about your own holdings, not investment advice.", report.Disclaimer);
     }
@@ -74,7 +74,7 @@ public class PortfolioReportTests
     // ---------- weights and concentration ----------
 
     [Fact]
-    public void Weights_hhi_and_the_top_five_weight_are_shares_of_current_value()
+    public void Weights_hhi_and_the_top_five_weight_are_fractions_of_current_value()
     {
         // Values 40,000 / 20,000 / 15,000 / 10,000 / 10,000 / 5,000 of 1,00,000.
         var report = Build(Snapshot("fyers",
@@ -85,10 +85,10 @@ public class PortfolioReportTests
             Holding("NSE:EEE-EQ", "INE000000005", qty: 1, avg: 10000, ltp: 10000),
             Holding("NSE:FFF-EQ", "INE000000006", qty: 1, avg: 5000, ltp: 5000)));
 
-        Assert.Equal([40m, 20m, 15m, 10m, 10m, 5m], report.Holdings.Select(h => h.Weight!.Value));
-        Assert.Equal(40m, report.Concentration.Top1Weight);
-        Assert.Equal(95m, report.Concentration.Top5Weight);
-        Assert.Equal(2450m, report.Concentration.Hhi);  // 40² + 20² + 15² + 10² + 10² + 5²
+        Assert.Equal([0.4m, 0.2m, 0.15m, 0.1m, 0.1m, 0.05m], report.Holdings.Select(h => h.Weight!.Value));
+        Assert.Equal(0.4m, report.Concentration.Top1Weight);
+        Assert.Equal(0.95m, report.Concentration.Top5Weight);
+        Assert.Equal(0.245m, report.Concentration.Hhi);  // 0.4² + 0.2² + 0.15² + 0.1² + 0.1² + 0.05², between 0 and 1
         Assert.Equal(["AAA", "BBB", "CCC", "DDD", "EEE"], report.Concentration.Largest);
         Assert.Equal(100000m, report.Totals.Current);
     }
@@ -112,7 +112,7 @@ public class PortfolioReportTests
         // Sample sd 0.2309401 × √252 = 3.6660606.
         Assert.Equal(366.61m, risk.VolatilityAnnualPct);
         Assert.Equal(3, risk.Sessions);
-        Assert.Equal(100m, risk.CoveredWeight);
+        Assert.Equal(1m, risk.CoveredWeight);
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class PortfolioReportTests
         Assert.Equal(1.20m, risk.BetaVsNifty);
         Assert.Equal(12.00m, risk.MaxDrawdownPct);    // 1.12 → 0.9856
         Assert.Equal(219.96m, risk.VolatilityAnnualPct);
-        Assert.Equal(100m, risk.CoveredWeight);
+        Assert.Equal(1m, risk.CoveredWeight);
     }
 
     [Fact]
@@ -135,10 +135,29 @@ public class PortfolioReportTests
             [Risk("A", 60, A), new RiskHolding("NEWLISTING", 40, gappy), new RiskHolding("NOHISTORY", 0, null)],
             Index(Nifty), minSessions: 2);
 
-        Assert.Equal(60m, risk.CoveredWeight);
+        Assert.Equal(0.6m, risk.CoveredWeight);
         Assert.Equal(2.00m, risk.BetaVsNifty);        // A alone, re-weighted to the whole of what is measured
         Assert.Contains(risk.Gaps, g => g.Contains("NEWLISTING"));
         Assert.Contains("60% of value", risk.Note);
+    }
+
+    [Fact]
+    public void Pct_fields_are_percents_weights_are_fractions_and_the_largest_fall_is_a_positive_magnitude()
+    {
+        var risk = PortfolioRiskMath.Compute([Risk("A", 100, A)], Index(Nifty), minSessions: 2);
+
+        Assert.True(risk.MaxDrawdownPct > 0);          // a 20% fall is 20, not -20 and not 0.2
+        Assert.Equal(20.00m, risk.MaxDrawdownPct);
+        Assert.InRange(risk.CoveredWeight, 0m, 1m);
+        Assert.Contains("over 3 trading days", risk.Note);
+
+        var report = Build(Snapshot("fyers",
+            Holding("NSE:AAA-EQ", "INE000000001", qty: 1, avg: 800, ltp: 900),
+            Holding("NSE:BBB-EQ", "INE000000002", qty: 1, avg: 100, ltp: 100)));
+        Assert.Equal(11.11m, report.Totals.PnlPct);    // 100 / 900, 11.11 meaning 11.11%
+        Assert.Equal(12.5m, report.Holdings[0].PnlPct); // 100 / 800
+        Assert.Equal(0.9m, report.Holdings[0].Weight);  // 900 of 1,000
+        Assert.All(report.Allocation.ByBroker, s => Assert.InRange(s.Weight, 0m, 1m));
     }
 
     [Fact]
@@ -146,7 +165,7 @@ public class PortfolioReportTests
     {
         var risk = PortfolioRiskMath.Compute([Risk("A", 50, A), Risk("SPLIT", 50, [1000m, 1000m, 100m, 100m])], Index(Nifty), minSessions: 2);
 
-        Assert.Equal(50m, risk.CoveredWeight);
+        Assert.Equal(0.5m, risk.CoveredWeight);
         Assert.Equal(20.00m, risk.MaxDrawdownPct);   // A's, not a 90% fall
         Assert.Contains(risk.Gaps, g => g.StartsWith("SPLIT is left out") && g.Contains("split or bonus"));
     }
@@ -176,7 +195,7 @@ public class PortfolioReportTests
             closes, nifty));
 
         Assert.Equal(25, report.Risk.LookbackDays);
-        Assert.Equal(60m, report.Risk.CoveredWeight);
+        Assert.Equal(0.6m, report.Risk.CoveredWeight);
         Assert.Equal(2.00m, report.Risk.BetaVsNifty);
         Assert.Contains(report.DataNotes, n => n.Contains("ZZZ") && n.Contains("left out of the risk figures"));
     }
