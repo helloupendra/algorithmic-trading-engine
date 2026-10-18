@@ -41,6 +41,32 @@ public static partial class AiFactCheck
     }
 
     /// <summary>
+    /// Whether <paramref name="quote"/> is the source's own words: one passage, or several stitched together ("a … b",
+    /// "a; b", "a | b", or "a", "b"), each passage of four characters or more found in <paramref name="source"/> word for
+    /// word, and <paramref name="minLength"/> characters between them. Case, typographic marks and all whitespace are
+    /// set aside, so a word a PDF's text split in two ("de termination") still matches the whole word the model wrote.
+    /// </summary>
+    /// <remarks>
+    /// The Validator's REJECTs taught this on 11 Oct 2026 (40 of 60 quoted the brief in pieces); a circular with
+    /// several changes is quoted the same way. Nothing the source does not hold can pass: every piece is looked for.
+    /// </remarks>
+    public static bool QuotePassagesIn(string? quote, string source, int minLength = 12)
+    {
+        string text = Compact(source);
+        string whole = Normalise(quote).Trim('"', '\'', ' ', '.', '…');
+        if (whole.Length >= minLength && Compact(whole).Length > 0 && text.Contains(Compact(whole), StringComparison.Ordinal)) return true;
+
+        var parts = QuoteJoins().Split(Normalise(quote))
+            .Select(p => p.Trim().Trim('"', '\'', ',', ';', '.', '…', ' ').Trim())
+            .Where(p => Compact(p).Length >= 4)
+            .ToList();
+        return parts.Count > 0 && parts.Sum(p => p.Length) >= minLength && parts.All(p => text.Contains(Compact(p), StringComparison.Ordinal));
+    }
+
+    /// <summary><see cref="Normalise"/> with every space taken out: how a passage is looked for.</summary>
+    private static string Compact(string? text) => Spaces().Replace(Normalise(text), string.Empty);
+
+    /// <summary>
     /// The numbers, times and dates in <paramref name="written"/> that <paramref name="given"/> does not hold, as
     /// written, in order of first appearance; empty when every one is supported.
     /// </summary>
@@ -154,6 +180,11 @@ public static partial class AiFactCheck
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Spaces();
+
+    // How a model stitches passages into one quote: an ellipsis, a semicolon or a bar between them, or quoted pieces
+    // separated by commas.
+    [GeneratedRegex(@"\.\.\.|…|\s\|\s|;\s|""\s*,\s*""")]
+    private static partial Regex QuoteJoins();
 
     [GeneratedRegex(@"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")]
     private static partial Regex DateRx();

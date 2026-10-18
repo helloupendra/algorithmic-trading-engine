@@ -166,8 +166,11 @@ public sealed class AiSettings
     /// <summary>IST time on <see cref="ComplianceDay"/> after which it reads them.</summary>
     public string ComplianceAfterIst { get; set; } = "10:00";
 
-    /// <summary>Circulars in one Compliance Triage call; each carries up to 2,500 characters of its text.</summary>
-    public int ComplianceBatchSize { get; set; } = 4;
+    /// <summary>
+    /// Circulars in one Compliance Triage call; each carries up to 12,000 characters of its text (2,500 and four a call
+    /// until 18 Oct 2026, when a circular's dates were found past the part it was handed).
+    /// </summary>
+    public int ComplianceBatchSize { get; set; } = 2;
 
     /// <summary>How far back, by when they were recorded, circulars are still triaged.</summary>
     public int ComplianceLookbackDays { get; set; } = 21;

@@ -310,27 +310,170 @@ public class AiOfflineAgentsTests
     }
 
     [Fact]
-    public async Task A_batch_writes_one_report_per_circular_and_one_left_out_is_invalid()
+    public async Task A_batch_writes_one_report_per_circular_and_one_left_out_is_asked_for_again_once()
     {
         var ai = BuildOnAll();
         var seen = IstTime.FromIst(new DateTime(2026, 10, 8, 20, 30, 0));
         ai.Db.RegulatoryCirculars.AddRange(
             Circular(11, "Pre-Trade risk controls for algo orders", "Every algo order must carry an Algo ID issued by the exchange.", seen),
-            Circular(12, "Mock trading on Saturday", "", seen));
+            Circular(12, "Mock trading on Saturday", "", seen),
+            Circular(13, "Revision of SENSEX lot size", "", seen));
         await ai.Db.SaveChangesAsync();
+        ai.Options.CurrentValue.ComplianceBatchSize = 3;
         ai.Provider.On(Extract1, Answer("""
             {"circulars":[{"id":"c11","applies":"unclear","area":"retail algo","why":"The desk sends no orders to an exchange.","change":"","quote":"Every algo order must carry an Algo ID"}]}
+            """), Answer("""
+            {"circulars":[{"id":"c12","applies":"no","area":"other","why":"A mock session tests exchange systems.","change":"","quote":"Mock trading on Saturday"}]}
             """));
         var now = IstTime.FromIst(new DateTime(2026, 10, 10, 10, 5, 0));
 
         Assert.True(await Compliance(ai, now).RunOnceAsync(now, CancellationToken.None));
 
         var reports = await ai.Db.AiReports.AsNoTracking().OrderBy(r => r.SubjectId).ToListAsync();
-        Assert.Equal(new[] { "circular:11", "circular:12" }, reports.Select(r => r.SubjectId));
-        Assert.Equal((AiReportStatus.Ok, AiReportStatus.Invalid), (reports[0].Status, reports[1].Status));
-        Assert.Contains("left this circular out", reports[1].Error);
-        // The circular with no text was handed over with the note to quote its title.
-        Assert.Contains("judge on the title alone", ai.Provider.Requests.Single().Body);
+        Assert.Equal(new[] { "circular:11", "circular:12", "circular:13" }, reports.Select(r => r.SubjectId));
+        Assert.Equal((AiReportStatus.Ok, AiReportStatus.Ok, AiReportStatus.Invalid), (reports[0].Status, reports[1].Status, reports[2].Status));
+        // The second try was told what failed; the one it left out again stays invalid.
+        Assert.Contains("\"repairedFrom\":\"The answer left this circular out.\"", reports[1].DataJson);
+        Assert.Contains("left this circular out", reports[2].Error);
+        var asked = ai.Provider.Requests.Where(r => r.Model == Extract1).ToList();
+        Assert.Equal(2, asked.Count);
+        Assert.Contains("judge on the title alone", asked[0].Body);
+        Assert.Contains("c12: The answer left this circular out.", asked[1].Body);
+    }
+
+    // SEBI/HO/47/11/11(3)2025-MRD-POD2/I/23843/2026 of 15 Oct 2026, as the recorder reads its PDF: the subject, paras
+    // 4.2.1, 4.2.4–4.2.6, part of 4.9.1 and the implementation timeline, cut together with the passages between them left out.
+    private const string Circular23843 =
+        "Page 1 of 7 CIRCULAR HO/47/11/11(3)2025-MRD-POD2/I/23843/2026 October 15, 2026 To, All recognised Stock Exchanges " +
+        "All recognised Clearing Corporations Dear Sir/ Madam, Subject: Review of certain aspects of the Closing Auction Session, " +
+        "market timings and settlement methodology for derivatives contracts 1. SEBI vide circular dated January 16, 2026, had " +
+        "introduced the Closing Auction Session (CAS) in the equity cash segment of Stock Exchanges with the objective, inter alia, " +
+        "of facilitating transparent and efficient price discovery of the closing price of securities. " +
+        "4.2.1. CAS shall be implemented as a separate session of 10 minutes from 3:30 p.m. to 3:40 p.m., on all trading days, " +
+        "as under: Session Particulars Start Time Duration 1 Reference price calculation / Transition from CTS to CAS 3:30 p.m. 1 mins " +
+        "Page 3 of 7 4.2.4. Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days, except on " +
+        "expiry days when trading in expiring index derivatives contracts shall cease at 3:30 p.m. 4.2.5. Trading in stock " +
+        "derivatives contracts shall continue until 3:45 p.m. on all trading days, including on expiry days. 4.2.6. The post " +
+        "close session in the cash segment shall operate between 3:50 p.m. to 4:00 p.m., where trades shall be executed at the " +
+        "closing price of securities. “1.1.9. On the expiry day, the settlement price of the expiring index derivatives contracts " +
+        "shall be determined on the basis of the value of the underlying index calculated using the volume-weighted average prices " +
+        "(VWAP) of the constituent securities during the last 30 minutes of the Continuous Trading Session (CTS) in the equity " +
+        "cash segment. 6. Implementation timeline: 6.1. The modifications specified in this circular, other than those specified " +
+        "at para 4.8, shall come into effect from December 07, 2026. 6.2. The modifications specified at para 4.8 shall come into " +
+        "effect from February 08, 2027.";
+
+    internal static ComplianceTriageAgent.Item Sebi23843() => ComplianceTriageAgent.ItemOf(Circular23843Row());
+
+    /// <summary>The 15 Oct circular as the recorder stores it.</summary>
+    internal static RegulatoryCircular Circular23843Row() => new()
+    {
+        Id = 41, Source = RegulatoryCircularSource.Sebi, Key = "sebi:105210", Number = "HO/47/11/11(3)2025-MRD-POD2/I/23843/2026",
+        Title = "Review of certain aspects of the Closing Auction Session, market timings and settlement methodology for derivatives contracts",
+        PublishedOn = new DateOnly(2026, 10, 15), Url = "https://www.sebi.gov.in/legal/circulars/oct-2026/review_105210.html",
+        Excerpt = Circular23843, FirstSeenUtc = IstTime.FromIst(new DateTime(2026, 10, 15, 20, 30, 0)),
+    };
+
+    private const string Dates23843 =
+        """[{"date":"2027-02-08","what":"Para 4.8 comes into effect from February 08, 2027."},{"date":"2026-12-07","what":"The modifications other than para 4.8 come into effect from December 07, 2026."}]""";
+
+    private const string Changes23843 =
+        """["Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days, except on expiry days when trading in expiring index derivatives contracts shall cease at 3:30 p.m.","The post close session in the cash segment shall operate between 3:50 p.m. to 4:00 p.m.","The expiry settlement price of index derivatives is the VWAP of the constituent securities during the last 30 minutes of the CTS."]""";
+
+    private const string Quote23843 = "Trading in index derivatives contracts shall continue until 3:45 p.m. on all trading days";
+
+    /// <summary>A good record of the 15 Oct circular, with one part swapped for a test's own.</summary>
+    internal static JsonObject Record23843(string? dates = null, string? changes = null, string? quote = null, string area = "market hours")
+    {
+        var record = JsonNode.Parse("""
+            {"id":"c41","applies":"yes","why":"It moves the close of index options, which the desk trades and simulates.",
+             "change":"Runs, the live-bar session guard and the close briefing must keep index options open until 3:45 p.m., except expiring contracts."}
+            """)!.AsObject();
+        record["area"] = area;
+        record["effectiveDates"] = JsonNode.Parse(dates ?? Dates23843);
+        record["deskChanges"] = JsonNode.Parse(changes ?? Changes23843);
+        record["quote"] = quote ?? Quote23843;
+        return record;
+    }
+
+    [Fact]
+    public void The_15_Oct_circular_passes_with_its_dates_and_times_as_it_writes_them()
+    {
+        var v = ComplianceTriageAgent.Check(Record23843(), Sebi23843());
+
+        Assert.Equal(AiReportStatus.Ok, v.Status);
+        var data = JsonNode.Parse(v.Data)!.AsObject();
+        Assert.Equal(ComplianceTriageAgent.Format, data["format"]!.GetValue<int>());
+        // Earliest first.
+        Assert.Equal(new[] { "2026-12-07", "2027-02-08" }, data["effectiveDates"]!.AsArray().Select(d => d!["date"]!.GetValue<string>()));
+        Assert.Equal(3, data["deskChanges"]!.AsArray().Count);
+        Assert.Contains("**Takes effect:**\n- 2026-12-07: The modifications other than para 4.8", v.Body);
+        Assert.Contains("**On the desk:**\n- Trading in index derivatives contracts shall continue until 3:45 p.m.", v.Body);
+    }
+
+    [Fact]
+    public void A_date_or_time_the_circular_does_not_write_fails_the_check()
+    {
+        var item = Sebi23843();
+
+        // The same time and the same day in other words pass: 15:45 is 3:45 p.m., 7 December 2026 is December 07, 2026.
+        Assert.Equal(AiReportStatus.Ok, ComplianceTriageAgent.Check(Record23843(
+            changes: """["Index options trade until 15:45 from 7 December 2026, expiring ones until 15:30."]"""), item).Status);
+
+        var madeUpDay = ComplianceTriageAgent.Check(Record23843(dates: """[{"date":"2026-12-01","what":"The new timings start."}]"""), item);
+        Assert.Equal(AiReportStatus.Invalid, madeUpDay.Status);
+        Assert.Contains("the effective date 2026-12-01 is not written in the circular's text", madeUpDay.Error);
+
+        var madeUpTime = ComplianceTriageAgent.Check(Record23843(changes: """["The closing auction now ends at 3:35 p.m."]"""), item);
+        Assert.Equal(AiReportStatus.Invalid, madeUpTime.Status);
+        Assert.Contains("names 3:35 p.m., which the circular's text does not", madeUpTime.Error);
+
+        var notIso = ComplianceTriageAgent.Check(Record23843(dates: """[{"date":"7 Dec 2026","what":"From December 07, 2026."}]"""), item);
+        Assert.Contains("\"7 Dec 2026\" is not a yyyy-MM-dd date", notIso.Error);
+
+        var noWhat = ComplianceTriageAgent.Check(Record23843(dates: """[{"date":"2026-12-07"}]"""), item);
+        Assert.Contains("does not say what takes effect", noWhat.Error);
+    }
+
+    [Fact]
+    public void A_quote_stitched_from_the_circular_s_passages_and_two_areas_named_still_pass()
+    {
+        var item = Sebi23843();
+
+        var v = ComplianceTriageAgent.Check(Record23843(
+            quote: "Trading in index derivatives contracts shall continue until 3:45 p.m. … shall come into effect from December 07, 2026",
+            area: "market hours, settlement"), item);
+
+        Assert.Equal(AiReportStatus.Ok, v.Status);
+        Assert.Equal("market hours", JsonNode.Parse(v.Data)!["area"]!.GetValue<string>());
+        // A piece the circular does not hold still fails the whole quote.
+        Assert.Equal(AiReportStatus.Invalid, ComplianceTriageAgent.Check(Record23843(
+            quote: "Trading in index derivatives contracts shall continue until 3:45 p.m. … brokers must stop all algo orders"), item).Status);
+    }
+
+    [Fact]
+    public void Dates_and_times_are_read_in_the_forms_regulators_and_brokers_write_them()
+    {
+        const string source = "from December 07, 2026; 10th March, 2026 | 12 PM IST; 08-Feb-2027; 05/10/2026; 2026-11-02; " +
+                              "between 3:50 p.m. to 4:00 p.m.; 09:15 hrs; Session 3:30 1 mins; para 4.2.4 and 4.20 lakh";
+
+        Assert.Equal(
+            new[] { new DateOnly(2026, 12, 7), new DateOnly(2026, 3, 10), new DateOnly(2027, 2, 8), new DateOnly(2026, 10, 5), new DateOnly(2026, 11, 2) }.ToHashSet(),
+            CircularFacts.Dates(source));
+        Assert.Empty(CircularFacts.Unsupported("2026-12-07, 7 Dec 2026, March 10, 2026, 15:50, 4 PM is 16:00, 9:15 a.m., 3:30 p.m. and 03:30", source));
+        Assert.Equal(new[] { "2026-12-08", "3:45 p.m.", "10:00" }, CircularFacts.Unsupported("2026-12-08 at 3:45 p.m. and 10:00, para 4.2.4", source));
+    }
+
+    [Fact]
+    public void A_long_circular_is_handed_over_as_its_start_and_its_end()
+    {
+        string text = new string('a', 20_000) + " shall come into effect from December 07, 2026.";
+
+        string handed = ComplianceTriageAgent.Handed(text);
+
+        Assert.True(handed.Length <= ComplianceTriageAgent.TextChars + 3);
+        Assert.EndsWith("from December 07, 2026.", handed);
+        Assert.Contains(" … ", handed);
+        Assert.Equal(Circular23843, ComplianceTriageAgent.Handed(Circular23843));
     }
 
     // ---------- the strategy researcher ----------
