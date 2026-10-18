@@ -374,6 +374,20 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberServic
 // Keeps the Telegram notifier running for as long as the API does.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NotifierStartupService>();
 
+// The Portfolio page (docs/modules/portfolio.md): a user's own broker accounts, read only, and a factual report on
+// them. The broker clients are registered by the infrastructure (PortfolioRegistration); the link states and the sync
+// gate live in memory, one per process; old snapshots are deleted after 90 days.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioLinkStates>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioSyncGate>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioSessions>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.PortfolioPrices>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.PortfolioLinkService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.PortfolioReportService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.PortfolioSyncService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.IPortfolioSummaryModel, AlgoTrading.Api.Services.Portfolio.GatewayPortfolioSummaryModel>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Portfolio.PortfolioSummaryWriter>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.Portfolio.PortfolioRetentionService>();
+
 
 builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection("Jwt"));
@@ -647,7 +661,7 @@ app.Use(async (context, next) =>
 
 // Signed-in console paths: never indexed (X-Robots-Tag below).
 string[] ConsolePrefixes = ["/admin", "/trader", "/desk", "/markets", "/trade", "/research", "/data", "/system", "/account",
-    "/notebook", "/login", "/invite", "/api", "/hubs", "/ira"];
+    "/notebook", "/login", "/invite", "/api", "/hubs", "/ira", "/portfolio"];
 app.Use(async (context, next) =>
 {
     var p = context.Request.Path.Value ?? string.Empty;

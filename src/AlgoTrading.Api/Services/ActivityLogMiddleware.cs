@@ -237,6 +237,7 @@ public class ActivityLogMiddleware
             lower.StartsWith("/api/strategypackages", StringComparison.Ordinal) ||
             lower.StartsWith("/api/invites", StringComparison.Ordinal)) return "users";
         if (lower.StartsWith("/api/userauth", StringComparison.Ordinal)) return "auth";
+        if (lower.StartsWith("/api/portfolio", StringComparison.Ordinal)) return "portfolio";
 
         return "other";
     }

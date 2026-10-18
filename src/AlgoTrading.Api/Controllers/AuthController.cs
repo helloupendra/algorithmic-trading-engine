@@ -262,6 +262,16 @@ namespace AlgoTrading.Api.Controllers;
         [FromQuery] int? code,
         CancellationToken cancellationToken)
     {
+        // A user linking their own FYERS account to the Portfolio page with the
+        // platform's FYERS app comes back to the app's one registered redirect,
+        // this one, with a portfolio state. It is not the platform's sign-in:
+        // the portfolio's callback checks the state and this browser's cookie
+        // and saves a read-only link for that user, never the desk's session.
+        if (AlgoTrading.Api.Services.Portfolio.PortfolioLinkStates.IsPortfolioState(state))
+        {
+            return Redirect($"/api/Portfolio/callback/fyers{Request.QueryString}");
+        }
+
         // The platform's shared account is the only one that signs in through a
         // browser now: traders trade at the simulated broker, whose accounts an
         // admin issues, so there is no per-trader OAuth dance to route here.
