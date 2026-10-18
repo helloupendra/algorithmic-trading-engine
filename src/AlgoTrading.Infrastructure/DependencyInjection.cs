@@ -86,6 +86,10 @@ public static class DependencyInjection
         services.AddSimBrokerProvider(configuration, catalogSeed, credentialFallbacks);
         services.AddReplayProvider(catalogSeed);
 
+        // A user's own broker accounts, read only, for the Portfolio page: separate clients from the connectors above,
+        // which are the platform's own account and the desk's feed.
+        AlgoTrading.Infrastructure.Portfolio.PortfolioRegistration.AddPortfolioBrokers(services, configuration);
+
         services.AddScoped<IProviderRegistry, ProviderRegistry>();
         services.AddScoped<IProviderRouter, ProviderRouter>();
         services.AddScoped<ISymbolMapper, SymbolMapper>();

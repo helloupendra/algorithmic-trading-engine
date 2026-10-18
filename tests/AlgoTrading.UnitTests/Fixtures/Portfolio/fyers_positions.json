@@ -1,0 +1,6 @@
+{"s":"ok","code":200,"message":"",
+ "netPositions":[
+  {"symbol":"NSE:NIFTY26OCT25000CE","id":"NSE:NIFTY26OCT25000CE-MARGIN","buyAvg":120.5,"buyQty":75,"sellAvg":0.0,"sellQty":0,"netAvg":120.5,"netQty":75,"side":1,"qty":75,"productType":"MARGIN","realized_profit":0.0,"unrealized_profit":712.5,"pl":712.5,"ltp":130.0,"crossCurrency":"N","rbiRefRate":1.0,"qtyMulti_com":1.0,"segment":11,"exchange":10,"slNo":0,"fyToken":"1011261030000001","cfBuyQty":0,"cfSellQty":0,"dayBuyQty":75,"daySellQty":0},
+  {"symbol":"NSE:SBIN-EQ","id":"NSE:SBIN-EQ-INTRADAY","buyAvg":800.0,"buyQty":10,"sellAvg":805.0,"sellQty":10,"netAvg":0.0,"netQty":0,"side":0,"qty":0,"productType":"INTRADAY","realized_profit":50.0,"unrealized_profit":0.0,"pl":50.0,"ltp":806.0,"crossCurrency":"N","rbiRefRate":1.0,"qtyMulti_com":1.0,"segment":10,"exchange":10,"slNo":1,"fyToken":"10100000003045","cfBuyQty":0,"cfSellQty":0,"dayBuyQty":10,"daySellQty":10}
+ ],
+ "overall":{"count_total":2,"count_open":1,"pl_total":762.5,"pl_realized":50.0,"pl_unrealized":712.5}}

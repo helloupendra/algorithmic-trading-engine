@@ -1,0 +1,6 @@
+{"status":true,"message":"SUCCESS","errorcode":"","data":{
+ "holdings":[
+  {"tradingsymbol":"TCS-EQ","exchange":"NSE","isin":"INE467B01029","t1quantity":0,"realisedquantity":5,"quantity":5,"authorisedquantity":0,"product":"DELIVERY","collateralquantity":null,"collateraltype":null,"haircut":0,"averageprice":3500.0,"ltp":3550.0,"symboltoken":"11536","close":3525.0,"profitandloss":250,"pnlpercentage":1.43},
+  {"tradingsymbol":"ITC-EQ","exchange":"NSE","isin":"INE154A01025","t1quantity":0,"realisedquantity":100,"quantity":100,"authorisedquantity":0,"product":"DELIVERY","collateralquantity":null,"collateraltype":null,"haircut":0,"averageprice":"395.5","ltp":"410.0","symboltoken":"1660","close":"408.0","profitandloss":1450,"pnlpercentage":3.67}
+ ],
+ "totalholding":{"totalholdingvalue":58750,"totalinvvalue":57050,"totalprofitandloss":1700,"totalpnlpercentage":2.98}}}

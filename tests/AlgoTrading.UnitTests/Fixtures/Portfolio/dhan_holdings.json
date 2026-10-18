@@ -1,0 +1,4 @@
+[
+ {"exchange":"ALL","tradingSymbol":"RELIANCE","securityId":"2885","isin":"INE002A01018","totalQty":10,"dpQty":10,"t1Qty":0,"availableQty":10,"collateralQty":0,"avgCostPrice":2550.0},
+ {"exchange":"NSE","tradingSymbol":"HDFCBANK","securityId":"1333","isin":"INE040A01034","totalQty":25,"dpQty":20,"t1Qty":5,"availableQty":25,"collateralQty":0,"avgCostPrice":1600.0}
+]

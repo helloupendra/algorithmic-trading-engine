@@ -1,0 +1,8 @@
+{"s":"ok","code":200,"message":"",
+ "overall":{"count_total":4,"pnl_perc":4.1,"total_current_value":118050.0,"total_investment":113400.0,"total_pl":4650.0},
+ "holdings":[
+  {"holdingType":"HLD","quantity":20,"costPrice":2450.0,"marketVal":50400.0,"remainingQuantity":20,"pl":1400.0,"ltp":2520.0,"id":1,"fyToken":"10100000002885","exchange":10,"symbol":"NSE:RELIANCE-EQ","segment":10,"isin":"INE002A01018","qty_t1":0,"remainingPledgeQuantity":0,"collateralQuantity":0},
+  {"holdingType":"HLD","quantity":15,"costPrice":3400.0,"marketVal":53250.0,"remainingQuantity":15,"pl":2250.0,"ltp":3550.0,"id":2,"fyToken":"10100000011536","exchange":10,"symbol":"NSE:TCS-EQ","segment":10,"isin":"INE467B01029","qty_t1":0,"remainingPledgeQuantity":0,"collateralQuantity":0},
+  {"holdingType":"T1","quantity":10,"costPrice":1300.0,"marketVal":14400.0,"remainingQuantity":10,"pl":1000.0,"ltp":1440.0,"id":3,"fyToken":"10100000001594","exchange":10,"symbol":"NSE:INFY-EQ","segment":10,"isin":"INE009A01021","qty_t1":10,"remainingPledgeQuantity":0,"collateralQuantity":0},
+  {"holdingType":"HLD","quantity":5,"costPrice":400.0,"marketVal":0.0,"remainingQuantity":0,"pl":0.0,"ltp":410.0,"id":4,"fyToken":"10100000001660","exchange":10,"symbol":"NSE:ITC-EQ","segment":10,"isin":"INE154A01025","qty_t1":0,"remainingPledgeQuantity":0,"collateralQuantity":0}
+ ]}

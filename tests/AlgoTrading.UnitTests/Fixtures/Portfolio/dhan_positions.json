@@ -1,0 +1,3 @@
+[
+ {"dhanClientId":"1100000042","tradingSymbol":"BANKNIFTY-Oct2026-FUT","securityId":"35001","positionType":"SHORT","exchangeSegment":"NSE_FNO","productType":"MARGIN","buyAvg":0.0,"buyQty":0,"costPrice":52000.0,"sellAvg":52000.0,"sellQty":30,"netQty":-30,"realizedProfit":0.0,"unrealizedProfit":-1500.0,"rbiReferenceRate":1.0,"multiplier":1,"carryForwardBuyQty":0,"carryForwardSellQty":30,"carryForwardBuyValue":0.0,"carryForwardSellValue":1560000.0,"dayBuyQty":0,"daySellQty":0,"dayBuyValue":0.0,"daySellValue":0.0,"drvExpiryDate":"2026-10-27","drvOptionType":null,"drvStrikePrice":0.0,"crossCurrency":false}
+]

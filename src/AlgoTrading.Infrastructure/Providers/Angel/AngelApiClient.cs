@@ -319,7 +319,8 @@ public sealed class AngelApiClient
         return message + suffix;
     }
 
-    private static string LocalIp()
+    /// <summary>This machine's address on its outbound route, as SmartAPI's X-ClientLocalIP header wants it.</summary>
+    internal static string LocalIp()
     {
         try
         {
@@ -334,7 +335,8 @@ public sealed class AngelApiClient
         }
     }
 
-    private static string MacAddress()
+    /// <summary>The first live interface's MAC address, as SmartAPI's X-MACAddress header wants it.</summary>
+    internal static string MacAddress()
     {
         try
         {

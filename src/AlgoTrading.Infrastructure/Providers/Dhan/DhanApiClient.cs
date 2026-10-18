@@ -299,22 +299,5 @@ internal static class DhanJwt
     /// signature is not checked: this only decides whether sending the token is
     /// worth a call, and Dhan is still the judge of whether it is valid.
     /// </summary>
-    public static DateTime? ExpiresUtc(string token)
-    {
-        string[] parts = token.Split('.');
-        if (parts.Length != 3) return null;
-        try
-        {
-            string payload = parts[1].Replace('-', '+').Replace('_', '/');
-            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
-            return doc.RootElement.TryGetProperty("exp", out var exp) && exp.TryGetInt64(out long seconds)
-                ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
-                : null;
-        }
-        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException)
-        {
-            return null;
-        }
-    }
+    public static DateTime? ExpiresUtc(string token) => JwtExpiry.ExpiresUtc(token);
 }
