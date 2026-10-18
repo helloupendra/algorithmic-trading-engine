@@ -57,6 +57,7 @@ import { AiReportsPage } from './pages/ai/AiReportsPage'
 import { AiModelsPage } from './pages/ai/AiModelsPage'
 import { AiCallsPage } from './pages/ai/AiCallsPage'
 import { IraPage } from './pages/ira/IraPage'
+import { PortfolioPage } from './pages/portfolio/PortfolioPage'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -151,6 +152,9 @@ export default function App() {
                 <Route path="/trade/positions" element={<PositionsPage />} />
                 <Route path="/trade/orders" element={<OrdersPage />} />
                 <Route path="/trade/ticket" element={<ManualOrderPage />} />
+
+                {/* Every user's own demat and broker accounts, read-only; the API answers for the caller alone. */}
+                <Route path="/portfolio" element={<PortfolioPage />} />
 
                 {/* Research. */}
                 <Route path="/research/lab" element={<FilterLabPage />} />

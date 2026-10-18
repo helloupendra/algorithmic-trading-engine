@@ -1,0 +1,347 @@
+/*
+ * Portfolio (/portfolio). Built from the console's vocabulary (panel, stat,
+ * table, badge, alert, modal) on the tokens, so it follows both themes; these
+ * rules only lay out what the page adds. Calm: one 17px headline, data text
+ * at 12.5px with tabular figures, colour for a sign or a state only, and
+ * every coloured thing also says what it is in words.
+ */
+
+.pf-flush { margin: 0; }
+.pf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.pf-title-note { font-weight: 400; font-size: var(--fs-s); }
+.pf-kicker {
+  margin: 0 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pf-kicker__note {
+  margin-left: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: var(--fs-s);
+  color: var(--text-3);
+}
+
+/* A row header in a table body reads as data, not as a column heading. */
+.pf tbody th,
+.pf tfoot th {
+  position: static;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: var(--fs);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pf tbody tr:last-child th { border-bottom: 0; }
+
+/* --- notices --------------------------------------------------------------------- */
+.pf-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.btn.pf-notice__x { color: inherit; padding: 2px 6px; flex: none; }
+.pf-alerts { display: grid; gap: 8px; }
+.pf-alerts .alert { justify-content: flex-start; }
+
+/* --- 1. linked accounts ---------------------------------------------------------- */
+.pf-links__list { list-style: none; margin: 0; padding: 0; }
+.pf-link {
+  display: grid;
+  grid-template-columns: 92px 104px minmax(78px, 120px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pf-link:first-child { padding-top: 2px; }
+.pf-link__name { font-size: 13px; font-weight: 600; }
+.pf-link__acct { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-link__meta { min-width: 0; font-size: 12px; color: var(--text-2); }
+.pf-link__actions { display: flex; justify-content: flex-end; gap: 6px; }
+.pf-link__note {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.pf-link__note--err { color: var(--neg); overflow-wrap: anywhere; }
+.pf-link__note--warn { color: var(--warn); overflow-wrap: anywhere; }
+.pf-readonly { margin: 12px 0 0; max-width: 100ch; font-size: 12px; line-height: 1.55; color: var(--text-3); }
+.pf-readonly b { color: var(--text-2); font-weight: 600; }
+
+/* --- first run ------------------------------------------------------------------- */
+.panel.pf-first { padding: 22px 22px 20px; }
+.pf-first__title { margin: 0 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.pf-first__lead { margin: 0; max-width: 78ch; color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.pf-first__brokers {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg1);
+}
+.pf-first__broker {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-left: 1px solid var(--line-soft);
+}
+.pf-first__broker:first-child { border-left: 0; }
+.pf-first__broker b { display: block; font-size: 13.5px; }
+.pf-first__how { display: block; margin-top: 2px; font-size: 12px; color: var(--text-3); }
+.pf-first__broker .btn { align-self: flex-start; }
+.pf-first__note { margin: 12px 0 0; font-size: 12px; color: var(--text-3); }
+
+/* --- 2. totals and the summary ------------------------------------------------------- */
+.pf-asof { margin: 0; font-size: 12px; color: var(--text-3); }
+.pf-asof b { color: var(--text-2); font-weight: 600; }
+.page > .pf-asof + .pf-totals { margin-top: 8px; }
+.pf-summary {
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--brand-line);
+}
+.pf-summary__text { margin: 0; max-width: 104ch; font-size: 13px; line-height: 1.65; color: var(--text); }
+.pf-summary__meta { margin: 6px 0 0; font-size: 11.5px; color: var(--text-3); }
+
+/* --- 4. holdings --------------------------------------------------------------------- */
+.pf-holdings__tools { display: flex; align-items: center; gap: 8px; }
+.field__input.pf-search { width: 240px; }
+.pf-sort-select { display: none; }
+.pf-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.pf-sort:hover,
+.pf-sort.is-active { color: var(--text-2); }
+.pf-sort__arrow { font-size: 10px; opacity: 0.4; }
+.pf-sort.is-active .pf-sort__arrow { opacity: 1; }
+.pf-table .pf-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+.pf-table .pf-brokers { color: var(--text-2); }
+.pf-cards { display: none; list-style: none; margin: 0; padding: 0; }
+.pf-card { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.pf-card:first-child { padding-top: 0; }
+.pf-card:last-child { border-bottom: 0; }
+.pf-card__top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13.5px; }
+.pf-card__value { font-weight: 600; }
+.pf-card__sub { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-2); }
+.pf-card__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-card__weight { flex: none; }
+.pf-card__facts { margin: 8px 0 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px; }
+.pf-card__facts dt { font-size: var(--fs-xs); font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.pf-card__facts dd { margin: 1px 0 0; font-size: var(--fs); }
+.pf-card__pct { font-size: 11.5px; }
+
+/* --- 5. allocation ------------------------------------------------------------------- */
+.pf-alloc__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 18px 32px;
+  align-items: start;
+}
+.pf-bars__title {
+  margin: 0 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pf-bars__list { list-style: none; margin: 0; padding: 0; }
+.pf-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 44px 76px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: var(--fs);
+}
+.pf-bar__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-bar__track { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.pf-bar__fill { display: block; height: 100%; border-radius: 3px; background: var(--brand); min-width: 1px; }
+.pf-bar__pct { text-align: right; font-variant-numeric: tabular-nums; }
+.pf-bar__inr { text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* "Unknown" is shown as it is: a grey bar, not one of the known groups' colour. */
+.pf-bar--unknown .pf-bar__name { color: var(--text-3); }
+.pf-bar--unknown .pf-bar__fill { background: var(--text-3); opacity: 0.55; }
+
+/* --- 6. concentration and risk -------------------------------------------------------- */
+.pf-risk__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px 32px;
+  align-items: start;
+}
+.pf-facts { margin: 0; }
+.pf-fact {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pf-fact:last-child { border-bottom: 0; }
+.pf-fact dt { font-size: 12px; color: var(--text-2); }
+.pf-fact dd { margin: 0; display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.pf-fact__v { flex: none; min-width: 58px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pf-fact__m { min-width: 0; font-size: 12px; color: var(--text-3); }
+.pf-risk__covered { margin: 10px 0 0; font-size: 12.5px; color: var(--text-2); }
+
+/* --- 7–8. positions and funds ----------------------------------------------------------- */
+.pf-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pf-fno { margin: 0 0 6px; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--text-2); }
+.pf-fno b { color: var(--text); font-weight: 600; }
+.pf-positions .small-note { margin: 0 0 10px; }
+.pf-sym .badge { margin-left: 6px; vertical-align: 1px; }
+.pf .pf-total-row th,
+.pf .pf-total-row td { border-top: 1px solid var(--line); border-bottom: 0; font-weight: 600; }
+
+/* --- 9. history ------------------------------------------------------------------------- */
+.pf-legend { list-style: none; margin: 0; padding: 0; display: flex; gap: 14px; font-size: 12px; color: var(--text-2); }
+.pf-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.pf-legend__swatch { width: 16px; height: 0; border-top: 2px solid var(--brand-hi); }
+.pf-legend__swatch--invested { border-top: 2px dashed var(--text-3); }
+.pf-chart { position: relative; }
+.pf-chart svg { display: block; overflow: visible; border-radius: var(--radius-sm); }
+.pf-chart svg:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.pf-chart text { fill: var(--text-3); font-size: 10px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.pf-chart__grid { stroke: var(--line-soft); }
+.pf-chart__current { fill: none; stroke: var(--brand-hi); stroke-width: 1.7; stroke-linejoin: round; }
+.pf-chart__invested { fill: none; stroke: var(--text-3); stroke-width: 1.3; stroke-dasharray: 4 3; }
+.pf-chart__dot { fill: var(--brand-hi); }
+.pf-chart__cursor { stroke: var(--text-3); stroke-width: 1; pointer-events: none; }
+.pf-chart__tip {
+  position: absolute;
+  top: 2px;
+  min-width: 160px;
+  padding: 6px 10px;
+  pointer-events: none;
+  background: var(--surface2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  font-size: 12px;
+}
+.pf-chart__row { display: flex; justify-content: space-between; gap: 14px; font-variant-numeric: tabular-nums; }
+
+/* --- 10. notes and the disclaimer --------------------------------------------------------- */
+.pf-foot { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); }
+.pf-sources { margin: 0; font-size: 12px; color: var(--text-3); }
+.pf-notes { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; max-width: 110ch; font-size: 12.5px; color: var(--text-2); }
+.pf-disclaimer {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* --- dialogs -------------------------------------------------------------------------------- */
+.pf-form { display: flex; flex-direction: column; gap: 14px; }
+.pf-check { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer; }
+.pf-check input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--brand); }
+.pf-check__help { display: block; margin-top: 2px; font-size: 12px; color: var(--text-3); }
+
+/* --- narrower screens ------------------------------------------------------------------------- */
+@media (max-width: 980px) {
+  .pf-pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  /* iOS zooms the page when a focused input's text is under 16px. */
+  .pf-search,
+  .pf-sort-select,
+  .pf-form .field__input { font-size: 16px; }
+}
+
+/* A phone: the holdings become cards, the linked accounts stack. */
+@media (max-width: 640px) {
+  .pf-link {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name state'
+      'acct acct'
+      'meta meta'
+      'actions actions';
+    gap: 3px 10px;
+    padding: 10px 0;
+  }
+  .pf-link__name { grid-area: name; }
+  .pf-link__state { grid-area: state; justify-self: end; }
+  .pf-link__acct { grid-area: acct; }
+  .pf-link__acct:has(.faint) { display: none; }
+  .pf-link__meta { grid-area: meta; }
+  .pf-link__meta:empty { display: none; }
+  .pf-link__actions { grid-area: actions; justify-content: flex-start; margin-top: 4px; }
+  .pf-link__actions:empty { display: none; }
+  /* A ghost button's padding would indent its word from the text above it. */
+  .pf-link__actions > .btn--ghost:first-child { margin-left: -10px; }
+  .pf-link__note { grid-column: 1 / -1; }
+
+  /* Two a row (styles.css pairs a .stat-grid--pair on a phone), a step smaller. */
+  .stat-grid.pf-totals { gap: 8px; }
+  .pf-totals .stat { padding: 11px 12px; }
+  .pf-totals .stat__value { font-size: 18px; }
+  .pf-summary .pf-kicker__note,
+  .pf-history .pf-title-note { display: block; margin: 2px 0 0; }
+
+  /* Positions and funds keep their tables, tighter, so the last column fits a phone. */
+  .pf-positions .table th,
+  .pf-positions .table td,
+  .pf-funds .table th,
+  .pf-funds .table td { padding: 7px 8px; font-size: 12px; }
+  .pf .panel { padding: 14px 14px; }
+
+  .pf .panel.pf-first { padding: 18px 16px; }
+  .pf-first__broker { border-left: 0; border-top: 1px solid var(--line-soft); }
+  .pf-first__broker:first-child { border-top: 0; }
+
+  .pf-holdings .panel__head { align-items: stretch; }
+  .pf-holdings .panel__actions { flex: 1 1 100%; }
+  .pf-holdings__tools { flex: 1 1 100%; flex-wrap: wrap; }
+  .field__input.pf-search { flex: 1 1 160px; width: auto; min-width: 0; }
+  .pf-sort-select { display: block; flex: 1 1 140px; min-width: 0; }
+  .pf-table { display: none; }
+  .pf-cards { display: block; }
+
+  .pf-bar { grid-template-columns: minmax(0, 1fr) 48px 40px 70px; gap: 8px; }
+  .pf-risk__grid { grid-template-columns: minmax(0, 1fr); }
+  .pf-fact { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .pf-legend { gap: 10px; }
+}

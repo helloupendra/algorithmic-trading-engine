@@ -545,6 +545,54 @@ describe('advice words', () => {
   })
 })
 
+describe("the page's own words", () => {
+  const sources = import.meta.glob(['../pages/portfolio/*.tsx', './portfolio.ts', './portfolio.fixture.ts'], {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>
+
+  /**
+   * The text a reader can see: string and template literals and JSX text,
+   * after comments (and the advice list itself) are taken out. An apostrophe
+   * inside a word does not open a string.
+   */
+  function uiText(source: string): string[] {
+    const code = source
+      .replace(/\/\/ advice-words:start[\s\S]*?\/\/ advice-words:end/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1')
+    const literals = [...code.matchAll(/(?<![A-Za-z])'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)].map(
+      (m) => m[1] ?? m[2] ?? m[3] ?? '',
+    )
+    const jsx = [...code.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)].map((m) => m[1])
+    return [...literals, ...jsx]
+  }
+
+  it('reads the files it means to', () => {
+    const files = Object.keys(sources)
+    expect(files.filter((f) => f.includes('pages/portfolio/')).length).toBeGreaterThanOrEqual(5)
+    const all = Object.values(sources).flatMap(uiText).join('\n')
+    // A scanner that stopped finding text would pass vacuously.
+    expect(all).toContain('Linked accounts')
+    expect(all).toContain('cannot place, change or cancel an order')
+    expect(all).toContain('Also delete this broker')
+    expect(all).toContain('Nothing synced yet')
+  })
+
+  it('catches a planted word, so the scan is not vacuous', () => {
+    expect(adviceWords(uiText('const x = <p className="a">You should buy this</p>').join(' '))).toEqual(['should', 'buy'])
+    expect(adviceWords(uiText("const y = { title: 'Consider an exit' } // should is fine in a comment").join(' '))).toEqual(['consider', 'exit'])
+  })
+
+  it('never uses an advice word', () => {
+    const found = Object.entries(sources).flatMap(([file, text]) =>
+      uiText(text).flatMap((t) => adviceWords(t).map((w) => `${file.replace(/^.*\//, '')}: "${w}" in ${JSON.stringify(t.trim().slice(0, 80))}`)),
+    )
+    expect(found).toEqual([])
+  })
+})
+
 describe('num', () => {
   it('takes finite numbers and numeric text only', () => {
     expect(num(3)).toBe(3)
