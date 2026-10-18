@@ -161,6 +161,12 @@ public class TradingDbContext : DbContext
 
     /// <summary>Each trader's account at the simulated broker.</summary>
     public DbSet<SimBrokerAccount> SimBrokerAccounts => Set<SimBrokerAccount>();
+
+    /// <summary>A user's read-only links to their own broker accounts, for the Portfolio page. See <see cref="PortfolioConnection"/>.</summary>
+    public DbSet<PortfolioConnection> PortfolioConnections => Set<PortfolioConnection>();
+
+    /// <summary>What each linked account held when it was read. See <see cref="PortfolioSnapshot"/>.</summary>
+    public DbSet<PortfolioSnapshot> PortfolioSnapshots => Set<PortfolioSnapshot>();
     public DbSet<ProviderBinding> ProviderBindings => Set<ProviderBinding>();
     public DbSet<InstrumentVendorSymbol> InstrumentVendorSymbols => Set<InstrumentVendorSymbol>();
     public DbSet<DataVendor> DataVendors => Set<DataVendor>();

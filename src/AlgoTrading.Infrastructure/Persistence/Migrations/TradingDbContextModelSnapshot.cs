@@ -3785,6 +3785,104 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("paper_positions", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.PortfolioConnection", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AccountLabel")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Broker")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("ConnectedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("LastSyncUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("TokenProtected")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "UserId", "Broker" }, "IX_portfolio_connections_UserId_Broker")
+                        .IsUnique();
+
+                    b.ToTable("portfolio_connections", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.PortfolioSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Broker")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("FundsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HoldingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PositionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SummaryJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SummaryKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("TakenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "TakenUtc" }, "IX_portfolio_snapshots_TakenUtc");
+
+                    b.HasIndex(new[] { "UserId", "Broker", "TakenUtc" }, "IX_portfolio_snapshots_UserId_Broker_TakenUtc");
+
+                    b.ToTable("portfolio_snapshots", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.ProviderBinding", b =>
                 {
                     b.Property<long>("Id")
