@@ -31,6 +31,12 @@ public sealed record PortfolioClass(string? Sector, string? MarketCapBand)
 /// <param name="Index">NIFTY 50's completed sessions' closes.</param>
 /// <param name="Notes">Notes the caller already has: a broker connected and not read yet, a sign-in that ended.</param>
 /// <param name="Classify">Sector and market-cap band by ISIN; every holding is Unknown without it.</param>
+/// <param name="PriceSession">The session a price seen now belongs to (<see cref="PortfolioSessions.PriceSession"/>).</param>
+/// <param name="PreviousSession">
+/// The session before it: a holding's day change counts only against this session's close, so a snapshot from an
+/// earlier day (a failed sync, a disconnected broker) never adds an old session's move to today's. When null, every
+/// stored previous close is taken as it is.
+/// </param>
 public sealed record PortfolioReportInputs(
     DateTime NowUtc,
     IReadOnlyList<PortfolioBrokerSnapshot> Snapshots,
@@ -38,7 +44,9 @@ public sealed record PortfolioReportInputs(
     IReadOnlyList<DailyClose> Index,
     int MaxSessions = 250,
     IReadOnlyList<string>? Notes = null,
-    Func<string, PortfolioClass>? Classify = null);
+    Func<string, PortfolioClass>? Classify = null,
+    DateOnly? PriceSession = null,
+    DateOnly? PreviousSession = null);
 
 /// <summary>
 /// The portfolio report: holdings merged across brokers by ISIN, valued, weighted, grouped, and measured. Pure: the
@@ -92,9 +100,10 @@ public static class PortfolioReportBuilder
             decimal? value = ltp is decimal p ? Money(m.Qty * p) : null;
             decimal? pnl = value is decimal v ? Money(v - m.Invested) : null;
             decimal? pnlPct = pnl is decimal gain && m.Invested > 0 ? Pct(gain / m.Invested) : null;
-            decimal? day = ltp is decimal now && m.Priced?.PrevClose is decimal prev ? Money(m.Qty * (now - prev)) : null;
-            decimal? prevValue = m.Priced?.PrevClose is decimal pc && day is not null ? m.Qty * pc : null;
-            return (Holding: m, Ltp: ltp, Value: value, Pnl: pnl, PnlPct: pnlPct, DayChange: day, PrevValue: prevValue);
+            var (prevClose, noDay) = PreviousClose(m.Priced, inputs);
+            decimal? day = ltp is decimal now && prevClose is decimal prev ? Money(m.Qty * (now - prev)) : null;
+            decimal? prevValue = prevClose is decimal pc && day is not null ? m.Qty * pc : null;
+            return (Holding: m, Ltp: ltp, Value: value, Pnl: pnl, PnlPct: pnlPct, DayChange: day, PrevValue: prevValue, NoDay: noDay);
         }).ToList();
 
         var priced = rows.Where(r => r.Value is not null).ToList();
@@ -180,7 +189,7 @@ public static class PortfolioReportBuilder
             .Select(s => new PortfolioFundsView(s.Broker, s.Portfolio.Funds!.Available, s.Portfolio.Funds.Used, s.Portfolio.Funds.Total))
             .ToList();
 
-        notes.InsertRange(0, HoldingNotes(rows.Select(r => (r.Holding, r.Value, r.DayChange)).ToList(), holdings));
+        notes.InsertRange(0, HoldingNotes(rows.Select(r => (r.Holding, r.Value, r.NoDay)).ToList(), holdings));
         notes.AddRange(SourceNotes(inputs.Snapshots, inputs.NowUtc));
 
         return new PortfolioReport(
@@ -255,8 +264,38 @@ public static class PortfolioReportBuilder
             .ToList();
     }
 
+    /// <summary>Why a priced holding has no day change, for its note.</summary>
+    private enum NoDayChange
+    {
+        /// <summary>It has one.</summary>
+        None,
+
+        /// <summary>The desk has no stored close for the session before.</summary>
+        NoClose,
+
+        /// <summary>Valued at the desk's last close, which is not today's: today's change is not known yet.</summary>
+        Awaiting,
+
+        /// <summary>Its figures are from an earlier session's snapshot.</summary>
+        Earlier,
+    }
+
+    /// <summary>The previous close a holding's day change is measured against, or why there is none.</summary>
+    private static (decimal? Close, NoDayChange Why) PreviousClose(BrokerHolding? priced, PortfolioReportInputs inputs)
+    {
+        if (priced is null) return (null, NoDayChange.None);
+        if (priced.PriceSource == PriceSources.DeskClose && inputs.PriceSession is DateOnly session && priced.PriceDate < session)
+        {
+            return (null, NoDayChange.Awaiting);
+        }
+
+        if (priced.PrevClose is not decimal close) return (null, NoDayChange.NoClose);
+        if (inputs.PreviousSession is DateOnly expected && priced.PrevCloseDate != expected) return (null, NoDayChange.Earlier);
+        return (close, NoDayChange.None);
+    }
+
     private static IEnumerable<string> HoldingNotes(
-        IReadOnlyList<(Merged Holding, decimal? Value, decimal? DayChange)> rows,
+        IReadOnlyList<(Merged Holding, decimal? Value, NoDayChange NoDay)> rows,
         IReadOnlyList<PortfolioHoldingView> views)
     {
         if (rows.Count == 0) yield break;
@@ -278,10 +317,26 @@ public static class PortfolioReportBuilder
                          List(deskPriced.Select(r => r.Holding.Symbol).ToList()) + ".";
         }
 
-        var noDay = rows.Where(r => r.Value is not null && r.DayChange is null).Select(r => r.Holding.Symbol).ToList();
-        if (noDay.Count > 0)
+        List<string> NoDay(NoDayChange why) => rows.Where(r => r.Value is not null && r.NoDay == why).Select(r => r.Holding.Symbol).ToList();
+
+        var awaiting = NoDay(NoDayChange.Awaiting);
+        if (awaiting.Count > 0)
         {
-            yield return $"The day's change is not known for {Count(noDay.Count, "holding", "holdings")} ({List(noDay)}): " +
+            yield return $"Today's change is not known yet for {Count(awaiting.Count, "holding", "holdings")} ({List(awaiting)}): " +
+                         "valued at the last stored close until today's close is stored.";
+        }
+
+        var earlier = NoDay(NoDayChange.Earlier);
+        if (earlier.Count > 0)
+        {
+            yield return $"The day's change is left out for {Count(earlier.Count, "holding", "holdings")} ({List(earlier)}): " +
+                         "their figures are from an earlier session.";
+        }
+
+        var noClose = NoDay(NoDayChange.NoClose);
+        if (noClose.Count > 0)
+        {
+            yield return $"The day's change is not known for {Count(noClose.Count, "holding", "holdings")} ({List(noClose)}): " +
                          "the desk has no stored close for the session before.";
         }
 
@@ -289,7 +344,7 @@ public static class PortfolioReportBuilder
         int unknownBand = views.Count(v => v.MarketCapBand == UnknownClass);
         if (unknownSector == views.Count && unknownBand == views.Count)
         {
-            yield return "Sector and market-cap band are Unknown for every holding: the desk holds no sector or market-cap classification for listed stocks yet.";
+            yield return "Sector and market-cap band are Unknown for every holding: the desk has no sector or market-cap classification for listed stocks yet.";
         }
         else
         {

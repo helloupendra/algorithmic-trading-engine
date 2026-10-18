@@ -60,7 +60,8 @@ public static class PortfolioRiskMath
         decimal totalValue = holdings.Where(h => h.Value > 0).Sum(h => h.Value);
 
         // The sessions: NIFTY 50's own, the newest maxSessions + 1 closes.
-        var axis = index.GroupBy(c => c.Date).Select(g => g.Last()).OrderBy(c => c.Date).ToList();
+        // A zero or negative close is a broken row, not a price: it would divide by zero.
+        var axis = index.Where(c => c.Close > 0).GroupBy(c => c.Date).Select(g => g.Last()).OrderBy(c => c.Date).ToList();
         if (axis.Count > maxSessions + 1) axis = axis.GetRange(axis.Count - (maxSessions + 1), maxSessions + 1);
         int sessions = Math.Max(0, axis.Count - 1);
 
@@ -72,7 +73,7 @@ public static class PortfolioRiskMath
         if (sessions < minSessions)
         {
             return new RiskFigures(sessions, null, null, null, 0,
-                $"The desk holds {sessions} trading days of {Benchmark} returns, fewer than the {minSessions} the figures need.", gaps);
+                $"The desk has {sessions} trading days of {Benchmark} returns, fewer than the {minSessions} the figures need.", gaps);
         }
 
         var dates = axis.Select(c => c.Date).ToList();

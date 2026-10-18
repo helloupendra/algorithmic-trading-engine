@@ -115,7 +115,9 @@ public sealed class PortfolioReportService(
         var closes = await prices.ClosesAsync(symbols, from, through, cancellationToken);
         var index = closes.TryGetValue(PortfolioPrices.IndexSymbol, out var nifty) ? nifty : [];
 
-        var report = PortfolioReportBuilder.Build(new PortfolioReportInputs(now, snapshots, closes, index, Notes: notes));
+        var priceSession = sessions.PriceSession(now);
+        var report = PortfolioReportBuilder.Build(new PortfolioReportInputs(now, snapshots, closes, index, Notes: notes,
+            PriceSession: priceSession, PreviousSession: sessions.PreviousSession(priceSession)));
         var key = string.Join(",", newest.Select(n => n.Snapshot.Id).Order());
         long newestId = newest.Select(n => n.Snapshot).OrderByDescending(s => s.TakenUtc).ThenByDescending(s => s.Id).First().Id;
         return new BuiltPortfolioReport(report, newestId, key);

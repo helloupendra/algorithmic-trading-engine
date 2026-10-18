@@ -95,46 +95,87 @@ public sealed class PortfolioPrices(
     }
 
     /// <summary>
-    /// Fetches the completed sessions the desk does not hold yet for <paramref name="symbols"/> (largest first), at most
-    /// the configured number of them. Answers the symbols that could not be fetched.
+    /// Fetches the completed sessions the desk does not have yet for <paramref name="symbols"/> (largest first), at most
+    /// the configured number of symbols. Answers the symbols that could not be fetched.
     /// </summary>
+    /// <remarks>
+    /// NIFTY 50 goes first: the risk figures need a close on every one of its sessions in the window, so its stored
+    /// dates are what each other symbol is checked against. A symbol is fetched from its first missing session, whether
+    /// the gap is at the end (a session since the last sync), at the start (closes another page stored for a shorter
+    /// span) or in the middle; the store keeps what it already has and adds the rest.
+    /// </remarks>
     public async Task<IReadOnlyList<string>> RefreshAsync(IReadOnlyList<string> symbols, DateTime nowUtc, CancellationToken cancellationToken)
     {
         var s = settings.CurrentValue;
         var through = sessions.LastCompletedSession(nowUtc);
         var from = through.AddDays(-Math.Max(30, s.HistoryLookbackDays));
-        var stored = await ClosesAsync(symbols, from, through, cancellationToken);
+        var ordered = symbols.Distinct().OrderBy(x => x == IndexSymbol ? 0 : 1).ToList();
+        var stored = await ClosesAsync(ordered, from, through, cancellationToken);
 
         var failed = new List<string>();
+        IReadOnlyList<DateOnly> wanted = [];
         int fetched = 0;
-        foreach (string symbol in symbols.Distinct())
+        foreach (string symbol in ordered)
         {
             var have = stored.TryGetValue(symbol, out var closes) ? closes : [];
-            if (have.Count > 0 && have[^1].Date >= through) continue;
-            if (fetched >= Math.Max(0, s.HistoryFetchesPerSync))
+            if (FirstMissing(have, symbol == IndexSymbol ? [] : wanted, from, through) is DateOnly begin)
             {
-                failed.Add(symbol);
-                continue;
+                if (fetched < Math.Max(0, s.HistoryFetchesPerSync))
+                {
+                    fetched++;
+                    if (!await FetchAsync(symbol, begin, through, cancellationToken)) failed.Add(symbol);
+                }
+                else
+                {
+                    failed.Add(symbol);
+                }
             }
 
-            fetched++;
-            var start = have.Count > 0 ? have[^1].Date.AddDays(1) : from;
-            try
+            if (symbol == IndexSymbol)
             {
-                await using var scope = scopes.CreateAsyncScope();
-                var marketData = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
-                await marketData.SyncHistoryAsync(new SyncHistoryRequest { Symbol = symbol, Resolution = Daily, FromDate = start, ToDate = through }, cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                // The history connector not signed in, a symbol it does not know, a duplicate written by a sync running
-                // beside this one: the closes stay as they are, and the report says what they cover.
-                logger.LogInformation("Portfolio history for {Symbol} from {From} was not fetched: {Error}", symbol, start, ex.GetType().Name);
-                failed.Add(symbol);
+                var index = await ClosesAsync([IndexSymbol], from, through, cancellationToken);
+                wanted = index.TryGetValue(IndexSymbol, out var nifty) ? nifty.Select(c => c.Date).ToList() : [];
             }
         }
 
         return failed;
+    }
+
+    /// <summary>
+    /// The first session <paramref name="have"/> lacks: from the start of the window when nothing is stored or the
+    /// stored span starts late, the first of <paramref name="wanted"/> (NIFTY 50's sessions) it has no close for, or the
+    /// day after its newest close when that is before <paramref name="through"/>. Null when nothing is missing. Pure.
+    /// </summary>
+    public static DateOnly? FirstMissing(IReadOnlyList<DailyClose> have, IReadOnlyList<DateOnly> wanted, DateOnly from, DateOnly through)
+    {
+        if (have.Count == 0) return from;
+        var dates = have.Select(c => c.Date).ToHashSet();
+        var candidates = new List<DateOnly>();
+        // A week of slack at the start: the window opens on a calendar day, which may be a weekend or a holiday.
+        if (have.Min(c => c.Date) > from.AddDays(7)) candidates.Add(from);
+        candidates.AddRange(wanted.Where(d => d >= from && d <= through && !dates.Contains(d)).Take(1));
+        var newest = have.Max(c => c.Date);
+        if (newest < through) candidates.Add(newest.AddDays(1));
+        return candidates.Count == 0 ? null : candidates.Min();
+    }
+
+    /// <summary>One symbol's daily closes from <paramref name="start"/>, in a scope of its own; false when they could not be fetched.</summary>
+    private async Task<bool> FetchAsync(string symbol, DateOnly start, DateOnly through, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var marketData = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
+            await marketData.SyncHistoryAsync(new SyncHistoryRequest { Symbol = symbol, Resolution = Daily, FromDate = start, ToDate = through }, cancellationToken);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The history connector not signed in, a symbol it does not know, a duplicate written by a sync running
+            // beside this one: the closes stay as they are, and the report says what they cover.
+            logger.LogInformation("Portfolio history for {Symbol} from {From} was not fetched: {Error}", symbol, start, ex.GetType().Name);
+            return false;
+        }
     }
 
     /// <summary>

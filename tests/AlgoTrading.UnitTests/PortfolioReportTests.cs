@@ -239,6 +239,77 @@ public class PortfolioReportTests
         Assert.Equal(1.43m, report.Totals.DayChangePct); // 500 / 35,000
     }
 
+    [Fact]
+    public void A_snapshot_from_an_earlier_session_adds_no_old_move_to_the_day_s_change()
+    {
+        var thursday = new DateOnly(2026, 10, 15);
+        var wednesday = new DateOnly(2026, 10, 14);
+        // Read on Friday: its previous close is Thursday's. Read on Thursday (a broker whose sync failed since): Wednesday's.
+        var fresh = Snapshot("fyers", Holding("NSE:TCS-EQ", "INE467B01029", qty: 10, avg: 3400, ltp: 3550) with { PrevClose = 3500m, PrevCloseDate = thursday });
+        var stale = Snapshot("angel", Holding("ITC-EQ", "INE154A01025", qty: 100, avg: 395, ltp: 410) with { PrevClose = 400m, PrevCloseDate = wednesday });
+        var dhan = Snapshot("dhan", Holding("HDFCBANK", "INE040A01034", qty: 25, avg: 1600, ltp: 1700) with
+        {
+            PriceSource = PriceSources.DeskClose, PriceDate = thursday,
+        });
+
+        var report = PortfolioReportBuilder.Build(new PortfolioReportInputs(Now, [fresh, stale, dhan],
+            new Dictionary<string, IReadOnlyList<DailyClose>>(), [], PriceSession: new DateOnly(2026, 10, 16), PreviousSession: thursday));
+
+        Assert.Equal(500m, report.Totals.DayChange);                       // TCS only
+        Assert.Null(report.Holdings.Single(h => h.Isin == "INE154A01025").DayChange);
+        Assert.Contains(report.DataNotes, n => n.StartsWith("The day's change is left out for 1 holding (ITC)") && n.Contains("earlier session"));
+        Assert.Contains(report.DataNotes, n => n.StartsWith("Today's change is not known yet for 1 holding (HDFCBANK)"));
+        Assert.DoesNotContain(report.DataNotes, n => n.Contains("no stored close for the session before"));
+    }
+
+    [Fact]
+    public void A_broken_index_row_is_skipped_rather_than_failing_every_report()
+    {
+        var index = Index(Nifty).Append(new DailyClose(Day(4), 0m)).ToList();
+
+        var risk = PortfolioRiskMath.Compute([Risk("A", 100, A)], index, minSessions: 2);
+
+        Assert.Equal(2.00m, risk.BetaVsNifty);
+    }
+
+    [Fact]
+    public void No_data_note_uses_a_word_the_advice_guard_refuses()
+    {
+        // The model is asked to name the report's gaps; a note it copies must not fail the guard.
+        var report = PortfolioReportBuilder.Build(new PortfolioReportInputs(Now,
+            [Snapshot("dhan",
+                Holding("HDFCBANK", "INE040A01034", qty: 25, avg: 1600, ltp: null) with { PriceSource = PriceSources.None },
+                Holding("NSE:TCS-EQ", "INE467B01029", qty: 2, avg: 3400, ltp: 3550))],
+            new Dictionary<string, IReadOnlyList<DailyClose>>(), Index(Nifty)));
+        var risk = PortfolioRiskMath.Compute([Risk("A", 100, A)], Index(Nifty));
+
+        Assert.All(report.DataNotes.Append(risk.Note).Append(report.Risk.Note), n => Assert.Empty(PortfolioAdviceGuard.Find(n)));
+    }
+
+    [Theory]
+    [InlineData(new[] { 0, 1, 2, 3, 4 }, null)]           // every NIFTY session, through the last
+    [InlineData(new[] { 0, 1, 2, 3 }, 4)]                // the newest session is missing
+    [InlineData(new[] { 0, 1, 3, 4 }, 2)]                // a hole in the middle
+    [InlineData(new[] { 2, 3, 4 }, 0)]                   // stored for a shorter span: fetched from the first session
+    public void History_is_fetched_from_the_first_session_it_lacks(int[] stored, int? expected)
+    {
+        var have = stored.Select(i => new DailyClose(Day(i), 100m)).ToList();
+        var nifty = Enumerable.Range(0, 5).Select(Day).ToList();
+
+        Assert.Equal(expected is int e ? Day(e) : null, PortfolioPrices.FirstMissing(have, nifty, Day(0), Day(4)));
+    }
+
+    [Fact]
+    public void A_symbol_with_nothing_stored_is_fetched_for_the_whole_window_and_one_starting_late_from_its_start()
+    {
+        var from = new DateOnly(2025, 10, 16);
+        var through = new DateOnly(2026, 10, 15);
+
+        Assert.Equal(from, PortfolioPrices.FirstMissing([], [], from, through));
+        Assert.Equal(from, PortfolioPrices.FirstMissing([new DailyClose(new DateOnly(2026, 9, 1), 1m), new DailyClose(through, 1m)], [], from, through));
+        Assert.Null(PortfolioPrices.FirstMissing([new DailyClose(from.AddDays(3), 1m), new DailyClose(through, 1m)], [], from, through));
+    }
+
     [Theory]
     [InlineData("2026-10-17T06:30:00Z", "2026-10-16")] // Saturday: Friday's session
     [InlineData("2026-10-19T02:30:00Z", "2026-10-16")] // Monday 08:00 IST, before the open: still Friday's
