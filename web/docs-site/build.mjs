@@ -142,13 +142,29 @@ function gitDate(file) {
   return new Date().toISOString().slice(0, 10)
 }
 
-/** Plain text of the first real paragraph — the page's description. */
-function firstParagraph(md) {
+/**
+ * Plain text of the first real paragraph — the page's description. A provenance line ("Source: `strategies/…py`
+ * (…Strategy). Every rule below is read from the code…", which opens every strategy spec) is skipped for the paragraph
+ * after it: as the description it put a file path in every strategy page's search snippet (Search Console, 19 Oct 2026).
+ */
+export function firstParagraph(md) {
   const lines = md.split('\n')
   let i = 0
-  while (i < lines.length && (lines[i].trim() === '' || /^#/.test(lines[i]) || /^!\[/.test(lines[i]) || /^<!--/.test(lines[i]) || /^\|/.test(lines[i]) || /^[-*>]/.test(lines[i]) || /^```/.test(lines[i]))) i++
-  const para = []
-  while (i < lines.length && lines[i].trim() !== '' && !/^#/.test(lines[i]) && !/^```/.test(lines[i])) para.push(lines[i++])
+  const skippable = (line) =>
+    line.trim() === '' || /^#/.test(line) || /^!\[/.test(line) || /^<!--/.test(line) || /^\|/.test(line) || /^[-*>]/.test(line) || /^```/.test(line)
+  let para = []
+  for (;;) {
+    while (i < lines.length && skippable(lines[i])) {
+      if (/^```/.test(lines[i])) {
+        i++
+        while (i < lines.length && !/^```/.test(lines[i])) i++
+      }
+      i++
+    }
+    para = []
+    while (i < lines.length && lines[i].trim() !== '' && !/^#/.test(lines[i]) && !/^```/.test(lines[i])) para.push(lines[i++])
+    if (para.length === 0 || !/^Source:/i.test(para[0].trim()) || i >= lines.length) break
+  }
   const text = para
     .join(' ')
     .replace(/`([^`]*)`/g, '$1')
