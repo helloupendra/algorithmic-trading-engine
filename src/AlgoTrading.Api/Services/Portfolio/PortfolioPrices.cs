@@ -24,10 +24,15 @@ namespace AlgoTrading.Api.Services.Portfolio;
 /// desk's too. A symbol that cannot be fetched is left as it is, and the report's risk figures say how much of the
 /// value they cover.
 /// </para>
+/// <para>
+/// Each fetch runs in a scope of its own. The history store saves through its scope's database context, and in the
+/// sync's own context that save would also write the sync's unsaved changes, and a refused one (two users' syncs
+/// fetching the same symbol at once) would leave its rows tracked there to fail the sync's own save after it.
+/// </para>
 /// </remarks>
 public sealed class PortfolioPrices(
     TradingDbContext db,
-    IMarketDataService marketData,
+    IServiceScopeFactory scopes,
     PortfolioSessions sessions,
     IOptionsMonitor<PortfolioSettings> settings,
     ILogger<PortfolioPrices> logger)
@@ -116,6 +121,8 @@ public sealed class PortfolioPrices(
             var start = have.Count > 0 ? have[^1].Date.AddDays(1) : from;
             try
             {
+                await using var scope = scopes.CreateAsyncScope();
+                var marketData = scope.ServiceProvider.GetRequiredService<IMarketDataService>();
                 await marketData.SyncHistoryAsync(new SyncHistoryRequest { Symbol = symbol, Resolution = Daily, FromDate = start, ToDate = through }, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)

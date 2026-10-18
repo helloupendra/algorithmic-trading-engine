@@ -187,7 +187,7 @@ public sealed class GatewayPortfolioSummaryModel(AiGateway gateway, TradingDbCon
 
         string user = userId.ToString(CultureInfo.InvariantCulture);
         var result = await gateway.AskAsync(new AiAskInput(
-            AiCatalog.PortfolioAnalyst, null, messages, AiCatalog.PortfolioAnalystPrompt, 900, 0.2,
+            AiCatalog.PortfolioAnalyst, null, messages, AiCatalog.PortfolioAnalystPrompt, 2000, 0.2,
             $"portfolio-{user}", "portfolio", $"portfolio:{user}", userId, Chain: chain, Private: true),
             NullAiStreamSink.Instance, cancellationToken);
 

@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using static AlgoTrading.UnitTests.PortfolioTestKit;
@@ -277,6 +278,33 @@ public class PortfolioLinkTests
     }
 
     [Fact]
+    public async Task A_sync_fetches_missing_daily_closes_for_completed_sessions_only_largest_holding_first()
+    {
+        var desk = new Desk();
+        desk.Link(Asha, "fyers");
+        desk.Db.Instruments.AddRange(
+            new Instrument { Symbol = "NSE:RELIANCE-EQ", Exchange = "NSE", Segment = "CM", Isin = "INE002A01018", Description = "RELIANCE INDUSTRIES LTD" },
+            new Instrument { Symbol = "BSE:RELIANCE-A", Exchange = "BSE", Segment = "CM", Isin = "INE002A01018", Description = "RELIANCE INDUSTRIES LTD" },
+            new Instrument { Symbol = "NSE:TCS-EQ", Exchange = "NSE", Segment = "CM", Isin = "INE467B01029", Description = "TATA CONSULTANCY SERV LT" });
+        await desk.Db.SaveChangesAsync();
+        desk.Broker
+            .Get(FyersPortfolioClient.HoldingsPath, Fixture("fyers_holdings.json"))
+            .Get(FyersPortfolioClient.PositionsPath, Fixture("fyers_positions.json"))
+            .Get(FyersPortfolioClient.FundsPath, Fixture("fyers_funds.json"));
+
+        await desk.Controller(Asha).Sync(default);
+
+        // Friday 11:30 IST: Friday's close is not final, so nothing after Thursday is asked for. NIFTY 50 first (the
+        // benchmark), then by value: TCS 53,250, RELIANCE 50,400. INFY is not in the instrument master.
+        Assert.Equal(["NSE:NIFTY50-INDEX", "NSE:TCS-EQ", "NSE:RELIANCE-EQ"], desk.History.Asked.Select(r => r.Symbol));
+        Assert.All(desk.History.Asked, r => Assert.Equal((new DateOnly(2026, 10, 15), "D"), (r.ToDate, r.Resolution)));
+
+        var held = JsonSerializer.Deserialize<List<BrokerHolding>>((await desk.Db.PortfolioSnapshots.SingleAsync()).HoldingsJson, PortfolioReportService.SnapshotJson)!;
+        Assert.Equal(("NSE:RELIANCE-EQ", "RELIANCE INDUSTRIES LTD"), (held[0].CanonicalSymbol, held[0].Name));
+        Assert.Null(held.Single(h => h.Isin == "INE009A01021").CanonicalSymbol);
+    }
+
+    [Fact]
     public async Task A_user_cannot_read_another_user_s_report_or_history()
     {
         var desk = new Desk();
@@ -373,6 +401,7 @@ public class PortfolioLinkTests
         public MutableTime Time { get; } = new();
         public TradingDbContext Db { get; } = new(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"portfolio-{Guid.NewGuid():N}").Options);
         public FakeBroker Broker { get; } = new();
+        public RecordingHistory History { get; } = new();
         public PortfolioTokenVault Vault { get; } = new(new EphemeralDataProtectionProvider());
 
         private readonly PortfolioLinkStates _states;
@@ -434,7 +463,8 @@ public class PortfolioLinkTests
             var dhan = new DhanPortfolioClient(factory);
             var angel = new AngelPortfolioClient(factory, settings, Options.Create(new AngelSettings()), new AngelPortfolioPacer(TimeSpan.Zero));
             var sessions = new PortfolioSessions(new PortfolioReportTests.FakeCalendar());
-            var prices = new PortfolioPrices(Db, new NoHistory(), sessions, settings, NullLogger<PortfolioPrices>.Instance);
+            var scopes = new ServiceCollection().AddSingleton<IMarketDataService>(History).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+            var prices = new PortfolioPrices(Db, scopes, sessions, settings, NullLogger<PortfolioPrices>.Instance);
             var reports = new PortfolioReportService(Db, prices, sessions, settings, Time);
             var links = new PortfolioLinkService(Db, fyers, dhan, angel, Vault, _states, NullLogger<PortfolioLinkService>.Instance, Time);
             var sync = new PortfolioSyncService(Db, [fyers, dhan, angel], Vault, prices, reports, new PortfolioSummaryWriter(new NoModel(), Time),
@@ -452,11 +482,16 @@ public class PortfolioLinkTests
         }
     }
 
-    /// <summary>The desk's history connector, with nothing to give: the report then says what it could not measure.</summary>
-    private sealed class NoHistory : IMarketDataService
+    /// <summary>The desk's history connector, with nothing to give: it records what it was asked for.</summary>
+    private sealed class RecordingHistory : IMarketDataService
     {
-        public Task<IReadOnlyList<CandleResponse>> SyncHistoryAsync(SyncHistoryRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<CandleResponse>>([]);
+        public List<SyncHistoryRequest> Asked { get; } = [];
+
+        public Task<IReadOnlyList<CandleResponse>> SyncHistoryAsync(SyncHistoryRequest request, CancellationToken cancellationToken = default)
+        {
+            Asked.Add(request);
+            return Task.FromResult<IReadOnlyList<CandleResponse>>([]);
+        }
 
         public Task<IReadOnlyList<CandleResponse>> GetStoredHistoryAsync(GetStoredCandlesRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<CandleResponse>>([]);
