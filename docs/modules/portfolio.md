@@ -52,7 +52,8 @@ as `X-PrivateKey`. SmartAPI's own documentation pages could not be read when thi
 browser); the flow rests on Angel's SDK (`login_url()` in smartapi-python) and on SmartAPI staff answers on its
 forum, which say a custom redirect URL works for older API keys and is still being added for new ones, and that the
 state may not come back. So for Angel One a missing state is accepted on the browser's cookie alone (below), never a
-different state. Verify with one real sign-in before announcing it (owner action 2).
+different state, until `Portfolio:Angel:RequireState` is turned on. Verify with one real sign-in before announcing it
+(owner action 2).
 
 **Dhan** ([authentication](https://dhanhq.co/docs/v2/authentication/)). Dhan's API key and secret are "user
 specific": the platform's own key cannot sign anyone else in, and the flow Dhan offers platforms is its partner
@@ -64,10 +65,13 @@ client id typed, or nothing is saved. Reads: `/v2/holdings`, `/v2/positions`, `/
 
 **The redirect is bound twice.** The callback (`GET /api/Portfolio/callback/{broker}`) is anonymous by necessity, so
 the state is all that says whose account it is. Connect issues a random state for the signed-in user and one broker,
-good once and for ten minutes, and sets the same value as an HttpOnly, SameSite=Lax cookie scoped to
-`/api/Portfolio/callback`. The callback needs both, equal. Without the cookie, someone could start a link on their own
+good once and for ten minutes, and sets the same value as an HttpOnly, SameSite=Lax cookie scoped to `/api` (not to
+the callback's own path: browsers match a cookie's path case-sensitively, routes do not). The callback needs both,
+equal. Without the cookie, someone could start a link on their own
 account and send another person the broker's sign-in page, and that person's account would be linked to the sender.
-A refused callback links nothing, and a restart forgets pending links.
+A refused callback links nothing, and a restart forgets pending links. On Angel One's cookie-only path someone could
+still push their own Angel session into a browser that has a pending Angel link, so the victim would see the pusher's
+holdings (nothing of the victim's leaks); `RequireState` closes that once Angel is seen to return the state.
 
 **Read only.** The clients in `src/AlgoTrading.Infrastructure/Portfolio/` can call only the paths listed above.
 `PortfolioReadOnlyTests` reads their source and their declared paths and fails on any order, modify, cancel, convert
@@ -87,6 +91,7 @@ or exit call, and on any method named for one.
   and `dataNotes` as "disconnected; last read …", until `?forget=true` deletes that broker's snapshots (and any cached
   summary that may name its holdings).
 * The written summary is cached on the newest snapshot it was written from.
+* Both tables cascade from `app_user`: deleting a user deletes their tokens and their snapshots.
 
 ## The report
 
@@ -146,7 +151,7 @@ The user is always the signed-in user, from the token. Any role. camelCase JSON.
 
 | Route | What it does |
 |---|---|
-| `GET connections` | Every broker with its status (`not_connected`, `connected`, `expired`, `error`), masked account, times, last error, `connectMode` (`redirect` or `token`) and the fields to paste |
+| `GET connections` | `{ brokers: [...] }`: every broker with its status (`not_connected`, `connected`, `expired`, `error`), masked account, times, last error, `connectMode` (`redirect` or `token`) and the fields to paste |
 | `POST connections/{broker}/start` | `{ mode: "redirect", url }` (and the link cookie), or `{ mode: "token", fields }`; 503 when the broker's app is not set up |
 | `GET callback/{broker}` | The broker's redirect target: 302 to `/portfolio?connected={broker}` or `/portfolio?error={message}` |
 | `POST connections/{broker}/token` | `{ fields: { clientId, accessToken } }`: checked by one read, then the connection row; 400 `{ message }` |
@@ -156,7 +161,7 @@ The user is always the signed-in user, from the token. Any role. camelCase JSON.
 | `GET history?days=90` | `[{ date, invested, current, pnl }]`, `date` as YYYY-MM-DD in IST: each day's last snapshot per broker read that day, nothing carried forward |
 | `GET admin/connections` | Admin only: users per broker by status. No amounts, no holdings, no names |
 
-The page should call `POST sync` after a `?connected=` return: linking reads the profile only. The callback's
+A broker key the API does not know is a 404 `{ message }`. The page should call `POST sync` after a `?connected=` return: linking reads the profile only. The callback's
 `connected=` carries the broker key (`fyers`, `dhan`, `angel`); `accountLabel` is already masked (`••••1234`);
 `tokenFields[].key` is camelCase (`clientId`, `accessToken`).
 
@@ -178,7 +183,8 @@ and the masked account, never an amount or a token.
 2. **Angel One redirect URL.** On the SmartAPI app (My Apps), set the redirect URL to
    **`https://openfno.com/api/Portfolio/callback/angel`**. If the platform's key is a new one whose redirect URL Angel
    does not honour yet, create a publisher app for the Portfolio page and set `PORTFOLIO_ANGEL_API_KEY`. Then link one
-   account end to end and confirm what the redirect carries.
+   account end to end and confirm what the redirect carries; if the state comes back, set
+   `Portfolio:Angel:RequireState` to true.
 3. **Dhan partner login (optional).** To replace the pasted token with a sign-in at Dhan, apply to Dhan as a partner;
    Dhan then issues a `partner_id` and `partner_secret` for its consent flow (`auth.dhan.co/partner/…`). Not built
    until then.
@@ -186,3 +192,9 @@ and the masked account, never an amount or a token.
    (for example AMFI's half-yearly market-cap list and an industry master). `PortfolioReportInputs.Classify` is where
    it plugs in.
 5. **Bedrock on** for the summary: the open models on Bedrock or Claude. With neither, the report has no summary.
+
+Register the redirect URLs with exactly this case (`/api/Portfolio/callback/...`). Before announcing the page, check one
+thing at each broker: whether linking an account through the platform's own app (the fallback above) ends the desk's
+own session for the same app and client. Until that is known, do not link the account the desk itself reads with
+through the fallback during market hours. The page's SmartAPI calls are paced on the desk client's own gate, since
+both may use the same API key.
