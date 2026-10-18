@@ -612,6 +612,8 @@ export interface AiReportDetail {
   /** Markdown; for an invalid report, the model's raw text. */
   body: string
   data: Record<string, unknown> | null
+  /** A Compliance Triage report's circular: its alert and handled mark; null when it has neither. */
+  followUp: ComplianceFollowUp | null
 }
 
 export interface AiReportDay {
@@ -785,7 +787,12 @@ function readReportSummary(r: AiReportSummary): AiReportSummary {
 export function readReport(raw: unknown): AiReportDetail {
   const o = need<AiReportDetail>(raw, ['report'], 'report')
   const data = o.data && typeof o.data === 'object' && !Array.isArray(o.data) ? o.data : null
-  return { report: readReportSummary(need<AiReportSummary>(o.report, ['id', 'agentKey'], 'report')), body: typeof o.body === 'string' ? o.body : '', data }
+  return {
+    report: readReportSummary(need<AiReportSummary>(o.report, ['id', 'agentKey'], 'report')),
+    body: typeof o.body === 'string' ? o.body : '',
+    data,
+    followUp: readComplianceFollowUp(o.followUp),
+  }
 }
 
 export function readReportStats(raw: unknown): AiReportStats {
@@ -1055,6 +1062,12 @@ export function readDataCheck(data: Record<string, unknown> | null): DataCheck |
   }
 }
 
+/** A day something in a circular takes effect ("2026-12-07"), and what, in the circular's words. */
+export interface CircularEffectiveDate {
+  date: string
+  what: string
+}
+
 /** The Compliance Triage's verdict on one circular, with the words it rests on. */
 export interface CircularTriage {
   applies: string
@@ -1062,11 +1075,69 @@ export interface CircularTriage {
   why: string | null
   change: string | null
   quote: string | null
+  /** Earliest first; empty for a triage written before 18 Oct 2026, or a circular that gives no date. */
+  effectiveDates: CircularEffectiveDate[]
+  /** Each concrete change to the desk, its times and numbers as the circular writes them. */
+  deskChanges: string[]
 }
 
 export function readCircularTriage(data: Record<string, unknown> | null): CircularTriage | null {
   if (!data) return null
-  return { applies: str(data.applies) ?? 'unclear', area: str(data.area), why: str(data.why), change: str(data.change), quote: str(data.quote) }
+  const effectiveDates = list<Record<string, unknown>>(data.effectiveDates)
+    .filter((d) => d && typeof d === 'object')
+    .map((d) => ({ date: str(d.date) ?? '', what: str(d.what) ?? '' }))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date))
+    .sort((a, b) => a.date.localeCompare(b.date))
+  return {
+    applies: str(data.applies) ?? 'unclear',
+    area: str(data.area),
+    why: str(data.why),
+    change: str(data.change),
+    quote: str(data.quote),
+    effectiveDates,
+    deskChanges: strings(data.deskChanges),
+  }
+}
+
+/** A circular's one compliance alert and the owner's handled mark (api/Ai/reports/{id}, api/Ai/compliance). */
+export interface ComplianceFollowUp {
+  id: number
+  circularId: number
+  reportId: number | null
+  /** When the alert went to the Desk System channel and Ira; null when it was marked handled first. */
+  alertedUtc: string | null
+  alertDelivered: boolean
+  handledUtc: string | null
+  handledBy: string | null
+  note: string | null
+}
+
+/** The longest note "Mark handled" keeps (AiController.MaxHandledNote). */
+export const HANDLED_NOTE_MAX_CHARS = 2000
+
+export function readComplianceFollowUp(raw: unknown): ComplianceFollowUp | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return {
+    id: num(o.id) ?? 0,
+    circularId: num(o.circularId) ?? 0,
+    reportId: num(o.reportId),
+    alertedUtc: str(o.alertedUtc),
+    alertDelivered: o.alertDelivered === true,
+    handledUtc: str(o.handledUtc),
+    handledBy: str(o.handledBy),
+    note: str(o.note),
+  }
+}
+
+/** Marks the circular a Compliance Triage report is about as handled, with what was done. */
+export function useMarkComplianceHandled(reportId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (note: string) =>
+      readComplianceFollowUp(await api.post<unknown>(`/api/Ai/compliance/${reportId}/handled`, { note: note.trim() })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai', 'report', reportId] }),
+  })
 }
 
 /** A test the Strategy Researcher thinks worth running: a backtest, never a live change. */

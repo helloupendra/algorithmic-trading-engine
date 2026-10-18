@@ -958,6 +958,25 @@ describe('reports', () => {
     expect(page.reports[0]).toMatchObject({ subjectId: '412', attempts: 1, link: null, error: null })
     expect(() => readReportsPage({ items: [] })).toThrow(/cannot read/)
     expect(readReport({ report: { id: 3, agentKey: 'news-analyst' }, body: 'x', data: [1] }).data).toBeNull()
+    expect(readReport({ report: { id: 3, agentKey: 'news-analyst' }, body: 'x' }).followUp).toBeNull()
+    // A circular's alert and handled mark come with its triage report.
+    expect(
+      readReport({
+        report: { id: 412, agentKey: 'compliance-triage' },
+        body: 'x',
+        data: { applies: 'yes' },
+        followUp: { id: 1, circularId: 41, reportId: 412, alertedUtc: '2026-10-18T15:30:00Z', alertDelivered: true, handledUtc: null },
+      }).followUp,
+    ).toEqual({
+      id: 1,
+      circularId: 41,
+      reportId: 412,
+      alertedUtc: '2026-10-18T15:30:00Z',
+      alertDelivered: true,
+      handledUtc: null,
+      handledBy: null,
+      note: null,
+    })
     expect(reportsQuery({ agent: 'trade-reviewer', subjectType: 'run', subjectId: '412', status: '', take: 1 })).toBe(
       'agent=trade-reviewer&subjectType=run&subjectId=412&take=1',
     )
@@ -1639,7 +1658,22 @@ describe('the Phase 4 agents on the Reports tab', () => {
   it('reads a circular triage and a research note with what it made of each check', () => {
     const t = readCircularTriage({ applies: 'yes', area: 'retail algo', change: 'Tag orders.', quote: 'must carry an Algo ID' })!
     expect([t.applies, t.change, t.why]).toEqual(['yes', 'Tag orders.', null])
+    // A triage written before 18 Oct 2026 has no dates and no desk changes.
+    expect([t.effectiveDates, t.deskChanges]).toEqual([[], []])
     expect(appliesBadge('yes').tone).toBe('warn')
+
+    const dated = readCircularTriage({
+      format: 2,
+      applies: 'yes',
+      effectiveDates: [
+        { date: '2027-02-08', what: 'Para 4.8 from February 08, 2027.' },
+        { date: '7 Dec 2026', what: 'not a date the code wrote' },
+        { date: '2026-12-07', what: 'The rest from December 07, 2026.' },
+      ],
+      deskChanges: ['Index derivatives trade until 3:45 p.m.', '', 42],
+    })!
+    expect(dated.effectiveDates.map((d) => d.date)).toEqual(['2026-12-07', '2027-02-08'])
+    expect(dated.deskChanges).toEqual(['Index derivatives trade until 3:45 p.m.'])
 
     const n = readResearchNote({
       week: '2026-10-11',

@@ -36,10 +36,12 @@ import {
   reportSubjectLabel,
   severityBadge,
   urgencyBadge,
+  useMarkComplianceHandled,
   verdictBadge,
   yoyText,
+  HANDLED_NOTE_MAX_CHARS,
 } from '../../lib/ai'
-import type { AiReportDetail, AiReportSummary, ResearchCheck } from '../../lib/ai'
+import type { AiReportDetail, AiReportSummary, ComplianceFollowUp, ResearchCheck } from '../../lib/ai'
 import { ApiError } from '../../lib/api'
 import { formatDateTime, formatNumber } from '../../lib/format'
 import { Badge } from '../../components/ui'
@@ -549,10 +551,44 @@ export function ReportData({ detail }: { detail: AiReportDetail }) {
             <dd>{t.change}</dd>
           </div>
         )}
+        {t.effectiveDates.length > 0 && (
+          <div>
+            <dt>Takes effect</dt>
+            <dd>
+              <ul className="ai-report-list">
+                {t.effectiveDates.map((d) => (
+                  <li key={`${d.date}|${d.what}`}>
+                    <b className="mono">{d.date}</b> {d.what}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
+        {t.deskChanges.length > 0 && (
+          <div>
+            <dt>On the desk</dt>
+            <dd>
+              <ul className="ai-report-list">
+                {t.deskChanges.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
         {t.quote && (
           <div>
             <dt>Rests on</dt>
             <dd className="ai-report-quote">“{t.quote}”</dd>
+          </div>
+        )}
+        {(t.applies === 'yes' || detail.followUp) && report.status === 'ok' && (
+          <div>
+            <dt>Follow-up</dt>
+            <dd>
+              <CircularFollowUp reportId={report.id} followUp={detail.followUp} />
+            </dd>
           </div>
         )}
       </dl>
@@ -583,6 +619,72 @@ export function ReportData({ detail }: { detail: AiReportDetail }) {
   }
 
   return null
+}
+
+/**
+ * A circular that applies: whether its one alert went, and whether the desk is ready for it. "Mark handled" takes a
+ * note of what was done; the circular then leaves Sentinel's "Rule changes ahead" and Today, and no alert goes for
+ * it if none went yet.
+ */
+function CircularFollowUp({ reportId, followUp }: { reportId: number; followUp: ComplianceFollowUp | null }) {
+  const mark = useMarkComplianceHandled(reportId)
+  const [open, setOpen] = useState(false)
+  const [note, setNote] = useState('')
+  const alerted = followUp?.alertedUtc ? (
+    <span className="faint">
+      Alert sent {formatDateTime(followUp.alertedUtc)} IST{followUp.alertDelivered ? '' : ' (Telegram did not take it)'}.{' '}
+    </span>
+  ) : null
+
+  if (followUp?.handledUtc) {
+    return (
+      <p className="ai-flush">
+        {alerted}
+        <Badge tone="pos">Handled</Badge> by {followUp.handledBy ?? 'someone'} on {formatDateTime(followUp.handledUtc)} IST
+        {followUp.note && <span className="cell-sub">{followUp.note}</span>}
+      </p>
+    )
+  }
+
+  if (!open) {
+    return (
+      <p className="ai-flush">
+        {alerted}
+        <button type="button" className="btn btn--sm" onClick={() => setOpen(true)}>
+          Mark handled
+        </button>
+      </p>
+    )
+  }
+
+  return (
+    <form
+      className="ai-mem__edit"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (note.trim()) mark.mutate(note, { onSuccess: () => setOpen(false) })
+      }}
+    >
+      <textarea
+        className="field__input"
+        rows={2}
+        aria-label="What was done"
+        placeholder="What was done, e.g. index runs stop at 15:45 from 7 Dec"
+        maxLength={HANDLED_NOTE_MAX_CHARS}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="ai-mem__editfoot">
+        <button type="submit" className="btn btn--sm btn--primary" disabled={mark.isPending || !note.trim()}>
+          {mark.isPending ? 'Saving…' : 'Mark handled'}
+        </button>
+        <button type="button" className="btn btn--sm" disabled={mark.isPending} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        {mark.isError && <span className="small-note warn">{mark.error instanceof Error ? mark.error.message : 'Not saved.'}</span>}
+      </div>
+    </form>
+  )
 }
 
 /** The code's overfitting checks, strategy by strategy, beside what the researcher made of each. */
