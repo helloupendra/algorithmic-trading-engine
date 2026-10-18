@@ -257,7 +257,7 @@ public class PortfolioLinkTests
         Assert.Equal(2, report.Positions.Count);
         Assert.Equal(1, report.Derivatives.OpenPositions);
         Assert.Contains(report.Sources, s => s.Broker == "fyers" && s.Ok);
-        Assert.Contains(report.DataNotes, n => n.Contains("Dhan is connected but has not been read yet"));
+        Assert.Contains(report.DataNotes, n => n.StartsWith("Dhan has not been read yet: Dhan no longer accepts this access token"));
         Assert.Null(report.Summary);
         Assert.Equal(PortfolioReportBuilder.Disclaimer, report.Disclaimer);
     }

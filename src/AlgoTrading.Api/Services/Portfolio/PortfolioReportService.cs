@@ -78,7 +78,9 @@ public sealed class PortfolioReportService(
             string name = PortfolioBrokers.NameOf(link.Broker);
             if (snapshot is null)
             {
-                notes.Add($"{name} is connected but has not been read yet: press Sync.");
+                notes.Add(link.LastError is null
+                    ? $"{name} is connected but has not been read yet: press Sync."
+                    : $"{name} has not been read yet: {link.LastError}");
                 continue;
             }
 

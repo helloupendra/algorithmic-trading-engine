@@ -3,7 +3,6 @@ using AlgoTrading.Contracts.Portfolio;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Portfolio;
-using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services.Portfolio;
@@ -105,7 +104,12 @@ public sealed partial class PortfolioLinkService(
         if (ConnectMode(broker) != ModeRedirect) return new PortfolioLinkOutcome(false, null, "This broker does not sign in by redirect.");
 
         var bound = states.Consume(broker, redirect.State, cookieState, brokerEchoesState: broker == PortfolioBrokers.Fyers);
-        if (bound.UserId is not long userId) return new PortfolioLinkOutcome(false, null, bound.Refusal!);
+        if (bound.UserId is not long userId)
+        {
+            // Nobody to attribute it to, so not an activity-log row; the reason is the state's, never the broker's code.
+            logger.LogInformation("Portfolio: a {Broker} redirect was refused: {Why}", broker, bound.Refusal);
+            return new PortfolioLinkOutcome(false, null, bound.Refusal!);
+        }
 
         string name = PortfolioBrokers.NameOf(broker);
         PortfolioToken token;
