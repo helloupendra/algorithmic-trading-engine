@@ -307,4 +307,27 @@ public class AiGatewayTests
         Assert.Equal(160, summary.Length);
         Assert.EndsWith("…", summary);
     }
+
+    [Fact]
+    public async Task A_private_call_s_row_keeps_its_cost_and_timing_but_not_its_words()
+    {
+        // A user's own data (their portfolio): the Calls tab, which admins read, must not show it.
+        var ai = Build();
+        ai.Provider.On(Judge1, Answer("The portfolio is worth 1,00,000.", reasoning: "RELIANCE is the largest."));
+
+        var result = await ai.Gateway.AskAsync(new AiAskInput(
+            AiCatalog.ModelTest, null, [new AiMessage("user", "Describe: {\"currentValue\":100000,\"symbol\":\"RELIANCE\"}")],
+            "Describe the portfolio.", 500, 0.2, "portfolio-7", "portfolio", "portfolio:7", 7, Chain: [Judge1], Private: true),
+            NullAiStreamSink.Instance, CancellationToken.None);
+
+        Assert.Equal("The portfolio is worth 1,00,000.", result.Text);
+        var row = await ai.Db.AiCalls.SingleAsync();
+        Assert.Equal((AiCallOutcome.Ok, Judge1, 7L), (row.Outcome, row.Model, row.UserId!.Value));
+        Assert.Equal((20, 10), (row.PromptTokens, row.CompletionTokens));
+        Assert.Equal(AiGateway.PrivateNote, row.SystemPrompt);
+        Assert.Equal(AiGateway.PrivateNote, row.Summary);
+        Assert.Equal("[]", row.MessagesJson);
+        Assert.Equal((string.Empty, string.Empty), (row.Answer, row.Reasoning));
+        Assert.DoesNotContain("RELIANCE", row.SystemPrompt + row.MessagesJson + row.Summary + row.Answer + row.Reasoning + row.ToolsJson);
+    }
 }

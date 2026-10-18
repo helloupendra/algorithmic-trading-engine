@@ -72,6 +72,11 @@ public sealed class NullAiStreamSink : IAiStreamSink
 /// One line put after the system prompt (and its memories) for this call alone: a Telegram voice note's, that the
 /// question was spoken and the owner may call the assistant by name. The agent's own prompt is not changed.
 /// </param>
+/// <param name="Private">
+/// The question and its answer are one user's own data (their portfolio), which nobody else may read: the call's row
+/// keeps who asked, the chain, the attempts, the tokens and the cost, but not the prompt, the question or the answer,
+/// so the AI page's Calls tab cannot show them to an admin. The answer still comes back to the caller.
+/// </param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -88,7 +93,8 @@ public sealed record AiAskInput(
     IReadOnlyList<long>? GivenMemoryIds = null,
     IReadOnlyList<string>? ForcedChain = null,
     bool CountMemoryUses = true,
-    string? PromptNote = null);
+    string? PromptNote = null,
+    bool Private = false);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
 public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
@@ -509,9 +515,10 @@ public sealed class AiGateway
                     string error = "Every model failed: " + string.Join("; ", attempts.Where(a => a.Outcome != "ok").Select(a => $"{a.Model} {a.Outcome}"));
                     answer.Clear();
                     Complete(row, AiCallOutcome.Failed, string.Empty, error, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
-                    await SaveFinalAsync(row);
+                    var failedResult = Result(row, attempts, usage, steps, round, cost);
+                    await SaveFinalAsync(row, input.Private);
                     finished = true;
-                    return Result(row, attempts, usage, steps, round, cost);
+                    return failedResult;
                 }
 
                 usage = Add(usage, end.Usage);
@@ -539,9 +546,10 @@ public sealed class AiGateway
                 }
 
                 Complete(row, AiCallOutcome.Ok, model, string.Empty, answer, Working(working, reasoning), end.FinishReason, usage, attempts, steps, round, total);
-                await SaveFinalAsync(row);
+                var answered = Result(row, attempts, usage, steps, round, cost);
+                await SaveFinalAsync(row, input.Private);
                 finished = true;
-                return Result(row, attempts, usage, steps, round, cost);
+                return answered;
             }
         }
         catch (Exception ex) when ((ex is OperationCanceledException && cancellationToken.IsCancellationRequested) || ex is AiSinkFailedException)
@@ -558,9 +566,10 @@ public sealed class AiGateway
 
             string why = ex is AiSinkFailedException ? "The console's connection closed mid-answer." : "Stopped by the asker.";
             Complete(row, AiCallOutcome.Cancelled, string.Empty, why, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
-            await SaveFinalAsync(row);
+            var cancelled = Result(row, attempts, usage, steps, round, cost);
+            await SaveFinalAsync(row, input.Private);
             finished = true;
-            return Result(row, attempts, usage, steps, round, cost);
+            return cancelled;
         }
         finally
         {
@@ -571,7 +580,7 @@ public sealed class AiGateway
                 // the row saying "running".
                 Complete(row, AiCallOutcome.Failed, string.Empty, "The call stopped unexpectedly on the server; see api.log.",
                     answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
-                await SaveFinalAsync(row);
+                await SaveFinalAsync(row, input.Private);
             }
         }
     }
@@ -739,12 +748,15 @@ public sealed class AiGateway
         UserId = input.UserId,
         ConversationId = input.ConversationId,
         ChainJson = JsonSerializer.Serialize(chain),
-        SystemPrompt = systemPrompt,
-        MessagesJson = JsonSerializer.Serialize(input.Messages.Select(m => new { role = m.Role, content = m.Content })),
-        Summary = Summarise(input.Messages),
+        SystemPrompt = input.Private ? PrivateNote : systemPrompt,
+        MessagesJson = input.Private ? "[]" : JsonSerializer.Serialize(input.Messages.Select(m => new { role = m.Role, content = m.Content })),
+        Summary = input.Private ? PrivateNote : Summarise(input.Messages),
         MaxTokens = input.MaxTokens,
         Temperature = input.Temperature,
     };
+
+    /// <summary>What a private call's row says in place of its words (<see cref="AiAskInput.Private"/>).</summary>
+    public const string PrivateNote = "Not kept: a user's own data, readable by that user only.";
 
     private void Complete(
         AiCall row,
@@ -785,9 +797,19 @@ public sealed class AiGateway
         row.CompletedUtc = _time.GetUtcNow().UtcDateTime;
     }
 
-    /// <summary>Saved whatever the asker did: a call they stopped is still recorded.</summary>
-    private async Task SaveFinalAsync(AiCall row)
+    /// <summary>
+    /// Saved whatever the asker did: a call they stopped is still recorded. A private call's answer, working and tool
+    /// results are dropped first (<see cref="AiAskInput.Private"/>); its caller already has them.
+    /// </summary>
+    private async Task SaveFinalAsync(AiCall row, bool keepNoWords)
     {
+        if (keepNoWords)
+        {
+            row.Answer = string.Empty;
+            row.Reasoning = string.Empty;
+            row.ToolsJson = "[]";
+        }
+
         try
         {
             await _db.SaveChangesAsync(CancellationToken.None);
