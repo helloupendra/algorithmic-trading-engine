@@ -124,6 +124,19 @@ export function AppLayout() {
   // Back and forward close it too, not only a pick from the list.
   useEffect(() => setPaletteOpen(false), [pathname])
 
+  // Where the workspaces do not all fit the bar, its row scrolls: keep the
+  // current one in view, scrolling the row sideways only, never the page.
+  const wsRef = useRef<HTMLElement>(null)
+  const currentWs = here?.workspace.key
+  useEffect(() => {
+    const row = wsRef.current
+    const link = row?.querySelector<HTMLElement>('[aria-current]')
+    if (!row || !link || row.scrollWidth <= row.clientWidth) return
+    const left = link.offsetLeft - row.offsetLeft
+    if (left >= row.scrollLeft && left + link.offsetWidth <= row.scrollLeft + row.clientWidth) return
+    row.scrollLeft = Math.max(0, Math.min(left - (row.clientWidth - link.offsetWidth) / 2, row.scrollWidth - row.clientWidth))
+  }, [currentWs])
+
   // Sideways-scrolling tables and strips fade the edge that hides more.
   useEffect(() => installScrollCues(document), [])
 
@@ -173,7 +186,7 @@ export function AppLayout() {
             open<b>fno</b>
           </span>
         </Link>
-        <nav className="shell__ws" aria-label="Workspaces">
+        <nav className="shell__ws scroll-x" aria-label="Workspaces" ref={wsRef}>
           {workspaceLinks(false)}
         </nav>
         <div className="shell__grow" />
