@@ -109,7 +109,7 @@ public class RegulatoryCircularsTests
 
         var stored = await db.RegulatoryCirculars.AsNoTracking().ToListAsync();
         Assert.Equal(stored.Count, first.Stored);
-        Assert.Equal(4 + 6, stored.Count);   // four SEBI circulars, six NSE ones, no BSE notice
+        Assert.Equal(4 + 6 + 1, stored.Count);   // four SEBI circulars, six NSE ones, no BSE notice, one FYERS notice
         var sebi = stored.Single(c => c.Key == "sebi:104858");
         Assert.Equal("HO/38/24/(15)2026-MIRSD-PODMMC/I/22872/2026", sebi.Number);
         Assert.Contains("investor awareness message", sebi.Excerpt);
@@ -121,9 +121,77 @@ public class RegulatoryCircularsTests
         var second = await Recorder(db, web, Now.AddDays(1)).RecordAsync(CancellationToken.None);
 
         Assert.Equal(0, second.Stored);
-        // Only the three listings were read again: no circular page, no document.
-        Assert.Equal(3 + 1, web.Requests.Count - requests);   // SEBI, NSE's API (its page primed again a day later), BSE
-        Assert.Equal(4 + 6, await db.RegulatoryCirculars.CountAsync());
+        // Only the four listings were read again: no circular page, no document, no notice page.
+        Assert.Equal(4 + 1, web.Requests.Count - requests);   // SEBI, NSE's API (its page primed again a day later), BSE, FYERS
+        Assert.Equal(4 + 6 + 1, await db.RegulatoryCirculars.CountAsync());
+    }
+
+    [Fact]
+    public void FYERS_s_sitemap_lists_the_notices_changed_lately_whose_names_concern_the_desk()
+    {
+        var list = RegulatoryCircularParsers.ParseFyersSitemap(Fixture("fyers-notice-sitemap.xml"), new DateOnly(2026, 9, 27));
+
+        // Newest first. Not the board's own page, not a commodity's expiry or a withdrawal outage, and not the notices
+        // last changed on 21 Aug, the SEBI framework's among them.
+        Assert.Equal(new[]
+        {
+            "changes-to-fyers-api-rate-limits-and-usage",
+            "mandatory-websocket-authentication-from-30-september-2026",
+            "revision-in-quantity-freeze-limits-for-indices-from-5th-october-2026",
+            "revision-in-trading-timings-for-mcx-from-2nd-november-2026",
+        }, list.Select(l => l.Url[RegulatoryCircularParsers.FyersNoticePrefix.Length..]));
+        Assert.Equal("fyers:changes-to-fyers-api-rate-limits-and-usage", list[0].Key);
+        // A page name too long for the key column is keyed by its hash.
+        Assert.Matches("^fyers:[0-9a-f]{24}$", list[2].Key);
+        var api = list[0];
+        Assert.Equal((RegulatoryCircularSource.Fyers, new DateOnly(2026, 10, 16), "subject: API"), (api.Source, api.PublishedOn, api.Relevance));
+        Assert.Equal("https://fyers.in/notice-board/changes-to-fyers-api-rate-limits-and-usage", api.Url);
+        Assert.Equal("Changes to fyers api rate limits and usage", api.Title);
+        Assert.Equal(string.Empty, api.DocumentUrl);
+        Assert.Equal("subject: market hours", list[3].Relevance);
+        Assert.All(list, l => Assert.True(l.Key.Length <= 64));
+    }
+
+    [Fact]
+    public void A_FYERS_notice_page_gives_its_headline_date_section_and_text()
+    {
+        var notice = RegulatoryCircularParsers.ParseFyersNotice(Fixture("fyers-notice.html"))!;
+
+        Assert.Equal("New SEBI Framework for Retail Algo Trading from April 01, 2026", notice.Title);
+        Assert.Equal(new DateOnly(2026, 3, 10), notice.PublishedOn);
+        Assert.Equal("Regulatory & Compliance", notice.Section);
+        Assert.StartsWith("New SEBI Framework for Retail Algo Trading from April 01, 2026 Regulatory & Compliance", notice.Text);
+        Assert.Contains("Continuous refresh-token sessions will no longer be supported.", notice.Text);
+        Assert.Contains("A maximum of 10 orders per second will be allowed.", notice.Text);
+        Assert.DoesNotContain("@context", notice.Text);
+        Assert.Null(RegulatoryCircularParsers.ParseFyersNotice("<html><body>Not found</body></html>"));
+    }
+
+    [Fact]
+    public async Task A_FYERS_notice_is_stored_with_its_page_s_text_and_an_old_or_unreadable_one_is_not()
+    {
+        var at = Ist(2026, 10, 18, 20, 35);
+        var db = Db();
+        string api = Fixture("fyers-notice.html").Replace("2026-03-10", "2026-10-16", StringComparison.Ordinal)
+            .Replace("New SEBI Framework for Retail Algo Trading from April 01, 2026", "Changes to FYERS API Rate Limits and Usage", StringComparison.Ordinal);
+        var web = Web()
+            .Serve(RegulatoryCircularParsers.FyersNoticeSitemapUrl, Fixture("fyers-notice-sitemap.xml"))
+            .Serve(RegulatoryCircularParsers.FyersNoticePrefix + "changes-to-fyers-api-rate-limits-and-usage", api)
+            // Published on 10 Mar: the sitemap says it changed, but it is not news.
+            .Serve(RegulatoryCircularParsers.FyersNoticePrefix + "mandatory-websocket-authentication-from-30-september-2026", Fixture("fyers-notice.html"))
+            .Serve(RegulatoryCircularParsers.FyersNoticePrefix + "revision-in-quantity-freeze-limits-for-indices-from-5th-october-2026", "busy", HttpStatusCode.ServiceUnavailable)
+            .Serve(RegulatoryCircularParsers.FyersNoticePrefix + "revision-in-trading-timings-for-mcx-from-2nd-november-2026", "<html><body>Moved</body></html>");
+
+        var report = await Recorder(db, web, at).RecordAsync(CancellationToken.None);
+
+        var fyers = Assert.Single(await db.RegulatoryCirculars.AsNoTracking().Where(c => c.Source == RegulatoryCircularSource.Fyers).ToListAsync());
+        Assert.Equal("fyers:changes-to-fyers-api-rate-limits-and-usage", fyers.Key);
+        Assert.Equal("Changes to FYERS API Rate Limits and Usage", fyers.Title);
+        Assert.Equal((new DateOnly(2026, 10, 16), "Regulatory & Compliance", string.Empty), (fyers.PublishedOn, fyers.Department, fyers.Number));
+        Assert.Contains("Continuous refresh-token sessions will no longer be supported.", fyers.Excerpt);
+        Assert.Equal(at, fyers.FirstSeenUtc);
+        Assert.Contains(report.Errors, e => e.StartsWith("fyers:", StringComparison.Ordinal) && e.EndsWith(": HTTP 503", StringComparison.Ordinal));
+        Assert.Contains("fyers:revision-in-trading-timings-for-mcx-from-2nd-november-2026: not a notice page", report.Errors);
     }
 
     [Fact]
@@ -175,7 +243,7 @@ public class RegulatoryCircularsTests
         var report = await Recorder(db, web).RecordAsync(CancellationToken.None);
 
         Assert.Contains(report.Errors, e => e.StartsWith("SEBI: HTTP 503", StringComparison.Ordinal));
-        Assert.Equal(6, await db.RegulatoryCirculars.CountAsync());
+        Assert.Equal(6 + 1, await db.RegulatoryCirculars.CountAsync());
     }
 
     [Theory]
@@ -208,10 +276,24 @@ public class RegulatoryCircularsTests
         };
     }
 
-    /// <summary>The three sources as saved, every SEBI circular page as the saved one, and a PDF behind every document link.</summary>
+    /// <summary>FYERS's sitemap with one notice in it, changed on 9 Oct 2026.</summary>
+    private const string OneFyersNotice = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://fyers.in/notice-board/new-sebi-framework-for-retail-algo-trading-from-april-01-2026</loc><lastmod>2026-10-09</lastmod></url>
+        </urlset>
+        """;
+
+    /// <summary>
+    /// The four sources as saved (FYERS's sitemap cut to one notice, its page dated 9 Oct), every SEBI circular page as
+    /// the saved one, and a PDF behind every document link.
+    /// </summary>
     private static FakeWeb Web(bool sebiDown = false)
     {
         var web = new FakeWeb()
+            .Serve(RegulatoryCircularParsers.FyersNoticeSitemapUrl, OneFyersNotice)
+            .Serve(RegulatoryCircularParsers.FyersNoticePrefix + "new-sebi-framework-for-retail-algo-trading-from-april-01-2026",
+                Fixture("fyers-notice.html").Replace("2026-03-10", "2026-10-09", StringComparison.Ordinal))
             .Serve(RegulatoryCircularParsers.NsePage, "<html></html>")
             .Serve(RegulatoryCircularParsers.BseNoticesUrl, Fixture("bse-notices.xml"))
             .Serve("https://www.sebi.gov.in/sebi_data/attachdocs/oct-2026/1790852162769.pdf",

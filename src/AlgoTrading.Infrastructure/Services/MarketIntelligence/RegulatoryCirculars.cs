@@ -29,9 +29,15 @@ public sealed record CircularListing(
 public sealed record CircularsRecordReport(int Listed, int Stored, int TextRead, IReadOnlyList<string> Errors, int Reread = 0);
 
 /// <summary>
-/// Reads the three sources' circular listings: SEBI's circulars page, NSE's circulars API and BSE's notices feed.
-/// Pure, so every rule is a test on a saved page.
+/// Reads the sources' circular listings: SEBI's circulars page, NSE's circulars API, BSE's notices feed and FYERS's
+/// notice board (its sitemap, and each notice's page). Pure, so every rule is a test on a saved page.
 /// </summary>
+/// <remarks>
+/// Dhan and Angel One have no notice board to read. Dhan's site has a page of standing disclosures
+/// (dhan.co/regulatory-information) and no dated notices, and its community forum, madefortrade.in, disallows its
+/// feeds in its robots.txt. Angel One's SmartAPI forum is a page filled in by script, and angelone.in lists market
+/// news, not notices to its clients (checked 18 Oct 2026).
+/// </remarks>
 /// <remarks>
 /// <para>
 /// Only the circulars that might concern an F&amp;O desk are listed. SEBI's circulars all are: SEBI publishes a few a
@@ -167,6 +173,140 @@ public static partial class RegulatoryCircularParsers
     /// <summary>The pages of a document read at most.</summary>
     public const int MaxTextPages = 12;
 
+    // ---------- the brokers' notice boards ----------
+
+    /// <summary>
+    /// FYERS's notice board as its sitemap lists it: every notice's page and when it last changed. Named in
+    /// https://fyers.in/robots.txt, which allows the notice board to every crawler. The board's own page is filled in
+    /// by script and holds no notice; each notice's page carries its headline, date and section as JSON-LD.
+    /// </summary>
+    public const string FyersNoticeSitemapUrl = "https://fyers.in/notice-board-sitemap.xml";
+
+    public const string FyersNoticePrefix = "https://fyers.in/notice-board/";
+
+    /// <summary>
+    /// Words in a broker's notice (its page name) that make it worth reading for this desk: its API and sign-in, the
+    /// regulator's rules, order and freeze limits, market timings, and the contracts the desk trades. Narrower than
+    /// <see cref="Keywords"/>: FYERS posts a notice for every commodity's expiry and every margin change on metals.
+    /// </summary>
+    private static readonly (string Word, string Label)[] BrokerKeywords =
+    [
+        (" api", "API"), ("websocket", "API"), ("static ip", "API"), ("rate limit", "rate limits"), ("authenticat", "sign-in"),
+        (" 2fa", "sign-in"), (" login", "sign-in"), (" token", "sign-in"), ("algo", "algo"), (" sebi", "SEBI"),
+        ("regulat", "regulation"), ("complian", "compliance"), ("framework", "regulation"), (" order", "orders"),
+        ("freeze", "freeze limits"), ("lot size", "lot size"), ("timing", "market hours"), ("trading hours", "market hours"),
+        ("session", "market hours"), (" nifty", "index"), (" sensex", "index"), (" bank nifty", "index"),
+        (" indices", "index"), (" index", "index"), (" crude", "MCX crude"),
+    ];
+
+    /// <summary>The words of a broker notice's name that make it worth keeping, as one label; null when none do.</summary>
+    public static string? BrokerKeywordIn(string subject)
+    {
+        string s = " " + subject.ToLowerInvariant() + " ";
+        var hit = BrokerKeywords.FirstOrDefault(k => s.Contains(k.Word, StringComparison.Ordinal));
+        return hit.Word is null ? null : hit.Label;
+    }
+
+    /// <summary>
+    /// The FYERS notices worth reading that changed on or after <paramref name="since"/>, newest first: a page name
+    /// that names something the desk depends on (<see cref="BrokerKeywordIn"/>). The title is the page name's words
+    /// until the page is read.
+    /// </summary>
+    public static List<CircularListing> ParseFyersSitemap(string xml, DateOnly since)
+    {
+        var list = new List<CircularListing>();
+        var doc = XDocument.Parse(xml.TrimStart('﻿'));
+        foreach (var url in doc.Descendants().Where(e => e.Name.LocalName == "url"))
+        {
+            string loc = (url.Elements().FirstOrDefault(e => e.Name.LocalName == "loc")?.Value ?? string.Empty).Trim();
+            string mod = (url.Elements().FirstOrDefault(e => e.Name.LocalName == "lastmod")?.Value ?? string.Empty).Trim();
+            if (!loc.StartsWith(FyersNoticePrefix, StringComparison.Ordinal)) continue;
+            string slug = loc[FyersNoticePrefix.Length..].Trim('/');
+            if (slug.Length == 0 || !FyersSlug().IsMatch(slug)) continue;
+            if (!DateOnly.TryParseExact(mod.Length >= 10 ? mod[..10] : mod, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var changed)
+                || changed < since)
+            {
+                continue;
+            }
+
+            string words = slug.Replace('-', ' ');
+            if (BrokerKeywordIn(words) is not string why) continue;
+            string key = $"{RegulatoryCircularSource.Fyers}:{(slug.Length <= 58 ? slug : Hash(slug))}";
+            list.Add(new CircularListing(RegulatoryCircularSource.Fyers, key, string.Empty, char.ToUpperInvariant(words[0]) + words[1..],
+                string.Empty, changed, loc, string.Empty, $"subject: {why}"));
+        }
+
+        return list.OrderByDescending(l => l.PublishedOn).ToList();
+    }
+
+    /// <summary>One broker notice as its page gives it: the headline, the day it was published, its section and its text.</summary>
+    public sealed record BrokerNotice(string Title, DateOnly? PublishedOn, string Section, string Text);
+
+    /// <summary>
+    /// A FYERS notice's page: its NewsArticle JSON-LD (headline, datePublished, articleSection) and the text of its
+    /// main element, cut at <paramref name="maxChars"/>. Null when the page has neither a headline nor any text, as a
+    /// page of some other shape would.
+    /// </summary>
+    public static BrokerNotice? ParseFyersNotice(string html, int maxChars = MaxTextChars)
+    {
+        string? title = null, section = null;
+        DateOnly? published = null;
+        foreach (Match m in LdJson().Matches(html))
+        {
+            try
+            {
+                using var json = JsonDocument.Parse(m.Groups["json"].Value);
+                foreach (var node in JsonNodes(json.RootElement))
+                {
+                    if (!node.TryGetProperty("@type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "NewsArticle") continue;
+                    title ??= Str(node, "headline") is { Length: > 0 } h ? Clean(WebUtility.HtmlDecode(h)) : null;
+                    section ??= Str(node, "articleSection") is { Length: > 0 } s ? Clean(WebUtility.HtmlDecode(s)) : null;
+                    string date = Str(node, "datePublished");
+                    if (published is null && date.Length >= 10
+                        && DateOnly.TryParseExact(date[..10], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+                    {
+                        published = d;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Another script's JSON, or a broken one: the page's text still reads.
+            }
+        }
+
+        var main = MainElement().Match(html);
+        string body = main.Success ? main.Groups["body"].Value : string.Empty;
+        body = Scripts().Replace(body, " ");
+        string text = Clean(WebUtility.HtmlDecode(Tags().Replace(body, " ")));
+        if (text.StartsWith("Back ", StringComparison.Ordinal)) text = text[5..];
+        if (text.Length > maxChars) text = text[..maxChars];
+        if (title is null)
+        {
+            var head = TitleTag().Match(html);
+            title = head.Success ? Clean(WebUtility.HtmlDecode(head.Groups["t"].Value)).Replace(" - FYERS", string.Empty, StringComparison.Ordinal) : null;
+        }
+
+        return string.IsNullOrWhiteSpace(title) && text.Length == 0 ? null : new BrokerNotice(title ?? string.Empty, published, section ?? string.Empty, text);
+    }
+
+    /// <summary>The objects of a JSON-LD block: the root, or each object of its @graph.</summary>
+    private static IEnumerable<JsonElement> JsonNodes(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var e in root.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object)) yield return e;
+            yield break;
+        }
+
+        if (root.ValueKind != JsonValueKind.Object) yield break;
+        yield return root;
+        if (root.TryGetProperty("@graph", out var graph) && graph.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var e in graph.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object)) yield return e;
+        }
+    }
+
     /// <summary>
     /// The text of a document: a PDF's first <paramref name="maxPages"/> pages, or the first PDF in a zip (NSE files
     /// some circulars that way), whitespace made single and cut at <paramref name="maxChars"/>. Empty when it cannot be read.
@@ -248,6 +388,21 @@ public static partial class RegulatoryCircularParsers
     [GeneratedRegex(@"/Notices/([0-9]{8}-[0-9]+)/")]
     private static partial Regex BseId();
 
+    [GeneratedRegex(@"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
+    private static partial Regex FyersSlug();
+
+    [GeneratedRegex(@"<script[^>]*type=""application/ld\+json""[^>]*>(?<json>.*?)</script>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex LdJson();
+
+    [GeneratedRegex(@"<main\b[^>]*>(?<body>.*?)</main>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex MainElement();
+
+    [GeneratedRegex(@"<script\b.*?</script>|<style\b.*?</style>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex Scripts();
+
+    [GeneratedRegex(@"<title>(?<t>[^<]*)</title>", RegexOptions.IgnoreCase)]
+    private static partial Regex TitleTag();
+
     [GeneratedRegex(@"<[^>]+>")]
     private static partial Regex Tags();
 
@@ -256,8 +411,8 @@ public static partial class RegulatoryCircularParsers
 }
 
 /// <summary>
-/// Records the circulars SEBI, NSE and BSE publish that might bind the desk, once a day, with the first pages of each
-/// one's text, for the Compliance Triage.
+/// Records the circulars SEBI, NSE and BSE publish, and the notices FYERS posts, that might bind the desk, once a day,
+/// with the first pages of each one's text, for the Compliance Triage.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -269,7 +424,9 @@ public static partial class RegulatoryCircularParsers
 /// <para>
 /// Polite: once a day, documents fetched one at a time <see cref="DocumentGap"/> apart, at most
 /// <see cref="MaxDocumentsPerRun"/> a run and <see cref="MaxDocumentBytes"/> each; NSE's API goes through
-/// <see cref="NseWebClient"/> and its pacer, like every other request to NSE.
+/// <see cref="NseWebClient"/> and its pacer, like every other request to NSE. FYERS's board is read from the sitemap
+/// its robots.txt names, and only the notices changed in the last <see cref="BrokerLookbackDays"/> days whose names
+/// concern the desk are opened, <see cref="MaxBrokerNoticesPerRun"/> a run at most.
 /// </para>
 /// </remarks>
 public sealed class RegulatoryCircularsRecorder
@@ -290,6 +447,15 @@ public sealed class RegulatoryCircularsRecorder
     public const int RereadDays = 30;
 
     public const int MaxRereadsPerRun = 10;
+
+    /// <summary>
+    /// How far back, by the sitemap's last change, a broker's notices are read; the triage's own lookback is 21 days
+    /// too. A notice published before it is skipped even when the sitemap says it changed.
+    /// </summary>
+    public const int BrokerLookbackDays = 21;
+
+    /// <summary>Notice pages read from one broker's board in one run at most (a page is about 160 KB).</summary>
+    public const int MaxBrokerNoticesPerRun = 10;
 
     private readonly TradingDbContext _db;
     private readonly IHttpClientFactory _http;
@@ -330,16 +496,23 @@ public sealed class RegulatoryCircularsRecorder
             listed.AddRange(RegulatoryCircularParsers.ParseNseCirculars(body));
         });
         await ReadAsync("BSE", async () => listed.AddRange(RegulatoryCircularParsers.ParseBseNotices(await GetTextAsync(RegulatoryCircularParsers.BseNoticesUrl, ct))));
+        var brokerSince = IstTime.DateOf(Clock()).AddDays(-BrokerLookbackDays);
+        await ReadAsync("FYERS", async () => listed.AddRange(
+            RegulatoryCircularParsers.ParseFyersSitemap(await GetTextAsync(RegulatoryCircularParsers.FyersNoticeSitemapUrl, ct), brokerSince)));
 
         var keys = listed.Select(l => l.Key).Distinct().ToList();
         var known = (await _db.RegulatoryCirculars.AsNoTracking().Where(c => keys.Contains(c.Key)).Select(c => c.Key).ToListAsync(ct))
             .ToHashSet(StringComparer.Ordinal);
-        var fresh = listed.Where(l => !known.Contains(l.Key)).GroupBy(l => l.Key).Select(g => g.First())
-            .OrderByDescending(l => l.PublishedOn).Take(MaxDocumentsPerRun).ToList();
+        var unseen = listed.Where(l => !known.Contains(l.Key)).GroupBy(l => l.Key).Select(g => g.First())
+            .OrderByDescending(l => l.PublishedOn).ToList();
+        var fresh = unseen.Where(l => !RegulatoryCircularSource.IsBroker(l.Source)).Take(MaxDocumentsPerRun)
+            .Concat(unseen.Where(l => RegulatoryCircularSource.IsBroker(l.Source)).Take(MaxBrokerNoticesPerRun))
+            .ToList();
 
         int stored = 0, textRead = 0;
-        foreach (var listing in fresh)
+        foreach (var item in fresh)
         {
+            var listing = item;
             string number = listing.Number, document = listing.DocumentUrl, excerpt = string.Empty;
             try
             {
@@ -350,6 +523,26 @@ public sealed class RegulatoryCircularsRecorder
                     number = n;
                     document = pdf ?? string.Empty;
                 }
+                else if (RegulatoryCircularSource.IsBroker(listing.Source))
+                {
+                    // The notice's page is its text. One that is not a notice page is tried again on the next run.
+                    var notice = RegulatoryCircularParsers.ParseFyersNotice(await GetTextAsync(listing.Url, ct));
+                    if (notice is null)
+                    {
+                        errors.Add($"{listing.Key}: not a notice page");
+                        continue;
+                    }
+
+                    // An old notice the sitemap marks as changed (21 Aug 2026: all 1,219 of them at once) is not news.
+                    if (notice.PublishedOn is DateOnly published && published < brokerSince) continue;
+                    listing = listing with
+                    {
+                        Title = notice.Title.Length > 0 ? notice.Title : listing.Title,
+                        PublishedOn = notice.PublishedOn ?? listing.PublishedOn,
+                        Department = notice.Section,
+                    };
+                    excerpt = notice.Text;
+                }
 
                 if (document.Length > 0)
                 {
@@ -358,8 +551,10 @@ public sealed class RegulatoryCircularsRecorder
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
-                // Kept with its title: the triage says unclear when the text is too short to tell.
                 errors.Add($"{listing.Key}: {Describe(ex)}");
+                // A broker's notice is its page: without it there is nothing but its address, and the next run tries
+                // again. A circular is kept with its title: the triage says unclear when the text is too short to tell.
+                if (RegulatoryCircularSource.IsBroker(listing.Source)) continue;
             }
 
             if (excerpt.Length > 0) textRead++;

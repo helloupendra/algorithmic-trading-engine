@@ -1,8 +1,8 @@
 namespace AlgoTrading.Domain.Entities;
 
 /// <summary>
-/// One circular from SEBI, NSE or BSE that might bind this desk, as the circulars recorder first saw it: its
-/// number, date, title, where it lives, and the first pages of its text.
+/// One circular from SEBI, NSE or BSE, or one notice from a broker, that might bind this desk, as the circulars
+/// recorder first saw it: its number, date, title, where it lives, and the first pages of its text.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,10 +21,13 @@ public class RegulatoryCircular
 {
     public long Id { get; set; }
 
-    /// <summary>sebi, nse or bse (<see cref="RegulatoryCircularSource"/>).</summary>
+    /// <summary>sebi, nse, bse or fyers (<see cref="RegulatoryCircularSource"/>).</summary>
     public string Source { get; set; } = string.Empty;
 
-    /// <summary>The duplicate check: the source and its own id for the circular ("nse:76848", "sebi:105081", "bse:20261010-1").</summary>
+    /// <summary>
+    /// The duplicate check: the source and its own id for the circular ("nse:76848", "sebi:105081", "bse:20261010-1",
+    /// "fyers:changes-to-fyers-api-rate-limits-and-usage").
+    /// </summary>
     public string Key { get; set; } = string.Empty;
 
     /// <summary>The circular's number as published ("NSE/FAOP/76827", "HO/38/24/(15)2026-MIRSD…"); empty when not given.</summary>
@@ -60,10 +63,19 @@ public class RegulatoryCircular
     public DateTime? TextRereadUtc { get; set; }
 }
 
-/// <summary>Where a circular came from.</summary>
+/// <summary>Where a circular came from: a regulator, an exchange, or a broker's notice board.</summary>
 public static class RegulatoryCircularSource
 {
     public const string Sebi = "sebi";
     public const string Nse = "nse";
     public const string Bse = "bse";
+
+    /// <summary>
+    /// FYERS's notice board (fyers.in/notice-board), from 18 Oct 2026: on 10 Mar 2026 it announced SEBI's retail algo
+    /// framework (daily 2FA, no refresh tokens), and the desk learned of it when a refresh was refused on 13 Oct.
+    /// </summary>
+    public const string Fyers = "fyers";
+
+    /// <summary>The brokers among the sources: their notices have no number, and their text is the page itself.</summary>
+    public static bool IsBroker(string? source) => source == Fyers;
 }

@@ -286,7 +286,7 @@ public sealed class GlobalDailyRecorderService : MarketIntelligenceLoop
 }
 
 /// <summary>
-/// SEBI's, NSE's and BSE's circulars once a day from 20:30 IST (see <see cref="RegulatoryCircularsRecorder"/>), for the
+/// SEBI's, NSE's and BSE's circulars and FYERS's notices once a day from 20:30 IST (see <see cref="RegulatoryCircularsRecorder"/>), for the
 /// Compliance Triage's Saturday read. A run missed (the API down at 20:30) is made at the next chance outside the
 /// session; the last run's time is kept in system settings, so a restart neither repeats the day's run nor skips it.
 /// </summary>
