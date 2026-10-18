@@ -46,4 +46,11 @@ public sealed class PortfolioFyersSettings
 public sealed class PortfolioAngelSettings
 {
     public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Refuse an Angel One redirect that does not carry the state back. Off while it is not confirmed that Angel's
+    /// publisher login returns it (users have reported it dropped): the browser's cookie alone then binds the redirect.
+    /// Turn on once one real sign-in shows the state coming back.
+    /// </summary>
+    public bool RequireState { get; set; }
 }

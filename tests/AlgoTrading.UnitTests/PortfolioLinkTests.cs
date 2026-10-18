@@ -48,12 +48,12 @@ public class PortfolioLinkTests
         string state = Uri.UnescapeDataString(url[(url.IndexOf("&state=", StringComparison.Ordinal) + 7)..]);
         Assert.StartsWith("pf-", state);
 
-        // The same state is set on this browser, HttpOnly, and sent only to the callbacks.
+        // The same state is set on this browser, HttpOnly, and sent only to the API.
         string setCookie = asha.HttpContext.Response.Headers.SetCookie.ToString();
         Assert.Contains($"pf_link_fyers={state}", setCookie);
         Assert.Contains("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("samesite=lax", setCookie, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("path=/api/Portfolio/callback", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path=/api;", setCookie + ";", StringComparison.OrdinalIgnoreCase);
 
         var back = await desk.Anonymous(cookie: ("fyers", state)).Callback("fyers", state, "the-auth-code", "ok", null, default);
 
@@ -396,6 +396,37 @@ public class PortfolioLinkTests
     }
 
     [Fact]
+    public async Task A_link_that_cannot_be_saved_still_sends_the_browser_back_with_a_reason()
+    {
+        var desk = new Desk();
+        desk.Broker
+            .On("POST", FyersPortfolioClient.TokenPath, HttpStatusCode.OK, """{"s":"ok","code":200,"message":"","access_token":"tok"}""")
+            .Get(FyersPortfolioClient.ProfilePath, Fixture("fyers_profile.json"));
+        var asha = desk.Controller(Asha);
+        var url = Assert.IsType<PortfolioStartResponse>(Assert.IsType<OkObjectResult>((await asha.Start("fyers", default)).Result).Value).Url!;
+        string state = Uri.UnescapeDataString(url[(url.IndexOf("&state=", StringComparison.Ordinal) + 7)..]);
+        desk.Db.Dispose();   // the database is gone between the sign-in and the save
+
+        var back = await desk.Anonymous(cookie: ("fyers", state)).Callback("fyers", state, "code", "ok", null, default);
+
+        Assert.Equal("/portfolio?error=" + Uri.EscapeDataString("The FYERS link could not be saved. Press Connect again."), Assert.IsType<RedirectResult>(back).Url);
+    }
+
+    [Fact]
+    public async Task An_angel_redirect_without_its_state_is_refused_once_the_state_is_required()
+    {
+        var desk = new Desk(requireAngelState: true);
+        var asha = desk.Controller(Asha);
+        var url = Assert.IsType<PortfolioStartResponse>(Assert.IsType<OkObjectResult>((await asha.Start("angel", default)).Result).Value).Url!;
+        string state = Uri.UnescapeDataString(url[(url.IndexOf("&state=", StringComparison.Ordinal) + 7)..]);
+
+        var back = await desk.Anonymous(cookie: ("angel", state)).Callback("angel", null, null, null, "attacker-jwt", default);
+
+        Assert.StartsWith("/portfolio?error=", Assert.IsType<RedirectResult>(back).Url);
+        Assert.Empty(desk.Broker.Requests);
+    }
+
+    [Fact]
     public async Task A_user_cannot_read_another_user_s_report_or_history()
     {
         var desk = new Desk();
@@ -501,10 +532,13 @@ public class PortfolioLinkTests
         private readonly PortfolioLinkStates _states;
         private readonly PortfolioSyncGate _gate;
 
-        public Desk()
+        private readonly bool _requireAngelState;
+
+        public Desk(bool requireAngelState = false)
         {
             _states = new PortfolioLinkStates(Time);
             _gate = new PortfolioSyncGate(Time);
+            _requireAngelState = requireAngelState;
         }
 
         public PortfolioController Controller(long userId, string role = "Trader") =>
@@ -550,17 +584,17 @@ public class PortfolioLinkTests
             var settings = new Monitor<PortfolioSettings>(new PortfolioSettings
             {
                 Fyers = { AppId = "APP-100", SecretKey = "app-secret", RedirectUri = "https://openfno.test/api/Portfolio/callback/fyers" },
-                Angel = { ApiKey = "angel-key" },
+                Angel = { ApiKey = "angel-key", RequireState = _requireAngelState },
             });
             var factory = new Factory(Broker);
             var fyers = new FyersPortfolioClient(factory, new Credentials(), settings);
             var dhan = new DhanPortfolioClient(factory);
-            var angel = new AngelPortfolioClient(factory, settings, Options.Create(new AngelSettings()), new AngelPortfolioPacer(TimeSpan.Zero));
+            var angel = new AngelPortfolioClient(factory, settings, Options.Create(new AngelSettings()), AngelPortfolioPacer.None);
             var sessions = new PortfolioSessions(new PortfolioReportTests.FakeCalendar());
             var scopes = new ServiceCollection().AddSingleton<IMarketDataService>(History).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
             var prices = new PortfolioPrices(Db, scopes, sessions, settings, NullLogger<PortfolioPrices>.Instance);
             var reports = new PortfolioReportService(Db, prices, sessions, settings, Time);
-            var links = new PortfolioLinkService(Db, fyers, dhan, angel, Vault, _states, NullLogger<PortfolioLinkService>.Instance, Time);
+            var links = new PortfolioLinkService(Db, fyers, dhan, angel, Vault, _states, settings, NullLogger<PortfolioLinkService>.Instance, Time);
             var sync = new PortfolioSyncService(Db, [fyers, dhan, angel], Vault, prices, reports, new PortfolioSummaryWriter(new NoModel(), Time),
                 _gate, settings, NullLogger<PortfolioSyncService>.Instance, Time);
 

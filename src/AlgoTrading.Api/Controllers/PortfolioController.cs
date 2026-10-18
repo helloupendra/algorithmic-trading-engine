@@ -183,8 +183,8 @@ public class PortfolioController : ControllerBase
         => Ok(await _links.CountsAsync(cancellationToken));
 
     /// <summary>
-    /// The cookie that ties a broker's redirect to this browser: HttpOnly, sent only to the callbacks, and Lax so the
-    /// broker's top-level redirect back carries it.
+    /// The cookie that ties a broker's redirect to this browser: HttpOnly, sent only to the API (never to the page's
+    /// scripts), and Lax so the broker's top-level redirect back carries it.
     /// </summary>
     private CookieOptions LinkCookie(TimeSpan? maxAge) => new()
     {

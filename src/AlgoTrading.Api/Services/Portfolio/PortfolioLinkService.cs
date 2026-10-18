@@ -4,6 +4,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Portfolio;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Api.Services.Portfolio;
 
@@ -36,6 +37,7 @@ public sealed partial class PortfolioLinkService(
     AngelPortfolioClient angel,
     PortfolioTokenVault vault,
     PortfolioLinkStates states,
+    IOptionsMonitor<PortfolioSettings> settings,
     ILogger<PortfolioLinkService> logger,
     TimeProvider? time = null)
 {
@@ -103,7 +105,8 @@ public sealed partial class PortfolioLinkService(
     {
         if (ConnectMode(broker) != ModeRedirect) return new PortfolioLinkOutcome(false, null, "This broker does not sign in by redirect.");
 
-        var bound = states.Consume(broker, redirect.State, cookieState, brokerEchoesState: broker == PortfolioBrokers.Fyers);
+        bool echoes = broker == PortfolioBrokers.Fyers || (broker == PortfolioBrokers.Angel && settings.CurrentValue.Angel.RequireState);
+        var bound = states.Consume(broker, redirect.State, cookieState, brokerEchoesState: echoes);
         if (bound.UserId is not long userId)
         {
             // Nobody to attribute it to, so not an activity-log row; the reason is the state's, never the broker's code.
@@ -138,6 +141,13 @@ public sealed partial class PortfolioLinkService(
         catch (PortfolioBrokerException ex)
         {
             return new PortfolioLinkOutcome(false, userId, ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The browser is on its way back to the page: it gets a plain reason, never a 500. A second tab saving the
+            // same link at once, a key ring that cannot encrypt. The type only, as the exception may carry a request.
+            logger.LogWarning("Portfolio: linking {Broker} for user {UserId} failed: {Error}", broker, userId, ex.GetType().Name);
+            return new PortfolioLinkOutcome(false, userId, $"The {name} link could not be saved. Press Connect again.");
         }
     }
 
@@ -228,6 +238,19 @@ public sealed partial class PortfolioLinkService(
     /// the activity log middleware does not record. No amounts and no token, as with every row.
     /// </summary>
     public async Task RecordAsync(long userId, string action, string summary, bool succeeded, string path, string? ip, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WriteActivityAsync(userId, action, summary, succeeded, path, ip, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Recording history must never break the thing being recorded: the browser still goes back to the page.
+            logger.LogWarning("Portfolio: the activity log row for user {UserId} ({Action}) was not written: {Error}", userId, action, ex.GetType().Name);
+        }
+    }
+
+    private async Task WriteActivityAsync(long userId, string action, string summary, bool succeeded, string path, string? ip, CancellationToken cancellationToken)
     {
         var user = await db.AppUsers.AsNoTracking().Where(u => u.Id == userId)
             .Select(u => new { u.UserName, u.Role }).FirstOrDefaultAsync(cancellationToken);

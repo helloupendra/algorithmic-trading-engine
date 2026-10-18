@@ -8,36 +8,24 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Infrastructure.Portfolio;
 
 /// <summary>
-/// Spaces the portfolio's SmartAPI calls across every user: Angel One limits calls per app, not per account, and
-/// answers a burst with a plain-text 403. One per process (a singleton).
+/// Spaces the portfolio's SmartAPI calls: Angel One limits calls per app, not per account, and answers a burst with a
+/// plain-text 403. The gap is the desk's own SmartAPI client's, on the same gate
+/// (<see cref="AngelApiClient.PaceAsync"/>), since the page may use the platform's own API key.
 /// </summary>
-public sealed class AngelPortfolioPacer(TimeSpan gap)
+public sealed class AngelPortfolioPacer
 {
-    /// <summary>The gap the desk's own SmartAPI client keeps (<see cref="AngelApiClient.MinCallGap"/>).</summary>
-    public static readonly TimeSpan DefaultGap = AngelApiClient.MinCallGap;
+    private readonly bool _pace;
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private DateTime _lastUtc = DateTime.MinValue;
-
-    public AngelPortfolioPacer() : this(DefaultGap)
+    public AngelPortfolioPacer() : this(pace: true)
     {
     }
 
-    public async Task WaitAsync(CancellationToken cancellationToken)
-    {
-        if (gap <= TimeSpan.Zero) return;
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            var wait = _lastUtc + gap - DateTime.UtcNow;
-            if (wait > TimeSpan.Zero) await Task.Delay(wait, cancellationToken);
-            _lastUtc = DateTime.UtcNow;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    private AngelPortfolioPacer(bool pace) => _pace = pace;
+
+    /// <summary>No pacing at all: for tests, which talk to a fake broker.</summary>
+    public static AngelPortfolioPacer None { get; } = new(pace: false);
+
+    public Task WaitAsync(CancellationToken cancellationToken) => _pace ? AngelApiClient.PaceAsync(cancellationToken) : Task.CompletedTask;
 }
 
 /// <summary>

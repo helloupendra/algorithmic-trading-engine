@@ -248,9 +248,12 @@ public sealed class AngelApiClient
         return copy;
     }
 
-    private async Task<AngelResult> SendOnceAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    /// <summary>
+    /// Waits until <see cref="MinCallGap"/> has passed since the process's last SmartAPI call. Shared with the
+    /// Portfolio page's read-only client: SmartAPI limits calls per app, whichever screen makes them.
+    /// </summary>
+    internal static async Task PaceAsync(CancellationToken cancellationToken)
     {
-        var started = _time.GetTimestamp();
         await PaceGate.WaitAsync(cancellationToken);
         try
         {
@@ -262,6 +265,12 @@ public sealed class AngelApiClient
         {
             PaceGate.Release();
         }
+    }
+
+    private async Task<AngelResult> SendOnceAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var started = _time.GetTimestamp();
+        await PaceAsync(cancellationToken);
 
         try
         {

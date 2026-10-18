@@ -40,8 +40,12 @@ public sealed class PortfolioLinkStates(TimeProvider? time = null)
 
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
-    /// <summary>The cookie's path: it is sent to the callbacks and nowhere else.</summary>
-    public const string CookiePath = "/api/Portfolio/callback";
+    /// <summary>
+    /// The cookie's path: the API's, so it never goes to the console's own pages. Not the callback's own path: a
+    /// browser matches a cookie's path case-sensitively and the routes do not, so a redirect URL registered at a broker
+    /// as /api/portfolio/callback/… would route here and arrive without the cookie.
+    /// </summary>
+    public const string CookiePath = "/api";
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, Pending> _pending = new(StringComparer.Ordinal);

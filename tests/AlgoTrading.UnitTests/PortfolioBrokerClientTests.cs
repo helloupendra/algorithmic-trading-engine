@@ -332,5 +332,5 @@ public class PortfolioBrokerClientTests
 
     private static AngelPortfolioClient Angel(FakeBroker broker) =>
         new(new Factory(broker), new Monitor<PortfolioSettings>(new PortfolioSettings { Angel = { ApiKey = "angel-key" } }),
-            Options.Create(new AngelSettings()), new AngelPortfolioPacer(TimeSpan.Zero));
+            Options.Create(new AngelSettings()), AngelPortfolioPacer.None);
 }

@@ -40,7 +40,14 @@ public sealed class PortfolioSyncService(
     TimeProvider? time = null)
 {
     /// <summary>The longest a sync waits for the written summary; the figures are saved before it is asked.</summary>
-    public static readonly TimeSpan SummaryTimeout = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan SummaryTimeout = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// What a sync may spend after the brokers have answered: the desk's prices, the save and the summary. It runs on
+    /// its own clock, not the request's, so a browser that gives up (or a proxy that times out) does not throw away
+    /// the brokers' answers after the minute's sync has been spent on them.
+    /// </summary>
+    public static readonly TimeSpan AfterReadsBudget = TimeSpan.FromSeconds(120);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -105,16 +112,20 @@ public sealed class PortfolioSyncService(
             results.Add(new PortfolioSyncResult(link.Broker, error is null, error));
         }
 
+        using var afterReads = new CancellationTokenSource(AfterReadsBudget);
+        var work = afterReads.Token;
+
         if (read.Count > 0)
         {
             var holdings = read.ToDictionary(r => r.Key, r => r.Value.Holdings);
             try
             {
-                holdings = new Dictionary<string, IReadOnlyList<BrokerHolding>>(await prices.EnrichAsync(holdings, now, cancellationToken));
+                holdings = new Dictionary<string, IReadOnlyList<BrokerHolding>>(await prices.EnrichAsync(holdings, now, work));
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex)
             {
-                // The broker's figures are worth keeping without the desk's: the report says what is not known.
+                // The broker's figures are worth keeping without the desk's (or after the budget ran out on the desk's
+                // history connector): the report says what is not known.
                 logger.LogWarning(ex, "Portfolio prices for user {UserId} could not be added; the snapshots keep the brokers' own figures", userId);
             }
 
@@ -133,10 +144,10 @@ public sealed class PortfolioSyncService(
         }
 
         var cutoff = now.AddDays(-Math.Max(1, s.RetentionDays));
-        db.PortfolioSnapshots.RemoveRange(await db.PortfolioSnapshots.Where(x => x.UserId == userId && x.TakenUtc < cutoff).ToListAsync(cancellationToken));
-        await db.SaveChangesAsync(cancellationToken);
+        db.PortfolioSnapshots.RemoveRange(await db.PortfolioSnapshots.Where(x => x.UserId == userId && x.TakenUtc < cutoff).ToListAsync(CancellationToken.None));
+        await db.SaveChangesAsync(CancellationToken.None);
 
-        if (read.Count > 0) await WriteSummaryAsync(userId, cancellationToken);
+        if (read.Count > 0) await WriteSummaryAsync(userId, work);
 
         logger.LogInformation("Portfolio sync for user {UserId}: {Read} of {Linked} brokers read", userId, read.Count, links.Count);
         return new PortfolioSyncOutcome(new PortfolioSyncResponse(now, results), TimeSpan.Zero);
