@@ -34,7 +34,7 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   - `/ira`: Ira on the owner's phone, outside the console's chrome ([Ira on the phone](#ira-on-the-phone)).
 - Code: `src/AlgoTrading.Infrastructure/Ai/`, `src/AlgoTrading.Api/Controllers/AiController.cs`,
   `src/AlgoTrading.Api/Services/AiAgents/`.
-- Tables: `ai_calls`, `ai_reports`; `regulatory_circulars` for the Compliance Triage.
+- Tables: `ai_calls`, `ai_reports`; `regulatory_circulars` and `compliance_follow_ups` for the Compliance Triage.
 
 ## Ground rules
 
@@ -811,20 +811,44 @@ Reads the week's circulars (`ComplianceTriageAgent`, extract tier), recorded onc
 ([Market intelligence](market_intelligence.md#sebi-nse-and-bse-circulars)).
 
 - **When.** From `Ai:ComplianceDay` (Saturday) at `Ai:ComplianceAfterIst` (10:00 IST), every circular recorded before
-  then and within `Ai:ComplianceLookbackDays` (21) that has no settled report, `Ai:ComplianceBatchSize` (4) a
+  then and within `Ai:ComplianceLookbackDays` (21) that has no settled report, `Ai:ComplianceBatchSize` (2) a
   scheduler minute. A circular recorded during the week waits for the next Saturday; a Saturday the API missed is
-  caught up at the next chance outside the session.
-- **What it reads.** Each circular's source, number, date, department, title and up to 2,500 characters of the text
-  read from its document; a circular whose document gave no text is handed over with a note to judge on its title.
+  caught up at the next chance outside the session. A circular whose text was read again whole
+  (`regulatory_circulars.TextRereadUtc`, after its report) is triaged again at the next chance outside the session,
+  whatever the day, at most once every 15 minutes while no model answers.
+- **What it reads.** Each circular's source (SEBI, NSE, BSE or FYERS), number, date, department, title and up to
+  12,000 characters of the text read from its document; a longer text is handed over as its first 9,000 characters
+  and its last 3,000. A circular whose document gave no text is handed over with a note to judge on its title. Until
+  18 Oct 2026 it was 2,500 characters: SEBI's circular of 15 Oct on market timings says "3:45 p.m." at character 3,301
+  and "December 07, 2026" at 9,549, and its triage missed both.
 - **What it answers**, per circular (subject `circular:<id>`): applies to this desk (yes, no, unclear), the area
-  (retail algo, F&O contracts, risk and margins, market hours, data and APIs, other), why, what would have to change,
-  and the exact words it rests on. The prompt says what the desk is: paper orders that never reach an exchange, its
-  own algorithms on its own server, broker data APIs, no clients, not a broker or an algo provider.
-- **The check.** The verdict and area from the lists, a change named when it applies, and the quote found in the text
-  as handed over (the title, the number and the excerpt). A record left out of the answer is invalid; a batch cut off
-  at the token limit is failed and read again.
-- **Where it shows.** The Reports tab, linked to the circular's page or document; Today's Needs a look lists those
-  that apply, from the last 7 days; the digest's line counts them and names the ones that apply.
+  (retail algo, F&O contracts, risk and margins, market hours, settlement, data and APIs, other), why, what would have
+  to change, and the exact words it rests on. When it applies, also `effectiveDates` (`[{date: "yyyy-MM-dd", what}]`)
+  and `deskChanges` (concrete changes to session times, settlement, lot sizes, margins, freeze quantities and broker
+  or API rules, the times and numbers as the circular writes them). The prompt says what the desk is: paper orders
+  that never reach an exchange, its own algorithms on its own server, broker data APIs, no clients, not a broker or an
+  algo provider; and that a circular to the exchanges that moves market hours or settlement changes the desk too.
+- **The check.** The verdict and area from the lists (of several areas named, the first listed), a change named when
+  it applies, the quote found in the text as handed over (the title, the number and the excerpt; case, typographic
+  marks and spacing aside, and a quote stitched from passages passes when every passage is there, as the Validator's
+  does), and every date and time in the effective dates, the desk changes and the change written in that text
+  (`CircularFacts`: "December 07, 2026", "7th December 2026", "07-12-2026" and "2026-12-07" are one day; "3:45 p.m."
+  and "15:45" are one time). Each effective date must be a yyyy-MM-dd day the text writes, with what takes effect. A
+  record that fails, or that the answer left out, is sent back once with what failed (`repairedFrom` in the data);
+  only an answer that passes is kept. A batch cut off at the token limit is failed and read again.
+- **Where it shows.** The Reports tab, linked to the circular's page or document, with the dates, the desk changes
+  and **Mark handled**; Today's Needs a look lists those that apply from the last 7 days and are not handled, with
+  when they take effect; the digest's line counts them and names the ones that apply.
+- **The alert** (`ComplianceAlerts`). A report that is ok, dated (`format` 2) and says yes is told once, directly:
+  the title, the source and number, "applies to the desk", the dates, the desk changes and the link, to Telegram's
+  Desk System channel, and spoken by Ira to each linked owner (an `IraDesk` event of kind `compliance`). A
+  `compliance_follow_ups` row is written first, unique per circular, so a second triage, a re-read or a "Run now"
+  sends nothing; the agent's next pass catches up a report written while the API went down. Never for does not apply
+  or unclear, and never for a report written before 18 Oct 2026 (it has no dates).
+- **Handled.** `POST /api/Ai/compliance/{reportId}/handled` with `{"note": "…"}` (admin; the note is required, at most
+  2,000 characters) keeps who, when and what was done; a circular handled before its alert went is never alerted.
+  `GET /api/Ai/compliance` lists every circular that applies with its dates, desk changes, alert and handled mark: the
+  checkup's [Rule changes ahead](checkup.md) reads it.
 
 ### Strategy Researcher
 
@@ -1207,6 +1231,7 @@ the desk's.
 | Risk rules stopped a run | A live run's `RUN_STOPPED` signal signed `risk-guard`: its overall stop loss, trailing stop or target ([the stop pipeline](strategies_module.md)). Recaps, backtests and replays are not told. The net is the run's after charges (`RunPnl`, as the run page shows it). | "Risk rules stopped Ghost Tangent Crossings on NIFTY in admin's account: its overall stop loss was hit. The run ended ₹5,068 down after charges." |
 | Risk rules closed a group | A live run's `CLOSE_GROUP` signed `risk-guard` whose reason is a group rule's. A leg's own stop is not told. | "Risk rules closed group G1 of Fulcrum on BANKNIFTY in coderforchange's account: its group target was hit. The run is ₹1,240 up after charges so far." |
 | A Sentinel incident | An incident at `high` or `critical` when Ira first sees it: its title and the first line of its summary. One that opens at medium and rises later is not told. A reopened one keeps its row and is not told again. | "Sentinel opened a critical incident: Dhan feed silent. No tick for 5 minutes since 10:52 IST." |
+| A circular applies | A `compliance_follow_ups` row with an alert ([the Compliance Triage's alert](#compliance-triage)), once per circular: its source, title and the dates it takes effect. A row made by Mark handled before any alert is not told. | "A SEBI circular applies to the desk: Review of certain aspects of the Closing Auction Session, market timings and settlement methodology for derivatives contracts. It takes effect on 7 December 2026 and 8 February 2027. What changes is on the Desk System channel." |
 
 The other wordings: "The AI Trader exited 2 lots of NIFTY 25100 CE at ₹88.50. Its reason: …", "The AI Trader started
 Ghost Tangent Crossings on BANKNIFTY with 1 lot, run 512. Its reason: …", "The AI Trader stopped run 512, Ghost Tangent

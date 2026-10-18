@@ -6,7 +6,7 @@ here, read-first. No section waits for an answer: the links lead to the pages wh
 
 | Section | What it shows | From |
 |---|---|---|
-| Needs a look | Live incidents (medium and above) with the Incident Explainer's one-line explanation, a check below the 80% pass mark, agents failing, Sentinel late (over 10 min), lessons learnt, open decisions, the Data Curator's high findings from its latest pass (with what breaks and what to do), the circulars the Compliance Triage found apply this week; most serious first | incidents, ai_reports, ai_calls, ai_memories, the decision log |
+| Needs a look | Live incidents (medium and above) with the Incident Explainer's one-line explanation, a check below the 80% pass mark, agents failing, Sentinel late (over 10 min), lessons learnt, open decisions, the Data Curator's high findings from its latest pass (with what breaks and what to do), the circulars the Compliance Triage found apply this week and nobody marked handled, with when they take effect; most serious first | incidents, ai_reports, ai_calls, ai_memories, the decision log |
 | Trading today | Net, gross and charges per account; today's runs, worst net first; recap runs only counted (tests, never in a total) | the live run history (`RecapRuns`) |
 | AI agents | Each built agent: on or off, calls and failures, reports (ok, invalid, failed), last activity, up to four highlights | ai_calls, ai_reports |
 | AI Trader | On or off, shadow or live; today's looks, actions allowed and refused, the shadow book's positions and net after charges; its last three decisions | ai_trader_decisions, ai_trader_shadow_positions |

@@ -80,6 +80,7 @@ the console has every report either way.
 | Disk space | ✓ | | | ✓ | Worth a look under 20% free; to do under 10%. |
 | Archive to Drive | ✓ | | | ✓ | Today's `logs/archive-<date>.log`; the week's seven. |
 | Today's session / holidays this week | ✓ | | | ✓ | The session's hours; holidays in the next seven days, with MCX's half closures. From November, next year's holidays if they are missing. |
+| Rule changes ahead | ✓ | | | ✓ | `GET /api/Ai/compliance`: every circular or broker notice the [Compliance Triage](ai.md#compliance-triage) found applies, with a day it takes effect still ahead and no handled mark, listed with that day. Worth a look when the nearest is 14 days away or fewer; a note before that; fine when there is none. Mark one handled on AI → Reports once the desk is ready for it. SEBI's circular of 15 Oct 2026 (index F&O to 3:45 p.m. from 7 Dec 2026) reached the owner only as a line on Today. On request too. |
 
 ## States and the verdict
 

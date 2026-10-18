@@ -75,7 +75,7 @@ All times are IST, which has no daylight saving.
 | Breadth | `market_breadth_daily` | NSE CM bhavcopy + 52-week file | every 30 minutes, 18:00-23:30, the last 10 sessions | from 2020-01-01 |
 | Participant OI | `market_participant_oi` (Market factors) | NSE `fao_participant_oi_DDMMYYYY.csv` | the evening sync as before | from 2020-01-01 |
 | Scores | the six scoring columns | `python -m analysis news-score` | every 10 minutes, 06:00-23:30, not 08:40-15:40 on trading days | scores what is recorded |
-| Circulars | `regulatory_circulars` | SEBI's circulars page, NSE's circulars API, BSE's notices feed | once a day from 20:30 | NSE's last 7 days on each run; SEBI's latest 25 |
+| Circulars | `regulatory_circulars` | SEBI's circulars page, NSE's circulars API, BSE's notices feed, FYERS's notice board | once a day from 20:30 | NSE's last 7 days on each run; SEBI's latest 25 |
 
 Filings are polled on weekends and holidays too. By the evening of Sunday
 27 Sep 2026 NSE had broadcast 33, the latest at 18:47, and a Sunday filing is
@@ -217,12 +217,20 @@ Saturdays (`RegulatoryCircularsRecorder`, `RegulatoryCircularParsers`; `Regulato
 | SEBI | The circulars page (`sebiweb/home/HomeAction.do?doListing=yes&sid=1&ssid=7&smid=0`): the latest 25, each with its date, title and page. The RSS feed the news recorder reads mixes them with orders and recovery notices, and carries about 30 items | Every circular. For a new one, its page gives the circular number and the PDF its frame shows |
 | NSE | `api/circulars?fromDate=…&toDate=…` for the last 7 days, through `NseWebClient` (cookies, the shared pacer): about 170 a week | The F&O, inspection and compliance, and legal departments; any other whose subject names algos, APIs, derivatives, F&O, options, expiries, lot sizes, margins, position limits, risk controls, trading hours or an index. Listings, mutual funds, debt, SME, EGR and securities lending never. Each with its PDF, or the zip NSE files some in |
 | BSE | The notices feed (`data/xml/notices.xml`) | Notices whose title names the same words |
+| FYERS | Its notice board's sitemap (`fyers.in/notice-board-sitemap.xml`, named in its robots.txt, which allows the board to every crawler), then each notice's page: the board's own page is filled in by script | Notices changed in the last 21 days whose page name names its API, sign-in, rate or freeze limits, orders, SEBI or regulation, timings or sessions, an index or crude; ten pages a run at most. The page's JSON-LD gives the headline, date and section, its main element the text. A notice published before the 21 days is skipped even when the sitemap says it changed (all 1,219 old ones did on 21 Aug 2026) |
 
-What a row holds: the source, a key (`sebi:105081`, `nse:76848`, `bse:20261010-1`; the duplicate check, unique), the
-number, title, department, date, page or document, why it was kept (`department: Futures & Options`, `subject: algo`),
-when it was first seen, and the **excerpt**: the first four pages of the document's text, whitespace made single, at
-most 4,000 characters (PdfPig, a managed PDF reader; from a zip, the circular rather than its annexures). A scanned
-PDF gives no text: the row is kept with its title and the triage judges on that.
+Dhan and Angel One publish no notice board that can be read (checked 18 Oct 2026): Dhan's site has a page of standing
+disclosures and no dated notices, and its MadeForTrade community disallows its feeds in robots.txt; Angel One's
+SmartAPI forum is filled in by script and angelone.in lists market news, not notices to its clients.
+
+What a row holds: the source, a key (`sebi:105081`, `nse:76848`, `bse:20261010-1`, `fyers:<page name>` or its hash
+when longer than the column; the duplicate check, unique), the number (none for a broker's notice), title, department
+(a notice's section), date, page or document, why it was kept (`department: Futures & Options`, `subject: algo`),
+when it was first seen, and the **excerpt**: up to twelve pages of the document's text, whitespace made single, at
+most 16,000 characters (PdfPig, a managed PDF reader; from a zip, the circular rather than its annexures), or a
+notice's page text. A scanned PDF gives no text: the row is kept with its title and the triage judges on that. Until
+18 Oct 2026 the excerpt stopped at four pages and 4,000 characters; a text exactly 4,000 characters long from the last
+30 days is read again whole once (`TextRereadUtc`, ten a run), and the triage writes its report again.
 
 - **Once a day** from 20:30 IST (`MarketIntelligenceSchedule.CircularsDue`), when the day's circulars are out and
   nothing trades. The last run's time is kept in `system_settings` (`marketintel.circulars.lastRunUtc`), set before
@@ -230,8 +238,10 @@ PDF gives no text: the row is kept with its title and the triage judges on that.
   next chance outside 09:00-15:40 on a trading day.
 - **Polite.** One document at a time, two seconds apart, at most 40 a run and 8 MB each; NSE's API is paced with every
   other NSE request. On a usual day that is a few SEBI pages and PDFs and a handful of NSE documents.
-- **Insert-only.** A circular already stored is skipped without fetching its page or document again. One source
-  failing costs only its own circulars; the run's status is on `GET status` as the `circulars` recorder.
+- **Insert-only.** A circular already stored is skipped without fetching its page or document again (but for the
+  one re-read of a text the old cap cut short). A broker's notice whose page cannot be read is not stored, and is
+  tried again the next day. One source failing costs only its own circulars; the run's status is on `GET status` as
+  the `circulars` recorder.
 - **Switch:** `MarketIntelligence:CircularsEnabled`.
 
 Known gaps: BSE's feed carries only its latest notices (one on Saturday 10 Oct 2026), so a busy BSE day can scroll
