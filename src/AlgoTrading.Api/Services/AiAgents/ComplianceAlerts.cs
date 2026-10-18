@@ -5,6 +5,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using AlgoTrading.Infrastructure.Services.MarketIntelligence;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services.AiAgents;
@@ -64,6 +65,13 @@ public sealed class ComplianceAlerts(TradingDbContext db, TelegramSender telegra
         if (circular is null) return null;
 
         var now = _time.GetUtcNow().UtcDateTime;
+        if (AwaitsRereading(circular, report, now))
+        {
+            // The one alert would go without the dates on the pages the old cap cut off: it waits for the text read
+            // whole and the triage written again on it, and goes then (CatchUpAsync).
+            return null;
+        }
+
         var row = new ComplianceFollowUp
         {
             CircularId = circularId,
@@ -89,6 +97,20 @@ public sealed class ComplianceAlerts(TradingDbContext db, TelegramSender telegra
         logger.LogInformation("Compliance alert for circular {Circular} (report {Report}) {How}", circularId, report.Id,
             row.AlertDelivered ? "went to the Desk System channel" : "did not reach Telegram; Ira and the checkup still have it");
         return row;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="report"/> was written on less than the circular's whole text: the text was cut at the old
+    /// cap and the recorder will still read it again (<see cref="RegulatoryCircularsRecorder.LegacyTextChars"/>, within
+    /// <see cref="RegulatoryCircularsRecorder.RereadDays"/>), or it was read again after the report, which the triage
+    /// then writes again.
+    /// </summary>
+    public static bool AwaitsRereading(RegulatoryCircular c, AiReport report, DateTime nowUtc)
+    {
+        if (c.TextRereadUtc is DateTime reread) return report.UpdatedUtc < reread;
+        return c.DocumentUrl.Length > 0 && !RegulatoryCircularSource.IsBroker(c.Source)
+            && c.Excerpt.Length == RegulatoryCircularsRecorder.LegacyTextChars
+            && c.FirstSeenUtc >= nowUtc.AddDays(-RegulatoryCircularsRecorder.RereadDays);
     }
 
     /// <summary>

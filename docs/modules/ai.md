@@ -844,7 +844,8 @@ Reads the week's circulars (`ComplianceTriageAgent`, extract tier), recorded onc
   Desk System channel, and spoken by Ira to each linked owner (an `IraDesk` event of kind `compliance`). A
   `compliance_follow_ups` row is written first, unique per circular, so a second triage, a re-read or a "Run now"
   sends nothing; the agent's next pass catches up a report written while the API went down. Never for does not apply
-  or unclear, and never for a report written before 18 Oct 2026 (it has no dates).
+  or unclear, and never for a report written before 18 Oct 2026 (it has no dates). A report written on a text the old
+  cap cut short waits for the text read whole and the triage written again on it, so the one alert carries the dates.
 - **Handled.** `POST /api/Ai/compliance/{reportId}/handled` with `{"note": "…"}` (admin; the note is required, at most
   2,000 characters) keeps who, when and what was done; a circular handled before its alert went is never alerted.
   `GET /api/Ai/compliance` lists every circular that applies with its dates, desk changes, alert and handled mark: the

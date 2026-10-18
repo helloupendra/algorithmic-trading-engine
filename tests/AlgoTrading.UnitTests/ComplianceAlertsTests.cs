@@ -112,6 +112,31 @@ public class ComplianceAlertsTests
     }
 
     [Fact]
+    public async Task A_circular_whose_text_the_old_cap_cut_waits_for_its_reread_before_its_one_alert()
+    {
+        var rig = new Rig();
+        var row = await rig.Db.RegulatoryCirculars.SingleAsync(c => c.Id == 41);
+        row.DocumentUrl = "https://www.sebi.gov.in/sebi_data/attachdocs/oct-2026/1792079571420.pdf";
+        row.Excerpt = new string('x', AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder.LegacyTextChars);
+        await rig.Db.SaveChangesAsync();
+        var report = rig.Report(41, ComplianceTriageAgent.Check(AiOfflineAgentsTests.Record23843(), AiOfflineAgentsTests.Sebi23843()));
+
+        // A "Run now" before the 20:30 re-read: the alert would go without the dates on page 6.
+        Assert.Null(await rig.Alerts.RaiseAsync(report, CancellationToken.None));
+        Assert.Empty(await rig.Db.ComplianceFollowUps.ToListAsync());
+
+        // Read again whole after that report: the triage writes it again first, so the pass before still waits.
+        row.TextRereadUtc = Now.AddMinutes(1);
+        await rig.Db.SaveChangesAsync();
+        Assert.Equal(0, await rig.Alerts.CatchUpAsync(CancellationToken.None));
+
+        report.UpdatedUtc = Now.AddMinutes(2);
+        await rig.Db.SaveChangesAsync();
+        Assert.Equal(1, await rig.Alerts.CatchUpAsync(CancellationToken.None));
+        Assert.Single(rig.Telegram.Sent);
+    }
+
+    [Fact]
     public async Task The_triage_alerts_as_it_writes_and_a_second_triage_of_the_same_circular_sends_nothing()
     {
         var ai = Build();
