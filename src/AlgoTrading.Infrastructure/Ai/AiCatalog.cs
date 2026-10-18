@@ -1092,6 +1092,7 @@ public static partial class AiCatalog
         : string.Equals(key, Memory, StringComparison.OrdinalIgnoreCase) ? MemoryAgent
         : string.Equals(key, AiTraderReflect, StringComparison.OrdinalIgnoreCase) ? AiTraderReflectAgent
         : string.Equals(key, AiTraderLessonCheck, StringComparison.OrdinalIgnoreCase) ? AiTraderLessonCheckAgent
+        : string.Equals(key, PortfolioAnalyst, StringComparison.OrdinalIgnoreCase) ? PortfolioAnalystAgent
         : Agents.FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>A name for any agent key a call carries, known or not.</summary>
