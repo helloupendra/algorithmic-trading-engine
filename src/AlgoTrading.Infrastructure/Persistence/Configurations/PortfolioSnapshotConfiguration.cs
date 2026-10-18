@@ -13,6 +13,9 @@ public class PortfolioSnapshotConfiguration : IEntityTypeConfiguration<Portfolio
 
         builder.HasKey(x => x.Id);
 
+        // Nothing of a user's outlives their account: deleting the user deletes their tokens and their holdings.
+        builder.HasOne<AppUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+
         // The report reads each broker's newest row, the history a user's rows by time, and retention every row by time.
         builder.HasIndex(x => new { x.UserId, x.Broker, x.TakenUtc }, "IX_portfolio_snapshots_UserId_Broker_TakenUtc");
         builder.HasIndex(x => x.TakenUtc, "IX_portfolio_snapshots_TakenUtc");

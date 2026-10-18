@@ -4857,6 +4857,24 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.PortfolioConnection", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.PortfolioSnapshot", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackageItem", b =>
                 {
                     b.HasOne("AlgoTrading.Domain.Entities.StrategyPackage", "Package")

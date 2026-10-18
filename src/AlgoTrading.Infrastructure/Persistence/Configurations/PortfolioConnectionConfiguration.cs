@@ -13,6 +13,9 @@ public class PortfolioConnectionConfiguration : IEntityTypeConfiguration<Portfol
 
         builder.HasKey(x => x.Id);
 
+        // Nothing of a user's outlives their account: deleting the user deletes their tokens and their holdings.
+        builder.HasOne<AppUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+
         // One link per user per broker: a second would leave two tokens for one account and two copies of its holdings.
         builder.HasIndex(x => new { x.UserId, x.Broker }, "IX_portfolio_connections_UserId_Broker").IsUnique();
 
