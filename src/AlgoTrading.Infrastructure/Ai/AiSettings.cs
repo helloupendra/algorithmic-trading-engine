@@ -360,12 +360,19 @@ public sealed class AiBedrockOpenSettings
 
 /// <summary>
 /// The <c>Ai:Voice</c> section: voice notes to the desk's Telegram assistant and questions spoken on the console's
-/// AI → Assistant, written down by Mistral's Voxtral on Bedrock's OpenAI-compatible endpoint (in
-/// <see cref="AiBedrockSettings.Region"/>), and answers spoken back by Amazon Polly. As for Bedrock, no key here or
-/// anywhere in the desk's files: both are signed with the server's AWS role.
+/// AI → Assistant, written down by Amazon Transcribe streaming (<see cref="AmazonTranscribeClient"/>; Mistral's Voxtral
+/// on Bedrock's OpenAI-compatible endpoint until Bedrock stopped taking its audio in October 2026), and answers spoken
+/// back by Amazon Polly. As for Bedrock, no key here or anywhere in the desk's files: all are signed with the server's
+/// AWS role.
 /// </summary>
 public sealed class AiVoiceSettings
 {
+    /// <summary><see cref="TranscribeProvider"/> for Amazon Transcribe streaming.</summary>
+    public const string AmazonTranscribe = "transcribe";
+
+    /// <summary><see cref="TranscribeProvider"/> for Mistral's Voxtral on Bedrock (<see cref="TranscribeModel"/>).</summary>
+    public const string Voxtral = "voxtral";
+
     /// <summary>
     /// Off: a voice note gets one line asking for the question typed, the console's voice endpoints answer 503, and
     /// nothing calls AWS for either.
@@ -373,8 +380,56 @@ public sealed class AiVoiceSettings
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// The audio model, by Bedrock's id. Voxtral Small: Voxtral Mini (<c>mistral.voxtral-mini-3b-2507</c>) answered the
-    /// question in the voice note instead of writing it down (11 Oct 2026).
+    /// What writes speech down: <see cref="AmazonTranscribe"/> (the default from 22 Oct 2026) or <see cref="Voxtral"/>.
+    /// Voxtral on Bedrock's Mantle endpoint answered every voice note with a 400, "Model does not support audio
+    /// modality", from mid-October 2026, and AWS marked the model Legacy; it is kept for the day AWS takes its audio
+    /// again. Any other value fails each transcription with a reason naming this setting.
+    /// </summary>
+    public string TranscribeProvider { get; set; } = AmazonTranscribe;
+
+    /// <summary>Whether <see cref="TranscribeProvider"/> names Amazon Transcribe.</summary>
+    public bool UsesAmazonTranscribe => string.Equals(TranscribeProvider?.Trim(), AmazonTranscribe, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether <see cref="TranscribeProvider"/> names Voxtral.</summary>
+    public bool UsesVoxtral => string.Equals(TranscribeProvider?.Trim(), Voxtral, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Where Amazon Transcribe is asked. Mumbai: the server's own region, which the role's permission is limited to
+    /// (<c>aws:RequestedRegion</c>), and where both languages stream.
+    /// </summary>
+    public string TranscribeRegion { get; set; } = "ap-south-1";
+
+    /// <summary>
+    /// The languages Amazon Transcribe may hear, comma-separated, as its codes. Two or more: it identifies them itself
+    /// (<see cref="TranscribeIdentifyMultiple"/>). One: that language only. Hindi comes back in Devanagari, English in
+    /// Latin letters.
+    /// </summary>
+    public string TranscribeLanguages { get; set; } = "hi-IN,en-IN";
+
+    /// <summary>
+    /// On: Transcribe may switch language inside one recording (<c>identify-multiple-languages</c>), as Hinglish does.
+    /// Off: it picks one language for the whole recording (<c>identify-language</c>), helped by
+    /// <see cref="TranscribePreferredLanguage"/>.
+    /// </summary>
+    public bool TranscribeIdentifyMultiple { get; set; } = true;
+
+    /// <summary>
+    /// The language Transcribe leans to while it identifies one (<c>preferred-language</c>). Sent only with
+    /// <c>identify-language</c>: the API reference allows it with nothing else.
+    /// </summary>
+    public string TranscribePreferredLanguage { get; set; } = "hi-IN";
+
+    /// <summary>
+    /// US dollars a second of audio streamed: Amazon Transcribe's standard streaming price in Asia Pacific (Mumbai),
+    /// $0.0001667 a second ($0.01 a minute), as AWS's price list published it on 11 Sep 2026; billed in one-second
+    /// increments with no minimum. For the cost line of each call; AWS bills per its own page.
+    /// </summary>
+    public decimal TranscribeUsdPerSecond { get; set; } = 0.0001667m;
+
+    /// <summary>
+    /// The audio model when <see cref="TranscribeProvider"/> is <see cref="Voxtral"/>, by Bedrock's id. Voxtral Small:
+    /// Voxtral Mini (<c>mistral.voxtral-mini-3b-2507</c>) answered the question in the voice note instead of writing it
+    /// down (11 Oct 2026).
     /// </summary>
     public string TranscribeModel { get; set; } = "mistral.voxtral-small-24b-2507";
 
@@ -431,7 +486,7 @@ public sealed class AiVoiceSettings
 
     /// <summary>
     /// Hands-free utterances one user may have written down in any minute (console, AI → Assistant). Each is one
-    /// Voxtral call, whether or not it was said to the assistant; past this the API answers 429 with Retry-After.
+    /// transcription, whether or not it was said to the assistant; past this the API answers 429 with Retry-After.
     /// They have this budget of their own instead of <see cref="AiSettings.PerUserPer10Min"/>, which six a minute would
     /// spend in five minutes of talk at the desk. 0 switches hands-free off.
     /// </summary>

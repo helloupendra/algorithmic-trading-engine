@@ -27,16 +27,31 @@ public interface IBedrockRequestSigner
 }
 
 /// <summary>
+/// A URL signed in its query string with AWS Signature Version 4, for a service reached by a link rather than a signed
+/// request: Amazon Transcribe's streaming WebSocket (<see cref="AmazonTranscribeClient"/>). The seam a test replaces.
+/// </summary>
+public interface IAwsUrlPresigner
+{
+    /// <summary>
+    /// <paramref name="url"/> (an <c>https</c> GET) with the <c>X-Amz-*</c> query parameters that let it be used for
+    /// <paramref name="lifetime"/>, scoped to <paramref name="service"/> in <paramref name="region"/>, with the session
+    /// token when the credentials are a role's. Throws <see cref="AiAttemptFailedException"/> when it cannot sign.
+    /// </summary>
+    Task<Uri> PresignAsync(Uri url, string region, string service, TimeSpan lifetime, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// SigV4 for Bedrock's OpenAI-compatible endpoint (service <c>bedrock-mantle</c>) and for Amazon Polly (<c>polly</c>),
-/// through AWSSDK.Core's signer, with the default AWS credential chain: environment, profile, then on the server the EC2
-/// instance profile (IMDSv2). The desk passes no key and reads none from its settings or <c>.env</c>.
+/// and presigned URLs for Amazon Transcribe streaming (<c>transcribe</c>), through AWSSDK.Core's signer, with the default
+/// AWS credential chain: environment, profile, then on the server the EC2 instance profile (IMDSv2). The desk passes no
+/// key and reads none from its settings or <c>.env</c>.
 /// </summary>
 /// <remarks>
 /// The credentials are looked up on each request, never at start: a desk that never reaches an open model never looks
 /// for them. The chain caches what it finds, and the instance profile's credentials refresh themselves before they
 /// expire, so each signature is made with the keys of the moment.
 /// </remarks>
-public sealed class AwsSigV4BedrockSigner : IBedrockRequestSigner
+public sealed class AwsSigV4BedrockSigner : IBedrockRequestSigner, IAwsUrlPresigner
 {
     /// <summary>The service name a signature is scoped to.</summary>
     public const string Service = "bedrock-mantle";
@@ -80,10 +95,33 @@ public sealed class AwsSigV4BedrockSigner : IBedrockRequestSigner
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not AiAttemptFailedException)
         {
-            // Most often no credentials at all: not the EC2 server, or an instance without its profile.
-            string why = string.Join(' ', BedrockRefusals.Mask(ex.Message).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            throw new AiAttemptFailedException($"unreachable (AWS: could not sign the request: {(why.Length <= 160 ? why : why[..157] + "...")})");
+            throw CouldNotSign(ex);
         }
+    }
+
+    public async Task<Uri> PresignAsync(Uri url, string region, string service, TimeSpan lifetime, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var credentials = await _credentials(cancellationToken);
+            var presigned = await AWSSigV4Signer.PresignAsync(
+                new AWSSigningRequest { HttpMethod = HttpMethod.Get, RequestUri = url },
+                new AWSSigV4Parameters { Credentials = credentials, Region = RegionEndpoint.GetBySystemName(region), Service = service },
+                lifetime,
+                cancellationToken);
+            return presigned.Uri;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not AiAttemptFailedException)
+        {
+            throw CouldNotSign(ex);
+        }
+    }
+
+    /// <summary>Most often no credentials at all: not the EC2 server, or an instance without its profile.</summary>
+    private static AiAttemptFailedException CouldNotSign(Exception ex)
+    {
+        string why = string.Join(' ', BedrockRefusals.Mask(ex.Message).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return new AiAttemptFailedException($"unreachable (AWS: could not sign the request: {(why.Length <= 160 ? why : why[..157] + "...")})");
     }
 
     private static Task<AWSCredentials> DefaultChainAsync(CancellationToken cancellationToken) =>

@@ -34,13 +34,20 @@ public static class AiRegistration
         // looks for credentials, until a chain reaches one of them: each request is then signed with SigV4 by the
         // machine's default AWS chain.
         services.AddHttpClient(BedrockOpenChatClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
-        services.AddSingleton<IBedrockRequestSigner>(_ => new AwsSigV4BedrockSigner());
+        services.AddSingleton(_ => new AwsSigV4BedrockSigner());
+        services.AddSingleton<IBedrockRequestSigner>(sp => sp.GetRequiredService<AwsSigV4BedrockSigner>());
+        services.AddSingleton<IAwsUrlPresigner>(sp => sp.GetRequiredService<AwsSigV4BedrockSigner>());
         services.AddSingleton<BedrockOpenChatClient>();
 
         // Amazon Polly for the Telegram assistant's spoken replies (Ai:Voice), signed by the same signer and role. Like
         // the open models, nothing calls it, or looks for credentials, until an owner's voice note is answered.
         services.AddHttpClient(PollySpeechClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<PollySpeechClient>();
+
+        // Amazon Transcribe streaming writes the voice notes down (Ai:Voice:TranscribeProvider), over a WebSocket whose
+        // URL the same signer presigns with the same role. Nothing connects until a voice note or recording arrives.
+        services.AddSingleton<ITranscribeTransport>(_ => new WebSocketTranscribeTransport());
+        services.AddSingleton<AmazonTranscribeClient>();
         services.AddSingleton(sp => new AiChatRouter(
             sp.GetRequiredService<NvidiaChatClient>(), sp.GetRequiredService<BedrockClaudeClient>(), sp.GetRequiredService<BedrockOpenChatClient>()));
         services.AddSingleton<IBedrockRuntimeInvoker, AwsBedrockRuntimeInvoker>();
