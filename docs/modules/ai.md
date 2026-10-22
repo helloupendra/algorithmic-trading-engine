@@ -293,8 +293,9 @@ sets explicit breakpoints). Tool use, thinking, prompt caching with explicit bre
    and Haiku 5.5, and to Titan Text Embeddings V2.
 2. **The instance role.** The role of the EC2 instance profile allows `bedrock-mantle:CreateInference` (Claude through
    the Messages API) and `bedrock:InvokeModel` on Titan Text Embeddings V2, and nothing else. No access key is made.
-   The open models answered with the role as it was on 10 Oct: nothing more to enable for them. Spoken Telegram replies
-   need one more permission, `polly:SynthesizeSpeech` ([Voice](#voice-jarvis)).
+   The open models answered with the role as it was on 10 Oct: nothing more to enable for them. Voice needs two more:
+   `polly:SynthesizeSpeech` for spoken replies and `transcribe:StartStreamTranscriptionWebSocket` for writing voice
+   notes down ([Voice](#voice-ira)).
 3. **A budget alarm.** An AWS Budgets monthly cost budget with an e-mail alert, so a runaway loop is seen the same day.
 4. Then `AI_BEDROCK_ENABLED=true` in the server's `.env` and a deploy. Test each Claude model once from the Models tab,
    then run the re-embedding.
@@ -1013,9 +1014,9 @@ The linked owner can ask by voice (owner, 11 Oct 2026): a Telegram voice note in
 P&L kya hai?", is answered like a typed question, in text and, when Amazon Polly may be asked, in a short spoken reply
 (`TelegramVoice`). The same voice answers on the console's AI → Assistant ([On the console](#on-the-console)).
 
-Both go through one shared service, `AiVoiceService`: the instruction with the desk's words and the assistant's name,
-the Voxtral call, the spoken-text shortening (`VoiceText.Spoken`), the Polly call with its one-hour back-off, and the
-`voice-transcribe` and `voice-speak` rows. Each side brings its own audio and words its own replies: Telegram downloads
+Both go through one shared service, `AiVoiceService`: the speech-to-text call (Amazon Transcribe streaming, or Voxtral
+behind a setting; [Speech-to-text](#speech-to-text-amazon-transcribe)), the spoken-text shortening
+(`VoiceText.Spoken`), the Polly call with its one-hour back-off, and the `voice-transcribe` and `voice-speak` rows. Each side brings its own audio and words its own replies: Telegram downloads
 and decodes its voice notes; the console records WAV in the browser. The name (`ai.voice.name` over `Ai:Voice:Name`)
 and the back-off are the service's, so they are the same on both: a name set with `/name` is heard on the console
 from its next recording, and a Polly refusal seen on either side pauses spoken replies on both.
@@ -1024,29 +1025,37 @@ How one voice note flows:
 
 1. **Who and how long.** Only a linked owner's private chat. A stranger's voice note gets nothing, as a stranger's
    question does. A note over `MaxSeconds` (120) or `MaxBytes` (2 MB), by Telegram's own figures, gets a polite
-   refusal and is not downloaded. An MP3, OGG or WAV audio file is taken too; other audio is refused in words.
+   refusal and is not downloaded. An OGG or WAV audio file is taken too, and an MP3 one while Voxtral writes speech
+   down (the desk cannot decode MP3 into the PCM Amazon Transcribe takes, so it is refused in words before download);
+   other audio is refused in words.
 2. **Download.** `getFile`, then the file's URL, with the bot's token, read to at most `MaxBytes`. Neither URL is
    logged.
-3. **Decode.** A voice note is OGG/Opus, which Bedrock's endpoint refuses (a 400), so it is decoded in-process to
-   16 kHz mono 16-bit WAV (`OggOpusDecoder`): Concentus decodes it at 48 kHz and its Speex resampler takes it to
-   16 kHz. Concentus asked for 16 kHz directly returned silence for a 48 kHz note at 24 kb/s (Opus's hybrid mode), so
-   it is never asked that. No ffmpeg, no process, nothing on disk. MP3 and WAV go as they are. The packages are pure
-   managed code: Concentus 2.2.2 (BSD-3-Clause, the Opus licence) and Concentus.Oggfile 1.0.7 (MIT).
-4. **Transcribe.** Mistral's Voxtral Small (`Ai:Voice:TranscribeModel`) on Bedrock's OpenAI-compatible endpoint in
-   `Ai:Bedrock:Region`, one request, not streamed, the audio inline as base64, signed like the open models
-   (`BedrockOpenChatClient.TranscribeAsync`). The instruction asks for the words verbatim, Hindi in Roman script, then
-   lists the desk's words: the strategies' names as said ("Ghost Tangent Crossings", "Fulcrum Straddle Buy"), from the
-   strategy catalog, or from the morning plan when the catalog does not answer within 3 s, and NIFTY, BANKNIFTY,
-   SENSEX, P&L and Ira. Without them "Fulcrum" came back "Phalacrom" and "Ghost" came back "GOAT". It may still
-   answer in Devanagari; the answering model reads it. Voxtral Mini answered the question instead of writing it down,
-   so it is not used.
+3. **Decode.** A voice note is OGG/Opus, so it is decoded in-process to 16 kHz mono 16-bit WAV (`OggOpusDecoder`):
+   Concentus decodes it at 48 kHz and its Speex resampler takes it to 16 kHz. Concentus asked for 16 kHz directly
+   returned silence for a 48 kHz note at 24 kb/s (Opus's hybrid mode), so it is never asked that. For Amazon
+   Transcribe the WAV's sound is then taken as raw PCM (`PcmAudio.FromWav`, which also mixes down and resamples a WAV
+   audio file of any rate, width or channel count through the same resampler). No ffmpeg, no process, nothing on
+   disk. The packages are pure managed code: Concentus 2.2.2 (BSD-3-Clause, the Opus licence) and Concentus.Oggfile
+   1.0.7 (MIT).
+4. **Transcribe.** Amazon Transcribe streaming in `ap-south-1`, Hindi and English told apart by Transcribe itself
+   ([Speech-to-text](#speech-to-text-amazon-transcribe)). It takes no instruction: Hindi comes back in Devanagari,
+   English in Latin letters, and the desk's own words (strategy names) are not hinted. With
+   `Ai:Voice:TranscribeProvider` set to `voxtral`, Mistral's Voxtral Small (`Ai:Voice:TranscribeModel`) on Bedrock's
+   OpenAI-compatible endpoint in `Ai:Bedrock:Region` is asked instead, one request, not streamed, the audio inline as
+   base64, signed like the open models (`BedrockOpenChatClient.TranscribeAsync`). Its instruction asks for the words
+   verbatim, Hindi in Roman script, then lists the desk's words: the strategies' names as said ("Ghost Tangent
+   Crossings", "Fulcrum Straddle Buy"), from the strategy catalog, or from the morning plan when the catalog does not
+   answer within 3 s, and NIFTY, BANKNIFTY, SENSEX, P&L and Ira. Without them "Fulcrum" came back "Phalacrom" and
+   "Ghost" came back "GOAT". Voxtral Mini answered the question instead of writing it down, so it is not used.
 5. **Heard.** The bot first sends `🎙 "…"` with the transcript, so a mishearing shows before the answer it led to.
 6. **Asked as typed.** The transcript goes through the same handling as typed text: the chat's agent, its
    conversation, memories, tools and chains, 👍 and 👎, and a voice reply to "What should it have said?" is a
-   correction. A transcript that starts with an agent's prefix word, after an optional "Ira", is that prefix:
-   "Trader, why did you buy?" or "slash trader …" is `/trader why did you buy?`, and "Trader." alone switches to it.
-   No other command is ever run by voice: a leading slash is dropped, so "/new" or "/unlink" heard is a question. The
-   word must come out in Latin letters; one written in Devanagari is asked as is.
+   correction. A transcript that starts with an agent's prefix word, after an optional address ("Ira", "Hey Ira",
+   "इरा"), is that prefix: "Trader, why did you buy?" or "slash trader …" is `/trader why did you buy?`, and
+   "Trader." alone switches to it. The address is found by sound, as hands-free finds it, so Devanagari counts. No
+   other command is ever run by voice: a leading slash is dropped, so "/new" or "/unlink" heard is a question. The
+   prefix word itself must come out in Latin letters; one written in Devanagari is asked as is, and so is any Hindi:
+   the answering model reads Devanagari.
 7. **One line in the prompt.** A voice question's prompt gets one line after the agent's own (`AiAskInput.PromptNote`):
    it was a voice note written down by machine, so a name may be misheard, and the owner may call it Ira
    (`Ai:Voice:Name`; empty leaves the name out). No persona is rewritten.
@@ -1061,8 +1070,9 @@ The same voice on the web console (step 2, 11 Oct 2026): a mic beside Ask, and a
 
 **Talk.** The browser records the question with the Web Audio API and makes 16 kHz mono 16-bit WAV itself
 (`web/src/lib/wav.ts`, `micRecorder.ts`): MediaRecorder would give webm, ogg or mp4 depending on the browser, and
-Voxtral takes WAV or MP3 only. The samples come from an AudioWorklet (`pcmTap.worklet.js`, served from the console's
-own origin, as the content-security policy requires), or from a ScriptProcessor where a browser has no worklet.
+the API reads WAV only (Amazon Transcribe is sent its sound as PCM; Voxtral took WAV or MP3). The samples come from
+an AudioWorklet (`pcmTap.worklet.js`, served from the console's own origin, as the content-security policy requires),
+or from a ScriptProcessor where a browser has no worklet.
 
 - Hold the mic and speak: letting go sends. Or click it (Enter or Space from the keyboard): it records until Send;
   the mic again, or Esc, cancels. It stops at two minutes and sends what it has.
@@ -1159,13 +1169,14 @@ while the mic button is recording or its recording is being written down, and wh
 resumes 0.6 s after, so the tail of a reply is not taken for the owner. Anything half-heard when a pause starts is
 dropped. It also pauses while the tab is hidden.
 
-**Cost.** Each utterance is one Voxtral call, whether or not it was said to Ira: talk at the desk, a phone call or a TV
-all cost calls. So utterances have a budget, `Ai:Voice:HandsFreePerMinute` (6) per user per minute, enforced by the
+**Cost.** Each utterance is one transcription, whether or not it was said to Ira: talk at the desk, a phone call or a
+TV all cost calls. So utterances have a budget, `Ai:Voice:HandsFreePerMinute` (6) per user per minute, enforced by the
 API (429 with Retry-After) and kept by the page itself, which pauses with "Paused: too much speech" and a countdown
 before the API has to refuse. The budget is their own: the question limit (`PerUserPer10Min`, 30 in ten minutes)
 would be spent by six a minute in five minutes of talk, and would then refuse the owner's typed questions too. An
 addressed question still counts toward the question limit when it is asked, as a typed one does. At six a minute, an
-hour of constant talk is at most 360 Voxtral calls of up to 20 s each.
+hour of constant talk is at most 360 transcriptions of up to 20 s each: two hours of sound, about $1.20 at Amazon
+Transcribe's list price in Mumbai.
 
 **Graceful states.** A refused microphone, no microphone or an http page turns hands-free off with the reason (and
 what to do). Voice switched off (503), a signed-out session, or an API from before hands-free (no `addressed` in the
@@ -1179,7 +1190,13 @@ still asks the viewer) and play a `blob:` audio URL (`media-src 'self' blob:`).
 | `Ai:Voice` | Default | Meaning |
 | --- | --- | --- |
 | `Enabled` | `true` | Off: a voice note gets one line asking for the question typed, the console's voice endpoints answer 503, and nothing calls AWS. `.env`: `AI_VOICE_ENABLED=false` |
-| `TranscribeModel` | `mistral.voxtral-small-24b-2507` | The audio model, by Bedrock's id |
+| `TranscribeProvider` | `transcribe` | What writes speech down: `transcribe` (Amazon Transcribe streaming) or `voxtral` (Voxtral on Bedrock); anything else fails each transcription with a reason naming this setting. `.env`: `AI_VOICE_TRANSCRIBE_PROVIDER=voxtral` |
+| `TranscribeRegion` | `ap-south-1` | Where Amazon Transcribe is asked; the role's permission is limited to it |
+| `TranscribeLanguages` | `hi-IN,en-IN` | The languages Transcribe may hear: two or more are identified, one is fixed |
+| `TranscribeIdentifyMultiple` | `true` | On: `identify-multiple-languages` (switching within a recording). Off: `identify-language` (one for the recording) with `TranscribePreferredLanguage` |
+| `TranscribePreferredLanguage` | `hi-IN` | Sent only with `identify-language`, as the API reference allows |
+| `TranscribeUsdPerSecond` | 0.0001667 | Transcribe's standard streaming price in Mumbai, for the cost line |
+| `TranscribeModel` | `mistral.voxtral-small-24b-2507` | Voxtral's model, by Bedrock's id, when `TranscribeProvider` is `voxtral` |
 | `SpeakReplies` | `true` | Off: answers are text only, on Telegram and on the console (whatever the viewer's switch). `.env`: `AI_VOICE_SPEAK_REPLIES=false` |
 | `PollyVoice`, `PollyEngine`, `PollyLanguage`, `PollyRegion` | `Kajal`, `neural`, `en-IN`, `ap-south-1` | The spoken reply's voice |
 | `PollyUsdPerMillionChars` | 16 | Polly's neural list price, for the cost line |
@@ -1188,17 +1205,22 @@ still asks the viewer) and play a `blob:` audio URL (`media-src 'self' blob:`).
 | `MaxSpokenChars` | 600 | The longest spoken reply |
 | `Name` | `Ira` | What the owner may call the assistant |
 | `NameAliases` | empty | Other spellings that count as the name in a hands-free utterance |
-| `HandsFreePerMinute` | 6 | Hands-free utterances one user may have written down a minute (each is one Voxtral call); 0 switches hands-free off |
+| `HandsFreePerMinute` | 6 | Hands-free utterances one user may have written down a minute (each is one transcription); 0 switches hands-free off |
 
 **Records.** Each transcription is a row on the Calls tab (agent `voice-transcribe`, source `telegram` or `console`,
-model `bedrock-oss:mistral.voxtral-small-24b-2507`) with the instruction, the transcript, the seconds and the tokens.
-The audio is never stored, only a line describing it (length, size, format). The answer is the agent's own row, as
-for a typed question. Each spoken reply is a row too (agent `voice-speak`, model `polly:Kajal/neural`) with the text
-spoken and its characters priced at Polly's neural list price, $16 per million characters (a list price; AWS bills per
-its own page). Voxtral's price is not in the desk's tables, so its cost shows in tokens only.
+model `amazon-transcribe`, provider "Amazon Transcribe") with the parameters in words, the transcript and the seconds.
+The audio is never stored, only a line describing it: length, size, how it was sent, the languages heard and the
+cost, for example `[voice note, 4 s, 11.2 KB, sent as 16 kHz PCM; heard as hi-IN then en-IN; about $0.000667 at list
+price ($0.0001667 a second); the audio is not kept]`. Its request reads `GET wss://transcribestreaming.ap-south-1…`.
+With Voxtral the model is `bedrock-oss:mistral.voxtral-small-24b-2507` and the row holds the instruction and the
+tokens instead (Voxtral's price is not in the desk's tables). The answer is the agent's own row, as for a typed
+question. Each spoken reply is a row too (agent `voice-speak`, model `polly:Kajal/neural`) with the text spoken and
+its characters priced at Polly's neural list price, $16 per million characters (a list price; AWS bills per its own
+page).
 
-**The one permission.** Spoken replies need the server's role (`openfno-ec2-bedrock`) to allow Polly. Add this
-statement to its policy:
+**The permissions.** Writing voice notes down needs the server's role (`openfno-ec2-bedrock`) to allow Amazon
+Transcribe streaming over a WebSocket in Mumbai ([Speech-to-text](#speech-to-text-amazon-transcribe)). Spoken replies
+need it to allow Polly. Add this statement to its policy:
 
 ```json
 {"Effect":"Allow","Action":"polly:SynthesizeSpeech","Resource":"*"}
@@ -1209,13 +1231,85 @@ start) what is missing on Telegram and by a 503 in words on the console, Polly i
 either), the row is `refused`, not `failed`, and the log line is Information. Once the permission is added, spoken
 replies start within the hour, with no deploy. (Added 11 Oct 2026: Polly now speaks from the server.)
 
-**Nothing calls AWS by itself.** No test, CI job, health probe or startup check reaches Bedrock, Polly or Telegram: the
-tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder, and answer from a scripted Mantle, a
-scripted Polly and a scripted bot; the real signer is tried only with made-up credentials, sending nothing. The
-console's endpoints are tested the same way, on WAV recordings made in the test, with the same scripted Mantle and
-Polly; the browser's WAV encoder and voice client are tested in `web/src/lib/wav.test.ts` and `voice.test.ts`.
-Hands-free's wake matcher, budget and endpoints are tested in `AiVoiceHandsFreeTests` (on WAV made in the test and a
-scripted Bedrock), and its voice-activity detector on synthetic speech, coughs and fans in `web/src/lib/vad.test.ts`.
+**Nothing calls AWS by itself.** No test, CI job, health probe or startup check reaches Bedrock, Transcribe, Polly or
+Telegram: the tests (`AiVoiceTests`) decode voice notes they make with Concentus's own encoder, and answer from a
+scripted Transcribe stream (`TranscribeTestKit`), a scripted Mantle, a scripted Polly and a scripted bot; the real
+signer is tried only with made-up credentials, sending nothing. The console's endpoints are tested the same way, on
+WAV recordings made in the test; the browser's WAV encoder and voice client are tested in `web/src/lib/wav.test.ts`
+and `voice.test.ts`. Hands-free's wake matcher, budget and endpoints are tested in `AiVoiceHandsFreeTests` (on WAV made
+in the test, a scripted Bedrock and a scripted Transcribe), and its voice-activity detector on synthetic speech, coughs
+and fans in `web/src/lib/vad.test.ts`. The Transcribe client is tested in `AmazonTranscribeClientTests`, the framing in
+`AwsEventStreamTests` and the PCM conversion in `PcmAudioTests` ([Speech-to-text](#speech-to-text-amazon-transcribe)).
+
+### Speech-to-text: Amazon Transcribe
+
+**What changed, and why (22 Oct 2026).** Voxtral Small on Bedrock's OpenAI-compatible (Mantle) endpoint wrote the
+voice notes down from 11 Oct. From about mid-October Mantle answered every one with a 400, "Model does not support
+audio modality", with the audio part first or second, and AWS marked the model Legacy; its model card now lists speech
+input under the Converse API only. Converse (`bedrock-runtime`) is not open to the desk's AWS account yet ("Operation
+not allowed"). So no voice note or recording could be heard. Amazon Transcribe streaming replaces it as
+the default (`Ai:Voice:TranscribeProvider` = `transcribe`); Voxtral stays behind `voxtral` for the day Bedrock takes its
+audio again (`AI_VOICE_TRANSCRIBE_PROVIDER=voxtral` in `.env`, then the settings are generated again and the API
+restarted). Nothing after the transcript changed: the wake check, the agent prefix, the prompt line, the answer and
+Polly are the same for either.
+
+**How one recording is streamed** (`AmazonTranscribeClient`, written to AWS's guide, mirroring the IRA project's Python
+client):
+
+1. The sound as 16 kHz mono signed 16-bit little-endian PCM (`PcmAudio`).
+2. A presigned URL, valid 5 minutes (`X-Amz-Expires=300`, AWS's most), signed by AWSSDK.Core with the instance role's
+   credentials (IMDSv2), its session token signed in, `host` the one signed header:
+   `wss://transcribestreaming.ap-south-1.amazonaws.com:8443/stream-transcription-websocket?media-encoding=pcm&sample-rate=16000&identify-multiple-languages=true&language-options=hi-IN,en-IN`
+   plus the `X-Amz-*` parameters. The signature is checked in a test against the guide's own steps, computed by hand.
+3. The sound in AWS event-stream frames (prelude, prelude CRC32, headers `:message-type=event`,
+   `:event-type=AudioEvent`, `:content-type=application/octet-stream`, payload, message CRC32), 3,200 bytes (100 ms)
+   each, sent at up to eight times real time; then an empty `AudioEvent` ends the stream.
+4. Transcribe's `TranscriptEvent` frames are read as they come; partial results are dropped and the final ones joined
+   in order. The stream ends when Transcribe closes it, or 5 s after the last frame with nothing more from it. The
+   whole stream may take 30 s plus the sound's own length.
+5. An exception frame (`:message-type=exception`, `:exception-type` BadRequestException, LimitExceededException,
+   ServiceUnavailableException, InternalFailureException, ConflictException …) fails the call in words, as the other
+   providers' refusals read: `http 400: Amazon Transcribe refused the stream: …`, `http 429: Amazon Transcribe's limit
+   was reached …`. A refused upgrade (403) names the permission and the region. A timeout says so. The call's row is
+   `failed` with that reason; the log line is Information.
+
+**Languages.** `identify-multiple-languages` over `hi-IN` and `en-IN`: Transcribe identifies the language as it is
+spoken and may switch inside one recording, as Hinglish does; multi-language identification takes PCM only, which is
+why the voice note's own Ogg/Opus is never sent. `preferred-language=hi-IN` is sent only with
+`TranscribeIdentifyMultiple` off (`identify-language`, one language for the recording): the `StartStreamTranscription`
+reference allows it with `identify-language` alone, although the developer guide's example shows it with both. Hindi
+comes back in Devanagari and English in Latin letters, so a mixed note reads "इरा, आज का P&L kya hai?". Transcribe
+needs about a second of speech to identify a language; it takes no instruction, so the desk's strategy names are not
+hinted (a custom vocabulary would be an AWS resource of its own, not made).
+
+**Sources.** AWS's developer guide, "Setting up a streaming transcription"
+(<https://docs.aws.amazon.com/transcribe/latest/dg/streaming-setting-up.html>: the WebSocket URL, its signing, the
+event-stream encoding and the exception headers), "Language identification with streaming transcriptions"
+(<https://docs.aws.amazon.com/transcribe/latest/dg/lang-id-stream.html>), the `StartStreamTranscription` API reference
+(<https://docs.aws.amazon.com/transcribe/latest/APIReference/API_streaming_StartStreamTranscription.html>), the
+supported-languages table (both `hi-IN` and `en-IN` stream) and AWS's price list for `ap-south-1`: standard streaming
+at $0.0001667 a second ($0.01 a minute, published 11 Sep 2026), billed by the second with no minimum; language
+identification costs nothing more.
+
+**The permission.** The role needs `transcribe:StartStreamTranscriptionWebSocket` (the WebSocket API's own action;
+`transcribe:StartStreamTranscription` is the HTTP/2 one) in `ap-south-1`. The owner added both on 22 Oct 2026, limited
+by `aws:RequestedRegion`, in a statement to this effect:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["transcribe:StartStreamTranscription", "transcribe:StartStreamTranscriptionWebSocket"],
+  "Resource": "*",
+  "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-south-1"}}
+}
+```
+
+Without it the upgrade is refused with a 403, which the owner sees as "I could not make out that voice note: http 403:
+Amazon Transcribe refused the stream: the server's AWS role needs transcribe:StartStreamTranscriptionWebSocket in
+ap-south-1, or its signature was refused (call #…)".
+
+**Not yet measured.** How well Transcribe hears the owner's Hinglish, the desk's strategy names and NIFTY strikes has
+not been measured on real notes yet; the Calls tab keeps each transcript beside its audio's length for that.
 
 ### Ira speaks first
 
