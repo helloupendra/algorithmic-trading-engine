@@ -42,7 +42,12 @@ public class RiskExposureScopeTests : IDisposable
         }
 
         _desk.Dispose();
-        foreach (var process in _processes) process.Dispose();
+        foreach (var process in _processes)
+        {
+            // Best-effort cleanup: on Windows, Process.Close() after a tree kill has thrown a NullReferenceException
+            // from inside the runtime (CI, 22 Oct 2026), failing a test whose assertions had all passed.
+            try { process.Dispose(); } catch (Exception ex) when (ex is NullReferenceException or InvalidOperationException) { }
+        }
     }
 
     [Fact]
