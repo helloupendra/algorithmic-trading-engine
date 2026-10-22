@@ -14,11 +14,23 @@ public sealed record WavHeader(int AudioFormat, int Channels, int SampleRate, in
     public double Seconds => ByteRate > 0 ? (double)DataBytes / ByteRate : 0;
 
     /// <summary>
+    /// How each sample is written: 1 for integer PCM, 3 for IEEE float. The same as <see cref="AudioFormat"/>, except
+    /// that an extensible header (<c>0xFFFE</c>) is resolved to the format its sub-format names.
+    /// </summary>
+    public int SampleFormat { get; init; } = 1;
+
+    /// <summary>Whether the samples are IEEE floats rather than integers.</summary>
+    public bool IsFloat => SampleFormat == 3;
+
+    /// <summary>
     /// The header of <paramref name="wav"/>, walking its chunks to <c>fmt </c> and <c>data</c> (a browser may put a
     /// <c>LIST</c> chunk between them). Throws <see cref="InvalidDataException"/>, in plain words, when it is not a WAV
     /// file of sound a model can take.
     /// </summary>
-    public static WavHeader Read(ReadOnlySpan<byte> wav)
+    public static WavHeader Read(ReadOnlySpan<byte> wav) => Read(wav, out _);
+
+    /// <summary>The same, with where the sound starts: the <c>data</c> chunk's first byte.</summary>
+    public static WavHeader Read(ReadOnlySpan<byte> wav, out int dataOffset)
     {
         if (wav.Length < 12 || !wav[..4].SequenceEqual("RIFF"u8) || !wav[8..12].SequenceEqual("WAVE"u8))
         {
@@ -26,7 +38,7 @@ public sealed record WavHeader(int AudioFormat, int Channels, int SampleRate, in
         }
 
         int at = 12;
-        (int Format, int Channels, int Rate, int ByteRate, int Bits)? fmt = null;
+        (int Format, int Channels, int Rate, int ByteRate, int Bits, int Samples)? fmt = null;
         while (at + 8 <= wav.Length)
         {
             var id = wav.Slice(at, 4);
@@ -35,22 +47,30 @@ public sealed record WavHeader(int AudioFormat, int Channels, int SampleRate, in
             if (id.SequenceEqual("fmt "u8))
             {
                 if (size < 16 || body + 16 > wav.Length) throw new InvalidDataException("its format chunk is cut short");
+                int format = BinaryPrimitives.ReadUInt16LittleEndian(wav[body..]);
+                // An extensible header names the real format in the first two bytes of its sub-format GUID; one too
+                // short to hold it is taken as integer PCM.
+                int samples = format != 0xFFFE ? format
+                    : size >= 40 && body + 26 <= wav.Length ? BinaryPrimitives.ReadUInt16LittleEndian(wav[(body + 24)..])
+                    : 1;
                 fmt = (
-                    BinaryPrimitives.ReadUInt16LittleEndian(wav[body..]),
+                    format,
                     BinaryPrimitives.ReadUInt16LittleEndian(wav[(body + 2)..]),
                     BinaryPrimitives.ReadInt32LittleEndian(wav[(body + 4)..]),
                     BinaryPrimitives.ReadInt32LittleEndian(wav[(body + 8)..]),
-                    BinaryPrimitives.ReadUInt16LittleEndian(wav[(body + 14)..]));
+                    BinaryPrimitives.ReadUInt16LittleEndian(wav[(body + 14)..]),
+                    samples);
             }
             else if (id.SequenceEqual("data"u8))
             {
                 if (fmt is not { } f) throw new InvalidDataException("its sound comes before its format");
-                if (f.Format is not (1 or 3 or 0xFFFE)) throw new InvalidDataException($"its sound is compressed (format {f.Format}), not PCM");
+                if (f.Samples is not (1 or 3)) throw new InvalidDataException($"its sound is compressed (format {f.Samples}), not PCM");
                 if (f.Channels < 1 || f.Rate < 1 || f.ByteRate < 1 || f.Bits < 8) throw new InvalidDataException("its format chunk makes no sense");
                 // A recorder that streams writes the data's size as 0 or as "to the end": what the file holds counts.
                 int held = wav.Length - body;
                 int data = size == 0 || size > held ? held : (int)size;
-                return new WavHeader(f.Format, f.Channels, f.Rate, f.Bits, f.ByteRate, data);
+                dataOffset = body;
+                return new WavHeader(f.Format, f.Channels, f.Rate, f.Bits, f.ByteRate, data) { SampleFormat = f.Samples };
             }
 
             // Chunks are padded to an even length.

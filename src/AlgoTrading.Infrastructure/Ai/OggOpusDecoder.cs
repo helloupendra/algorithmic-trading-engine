@@ -5,8 +5,9 @@ using Concentus.Oggfile;
 namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>
-/// A Telegram voice note (OGG/Opus) as 16 kHz mono 16-bit PCM WAV, the form Bedrock's audio model takes: its endpoint
-/// refused <c>ogg</c> with a 400 and took <c>wav</c> and <c>mp3</c> (11 Oct 2026).
+/// A Telegram voice note (OGG/Opus) as 16 kHz mono 16-bit PCM WAV: the form Bedrock's audio model took (its endpoint
+/// refused <c>ogg</c> with a 400 and took <c>wav</c> and <c>mp3</c>, 11 Oct 2026), and the one
+/// <see cref="PcmAudio.FromWav"/> hands Amazon Transcribe without converting again.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -77,23 +78,7 @@ public static class OggOpusDecoder
     }
 
     /// <summary>48 kHz samples as 16 kHz ones, through the Speex resampler at its default quality (5).</summary>
-    private static short[] Resample(short[] input)
-    {
-        var resampler = ResamplerFactory.CreateResampler(1, DecodeRate, SampleRate, 5, null);
-        var output = new short[input.Length / (DecodeRate / SampleRate) + 1024];
-        int read = 0, written = 0;
-        while (read < input.Length && written < output.Length)
-        {
-            int inLength = input.Length - read;
-            int outLength = output.Length - written;
-            resampler.Process(0, input.AsSpan(read), ref inLength, output.AsSpan(written), ref outLength);
-            if (inLength == 0 && outLength == 0) break;
-            read += inLength;
-            written += outLength;
-        }
-
-        return output[..written];
-    }
+    private static short[] Resample(short[] input) => PcmAudio.Resample(input, DecodeRate, SampleRate);
 
     /// <summary>16-bit mono PCM samples as a WAV file: the 44-byte RIFF header, then the samples, little-endian.</summary>
     public static byte[] Wav(ReadOnlySpan<short> samples, int sampleRate)
