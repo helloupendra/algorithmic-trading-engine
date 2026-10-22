@@ -717,7 +717,9 @@ public sealed class IraAlertTests : IDisposable
         var bot = new Bot();
         aws ??= new Aws();
         var signer = new FakeSigner();
-        var voice = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), options, signer), new PollySpeechClient(new Factory(aws), options, signer),
+        // Ira speaking first never writes speech down: Transcribe is a script that would answer nothing.
+        var voice = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), options, signer),
+            TranscribeTestKit.Client(options, new TranscribeTestKit.ScriptedTranscribe()), new PollySpeechClient(new Factory(aws), options, signer),
             options, NullLogger<AiVoiceService>.Instance);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Telegram:BotToken"] = "123:TEST" }).Build();
         var telegram = new TelegramAssistant(scopes, new Factory(bot), config, new TelegramPairing(), options, NullLogger<TelegramAssistant>.Instance,

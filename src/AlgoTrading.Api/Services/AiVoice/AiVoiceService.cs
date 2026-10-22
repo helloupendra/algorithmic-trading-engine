@@ -17,9 +17,9 @@ namespace AlgoTrading.Api.Services.AiVoice;
 /// <param name="ConversationId">The conversation the call belongs to: <c>tg-&lt;chat&gt;</c> on Telegram, the page's on the console.</param>
 public sealed record VoiceCaller(string Source, string RequestedBy, long? UserId, string ConversationId);
 
-/// <summary>Audio to write down, as the audio model is sent it.</summary>
-/// <param name="Sent">The bytes sent: WAV or MP3.</param>
-/// <param name="Format"><c>wav</c> or <c>mp3</c>: the endpoint refused <c>ogg</c> (11 Oct 2026).</param>
+/// <summary>Audio to write down, as the caller has it ready.</summary>
+/// <param name="Sent">The bytes: WAV, or MP3 (which only Voxtral takes; Amazon Transcribe is sent the WAV's sound as PCM).</param>
+/// <param name="Format"><c>wav</c> or <c>mp3</c>: Voxtral's endpoint refused <c>ogg</c> (11 Oct 2026).</param>
 /// <param name="Seconds">Its length: measured from the WAV, or as the sender declared it for MP3.</param>
 /// <param name="DeclaredSeconds">Its length as the sender declared it; the token budget takes the longer of the two.</param>
 /// <param name="Kind">What it is, in words: "voice note", "audio file", "recording".</param>
@@ -69,12 +69,17 @@ public sealed record VoiceSpeech(VoiceSpeechStatus Status, byte[]? Mp3, long? Ca
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Hearing.</b> The audio model (<see cref="AiVoiceSettings.TranscribeModel"/>, Voxtral Small) is asked once through
-/// <see cref="BedrockOpenChatClient.TranscribeAsync"/>, with the instruction and a short list of the desk's own words
-/// (<see cref="VoiceText.Instruction"/>): the strategies' names from the catalog, else from the morning plan, and the
-/// assistant's name (<see cref="NameAsync"/>). The audio is never kept; the call is an <c>ai_calls</c> row (agent
-/// <see cref="AiCatalog.VoiceTranscribe"/>) with the instruction, a line describing the audio, the transcript, the
-/// seconds and the tokens.
+/// <b>Hearing.</b> By <see cref="AiVoiceSettings.TranscribeProvider"/>. Amazon Transcribe streaming (the default from
+/// 22 Oct 2026, <see cref="AmazonTranscribeClient"/>) is sent the sound as 16 kHz mono PCM (<see cref="PcmAudio"/>) and
+/// tells Hindi from English itself; it takes no instruction, so Hindi comes back in Devanagari and the desk's words are
+/// not hinted. Voxtral (<see cref="AiVoiceSettings.TranscribeModel"/>, kept for when Bedrock takes its audio again) is
+/// asked once through <see cref="BedrockOpenChatClient.TranscribeAsync"/>, with the instruction and a short list of the
+/// desk's own words (<see cref="VoiceText.Instruction"/>): the strategies' names from the catalog, else from the morning
+/// plan, and the assistant's name (<see cref="NameAsync"/>). Either way the audio is never kept; the call is an
+/// <c>ai_calls</c> row (agent <see cref="AiCatalog.VoiceTranscribe"/>) with what was asked, a line describing the audio
+/// (with Transcribe's languages heard and its cost at list price), the transcript, the seconds and, for Voxtral, the
+/// tokens. What is done with the transcript afterwards (the wake check here, the agent prefix and the prompt line on
+/// Telegram) does not depend on who wrote it down.
 /// </para>
 /// <para>
 /// <b>Speaking.</b> The answer's spoken version (<see cref="VoiceText.Spoken"/>) goes to Amazon Polly
@@ -101,7 +106,8 @@ public sealed record VoiceSpeech(VoiceSpeechStatus Status, byte[]? Mp3, long? Ca
 /// </remarks>
 public sealed class AiVoiceService(
     IServiceScopeFactory scopes,
-    BedrockOpenChatClient transcriber,
+    BedrockOpenChatClient voxtral,
+    AmazonTranscribeClient transcribe,
     PollySpeechClient polly,
     IOptionsMonitor<AiSettings> settings,
     ILogger<AiVoiceService> logger,
@@ -157,26 +163,20 @@ public sealed class AiVoiceService(
     {
         var s = Settings;
         string name = await NameAsync(cancellationToken);
-        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), name);
-        string model = AiCatalog.BedrockOpenPrefix + s.TranscribeModel;
-        int maxTokens = MaxTokens(Math.Max(audio.Seconds, audio.DeclaredSeconds));
         var started = _time.GetUtcNow().UtcDateTime;
         var clock = Stopwatch.StartNew();
 
-        AiTranscription? heard = null;
-        AiAttemptFailedException? failure = null;
-        try
-        {
-            heard = await transcriber.TranscribeAsync(s.TranscribeModel, audio.Sent, audio.Format, instruction, maxTokens, cancellationToken);
-        }
-        catch (AiAttemptFailedException ex)
-        {
-            failure = ex;
-        }
+        var hearing = s.UsesAmazonTranscribe ? await AmazonTranscribeAsync(audio, s, cancellationToken)
+            : s.UsesVoxtral ? await VoxtralAsync(audio, s, name, cancellationToken)
+            : Hearing.Failed(s.TranscribeProvider, string.Empty, audio.Format, new AiAttemptFailedException(
+                $"Ai:Voice:TranscribeProvider is \"{s.TranscribeProvider}\": it must be \"{AiVoiceSettings.AmazonTranscribe}\" or \"{AiVoiceSettings.Voxtral}\""));
 
+        string? heard = hearing.Text;
+        var failure = hearing.Failure;
         double took = Math.Round(clock.Elapsed.TotalSeconds, 2);
-        string described = $"[{audio.Kind}, {audio.Seconds:0.#} s, {audio.ReceivedBytes / 1024.0:0.#} KB, sent as {audio.Format}; the audio is not kept]";
-        VoiceWake? addressed = wake && heard is not null ? VoiceText.Wake(heard.Text, name, s.NameAliases) : null;
+        string note = hearing.Note.Length > 0 ? "; " + hearing.Note : string.Empty;
+        string described = $"[{audio.Kind}, {audio.Seconds:0.#} s, {audio.ReceivedBytes / 1024.0:0.#} KB, sent as {hearing.SentAs}{note}; the audio is not kept]";
+        VoiceWake? addressed = wake && heard is not null ? VoiceText.Wake(heard, name, s.NameAliases) : null;
         string prefix = addressed is { Addressed: false } ? NotAddressed : string.Empty;
         var row = new AiCall
         {
@@ -187,26 +187,96 @@ public sealed class AiVoiceService(
             Source = caller.Source,
             RequestedBy = caller.RequestedBy,
             ConversationId = caller.ConversationId,
-            ChainJson = JsonSerializer.Serialize(new[] { model }),
-            Model = heard is null ? string.Empty : model,
+            ChainJson = JsonSerializer.Serialize(new[] { hearing.Model }),
+            Model = heard is null ? string.Empty : hearing.Model,
             Outcome = heard is null ? AiCallOutcome.Failed : AiCallOutcome.Ok,
             Error = failure?.Outcome ?? string.Empty,
             Seconds = took,
-            PromptTokens = heard?.Usage?.PromptTokens,
-            CompletionTokens = heard?.Usage?.CompletionTokens,
-            TotalTokens = heard?.Usage?.TotalTokens,
+            PromptTokens = hearing.Usage?.PromptTokens,
+            CompletionTokens = hearing.Usage?.CompletionTokens,
+            TotalTokens = hearing.Usage?.TotalTokens,
             Rounds = 1,
-            MessagesJson = Messages(instruction + "\n" + described),
-            Summary = Cut(prefix + (heard?.Text ?? $"{Capital(audio.Kind)} of {audio.Seconds:0.#} s: not written down"), 200),
-            Answer = heard?.Text ?? string.Empty,
-            FinishReason = Cut(heard?.FinishReason ?? string.Empty, 32),
-            MaxTokens = maxTokens,
+            MessagesJson = Messages(hearing.Request + "\n" + described),
+            Summary = Cut(prefix + (heard ?? $"{Capital(audio.Kind)} of {audio.Seconds:0.#} s: not written down"), 200),
+            Answer = heard ?? string.Empty,
+            FinishReason = Cut(hearing.FinishReason, 32),
+            MaxTokens = hearing.MaxTokens,
             Temperature = 0,
-            AttemptsJson = Attempts(model, failure?.Outcome ?? "ok", took, failure?.HttpStatus),
+            AttemptsJson = Attempts(hearing.Model, failure?.Outcome ?? "ok", took, failure?.HttpStatus),
         };
         long callId = await RecordAsync(row, caller, cancellationToken);
-        return failure is null ? new VoiceTranscript(heard!.Text, callId, null, addressed) : new VoiceTranscript(null, callId, failure.Outcome);
+        return failure is null ? new VoiceTranscript(heard, callId, null, addressed) : new VoiceTranscript(null, callId, failure.Outcome);
     }
+
+    /// <summary>
+    /// What one speech-to-text made of the audio, and what its row says was asked.
+    /// </summary>
+    /// <param name="Model">The row's model: <c>bedrock-oss:mistral.voxtral-…</c> or <see cref="AiCatalog.AmazonTranscribeModel"/>.</param>
+    /// <param name="Request">Voxtral's instruction, or Transcribe's parameters in words.</param>
+    /// <param name="SentAs">How the audio went: <c>wav</c>, <c>mp3</c> or <c>16 kHz PCM</c>.</param>
+    /// <param name="Note">More for the line describing the audio: the languages heard and the cost. Empty for none.</param>
+    private sealed record Hearing(
+        string Model, string Request, string SentAs, string? Text, string FinishReason, AiUsage? Usage, int MaxTokens, string Note,
+        AiAttemptFailedException? Failure)
+    {
+        public static Hearing Failed(string model, string request, string sentAs, AiAttemptFailedException failure, int maxTokens = 0, string note = "") =>
+            new(model, request, sentAs, null, string.Empty, null, maxTokens, note, failure);
+    }
+
+    /// <summary>Voxtral on Bedrock: the WAV or MP3 as it came, with the instruction and the desk's words.</summary>
+    private async Task<Hearing> VoxtralAsync(VoiceAudio audio, AiVoiceSettings s, string name, CancellationToken cancellationToken)
+    {
+        string instruction = VoiceText.Instruction(await VocabularyAsync(cancellationToken), name);
+        string model = AiCatalog.BedrockOpenPrefix + s.TranscribeModel;
+        int maxTokens = MaxTokens(Math.Max(audio.Seconds, audio.DeclaredSeconds));
+        try
+        {
+            var heard = await voxtral.TranscribeAsync(s.TranscribeModel, audio.Sent, audio.Format, instruction, maxTokens, cancellationToken);
+            return new Hearing(model, instruction, audio.Format, heard.Text, heard.FinishReason, heard.Usage, maxTokens, string.Empty, null);
+        }
+        catch (AiAttemptFailedException ex)
+        {
+            return Hearing.Failed(model, instruction, audio.Format, ex, maxTokens);
+        }
+    }
+
+    /// <summary>
+    /// Amazon Transcribe streaming: the WAV's sound as 16 kHz mono PCM, Hindi and English told apart by Transcribe. MP3
+    /// cannot be decoded here, so it fails in words (Telegram refuses it before downloading).
+    /// </summary>
+    private async Task<Hearing> AmazonTranscribeAsync(VoiceAudio audio, AiVoiceSettings s, CancellationToken cancellationToken)
+    {
+        const string sentAs = "16 kHz PCM";
+        string model = AiCatalog.AmazonTranscribeModel;
+        string request = AmazonTranscribeClient.Describe(s);
+        byte[] pcm;
+        try
+        {
+            pcm = audio.Format == "wav"
+                ? PcmAudio.FromWav(audio.Sent, s.MaxSeconds)
+                : throw new InvalidDataException($"{audio.Format.ToUpperInvariant()} cannot be decoded on the desk, and Amazon Transcribe is sent PCM");
+        }
+        catch (InvalidDataException ex)
+        {
+            return Hearing.Failed(model, request, audio.Format, new AiAttemptFailedException($"unreadable audio: {ex.Message}"));
+        }
+
+        try
+        {
+            var heard = await transcribe.TranscribeAsync(pcm, cancellationToken);
+            string languages = heard.Languages.Count > 0 ? $"heard as {string.Join(" then ", heard.Languages)}; " : string.Empty;
+            return new Hearing(model, request, sentAs, heard.Text, string.Empty, null, 0, languages + Price(heard.AudioSeconds, s), null);
+        }
+        catch (AiAttemptFailedException ex)
+        {
+            return Hearing.Failed(model, request, sentAs, ex);
+        }
+    }
+
+    /// <summary>The cost line of a transcription: its seconds at Transcribe's list price.</summary>
+    private static string Price(double seconds, AiVoiceSettings s) =>
+        $"about ${AmazonTranscribeClient.Cost(seconds, s).ToString("0.######", CultureInfo.InvariantCulture)} at list price " +
+        $"(${s.TranscribeUsdPerSecond.ToString("0.#######", CultureInfo.InvariantCulture)} a second)";
 
     /// <summary>
     /// Counts one hands-free utterance for <paramref name="user"/> when <c>Ai:Voice:HandsFreePerMinute</c> allows one

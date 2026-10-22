@@ -91,8 +91,9 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// </para>
 /// <para>
 /// A linked owner may also speak ("Ira", <see cref="TelegramVoice"/>): a voice
-/// note, or an MP3, OGG or WAV audio file, of at most two minutes and 2 MB, is
-/// written down, the bot replies with what it heard, and the transcript is then
+/// note, or an OGG or WAV audio file (MP3 too while Voxtral writes them down),
+/// of at most two minutes and 2 MB, is written down, the bot replies with what
+/// it heard, and the transcript is then
 /// handled exactly as typed text, an agent's prefix word included ("Trader, why
 /// …?" is <c>/trader why …?</c>). The answer comes as text and, when Amazon Polly
 /// may be asked, as a short voice reply after it. A stranger's voice note gets
@@ -553,6 +554,8 @@ public sealed class TelegramAssistant(
         string? refusal =
             voice is null || !s.Enabled ? "Voice notes are switched off on this desk. Please type the question."
             : audio.Format is null ? "I can listen to voice notes, and to MP3, OGG or WAV audio. Please send it as a voice note, or type the question."
+            // Amazon Transcribe is sent PCM, and the desk decodes Opus and WAV but not MP3.
+            : audio.Format == "mp3" && s.UsesAmazonTranscribe ? "I cannot listen to MP3 audio at the moment. Please send it as a voice note, or as OGG or WAV audio, or type the question."
             : audio.Seconds > s.MaxSeconds ? $"That {audio.Kind} is {audio.Seconds} s long; I listen to {s.MaxSeconds} s at most. Please send a shorter one, or type the question."
             : audio.Bytes > s.MaxBytes ? TooBig(audio.Kind, s.MaxBytes)
             : null;

@@ -63,10 +63,11 @@ public sealed record VoiceSpoken(byte[]? Mp3, string? Notice)
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Hearing.</b> A voice note is OGG/Opus, which Bedrock's audio model refuses, so it is decoded here, in-process, to
-/// 16 kHz mono WAV (<see cref="OggOpusDecoder"/>); MP3 and WAV go as they are. The shared voice writes it down and
-/// records the call (source <c>telegram</c>, conversation <c>tg-&lt;chat&gt;</c>); this class words what the owner is
-/// told when it could not.
+/// <b>Hearing.</b> A voice note is OGG/Opus, so it is decoded here, in-process, to 16 kHz mono WAV
+/// (<see cref="OggOpusDecoder"/>); WAV goes as it is, and so does MP3 for Voxtral (Amazon Transcribe is sent PCM, which
+/// the desk cannot make from MP3, so the assistant refuses MP3 before downloading it). The shared voice writes it down
+/// and records the call (source <c>telegram</c>, conversation <c>tg-&lt;chat&gt;</c>); this class words what the owner
+/// is told when it could not.
 /// </para>
 /// <para>
 /// <b>Speaking.</b> When <see cref="AiVoiceSettings.SpeakReplies"/> is on, the shared voice asks Amazon Polly for the

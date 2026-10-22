@@ -363,7 +363,7 @@ public class AiController : ControllerBase
             ReadList<string>(x.ChainJson),
             ReadAttempts(x.AttemptsJson),
             ReadTools(x.ToolsJson),
-            new AiRequestDto($"POST {ChatEndpoint(x.Model.Length > 0 ? x.Model : ReadList<string>(x.ChainJson).FirstOrDefault() ?? string.Empty)}", x.MaxTokens, x.Temperature,
+            new AiRequestDto(RequestLine(x.Model.Length > 0 ? x.Model : ReadList<string>(x.ChainJson).FirstOrDefault() ?? string.Empty), x.MaxTokens, x.Temperature,
                 // A voice note's transcription and a spoken reply are one request and one answer each.
                 x.AgentKey is not (AiCatalog.VoiceTranscribe or AiCatalog.VoiceSpeak)))
         {
@@ -1064,7 +1064,7 @@ public class AiController : ControllerBase
         {
             return StatusCode(StatusCodes.Status415UnsupportedMediaType, new
             {
-                error = $"Send the recording as audio/wav{(type.Length > 0 ? $", not {type}" : string.Empty)}: the console records WAV, and the audio model takes WAV or MP3.",
+                error = $"Send the recording as audio/wav{(type.Length > 0 ? $", not {type}" : string.Empty)}: the console records WAV, and the desk writes WAV down.",
             });
         }
 
@@ -1336,6 +1336,14 @@ public class AiController : ControllerBase
             new Dictionary<string, string>(s.Bedrock.EffortByTier, StringComparer.OrdinalIgnoreCase)),
         BedrockOpen = new AiBedrockOpenDto(s.BedrockOpen.Enabled, s.Bedrock.Region, AiCatalog.BedrockOpenEndpoint(s.Bedrock.Region)),
     };
+
+    /// <summary>
+    /// The request a call made, as its detail shows it: a WebSocket upgrade (GET) for Amazon Transcribe streaming, a POST
+    /// to <see cref="ChatEndpoint"/> for every other model.
+    /// </summary>
+    private string RequestLine(string model) => AiCatalog.IsAmazonTranscribe(model)
+        ? $"GET {AmazonTranscribeClient.Endpoint(_settings.CurrentValue.Voice.TranscribeRegion.Trim())}"
+        : $"POST {ChatEndpoint(model)}";
 
     /// <summary>
     /// Where a call's model was asked: Bedrock's Messages API for a <c>bedrock:</c> model, its OpenAI-compatible endpoint

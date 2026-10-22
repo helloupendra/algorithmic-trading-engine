@@ -3,7 +3,8 @@
  * the browser.
  *
  * MediaRecorder would hand back webm, ogg or mp4 depending on the browser, and
- * the audio model behind the API (Voxtral on Bedrock) takes WAV or MP3 only.
+ * the API reads WAV only: it sends the sound on to Amazon Transcribe as raw
+ * 16 kHz PCM (or, behind a setting, the WAV itself to Voxtral on Bedrock).
  * So the page captures raw samples with the Web Audio API (micRecorder.ts) and
  * these pure functions make the file: the channels mixed down to one, the rate
  * taken to 16 kHz, each sample clipped to 16 bits, and the 44-byte header in

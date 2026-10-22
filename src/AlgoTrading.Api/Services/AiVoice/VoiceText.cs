@@ -82,19 +82,19 @@ public static partial class VoiceText
     /// <summary>
     /// A transcript as it is asked: one that starts with an agent's prefix word, said or written ("Trader, why did you
     /// buy?", "slash trader …", "/trader …"), after an optional address by <paramref name="name"/> ("Ira, trader,
-    /// …"), becomes that typed prefix ("/trader why did you buy?"). Anything else is asked as heard, with any leading
-    /// slash dropped: a voice note never runs /new, /unlink, /remember or another command.
+    /// …", "Hey Ira, trader …", "इरा, trader …"), becomes that typed prefix ("/trader why did you buy?"). Anything else
+    /// is asked as heard, with any leading slash dropped: a voice note never runs /new, /unlink, /remember or another
+    /// command.
     /// </summary>
+    /// <remarks>
+    /// The address is found as hands-free finds it (<see cref="Wake"/>): by sound, so in Devanagari too, which is how
+    /// Amazon Transcribe writes Hindi. The prefix word itself must come out in Latin letters.
+    /// </remarks>
     public static string AsTyped(string transcript, IEnumerable<string> agentCommands, string? name)
     {
         string heard = transcript.Trim();
-        string rest = heard;
-        if (!string.IsNullOrWhiteSpace(name)
-            && rest.StartsWith(name.Trim(), StringComparison.OrdinalIgnoreCase)
-            && (rest.Length == name.Trim().Length || !char.IsLetterOrDigit(rest[name.Trim().Length])))
-        {
-            rest = rest[name.Trim().Length..].TrimStart(' ', ',', '.', ':', ';', '!', '?', '-');
-        }
+        var address = Wake(heard, name);
+        string rest = address.Addressed ? address.Question : heard;
 
         var match = Prefix().Match(rest);
         if (match.Success)

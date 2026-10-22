@@ -1,16 +1,16 @@
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Nodes;
-using System.Threading.Channels;
 using AlgoTrading.Infrastructure.Ai;
 using Amazon.Runtime;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
+using static AlgoTrading.UnitTests.TranscribeTestKit;
 
 namespace AlgoTrading.UnitTests;
 
@@ -279,6 +279,22 @@ public sealed class AmazonTranscribeClientTests
         Assert.DoesNotContain("tok", line);
     }
 
+    [Fact]
+    public void The_desk_wires_one_signer_for_bedrock_polly_and_transcribe_and_a_real_websocket()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAi(new ConfigurationBuilder().Build());
+        using var provider = services.BuildServiceProvider();
+
+        var signer = provider.GetRequiredService<AwsSigV4BedrockSigner>();
+
+        Assert.Same(signer, provider.GetRequiredService<IBedrockRequestSigner>());
+        Assert.Same(signer, provider.GetRequiredService<IAwsUrlPresigner>());
+        Assert.IsType<WebSocketTranscribeTransport>(provider.GetRequiredService<ITranscribeTransport>());
+        Assert.Equal(8, provider.GetRequiredService<AmazonTranscribeClient>().PaceFactor);
+    }
+
     // ---------- over a real WebSocket ----------
 
     [Fact]
@@ -346,28 +362,6 @@ public sealed class AmazonTranscribeClientTests
     /// <summary>Silence of <paramref name="seconds"/> as 16 kHz 16-bit PCM, its bytes numbered so the frames can be checked.</summary>
     private static byte[] Pcm(double seconds) => [.. Enumerable.Range(0, (int)(seconds * PcmAudio.BytesPerSecond)).Select(i => (byte)i)];
 
-    private static JsonObject Result(string id, string text, bool partial, string language) => new()
-    {
-        ["ResultId"] = id,
-        ["StartTime"] = 0.1,
-        ["EndTime"] = 1.2,
-        ["IsPartial"] = partial,
-        ["LanguageCode"] = language,
-        ["Alternatives"] = new JsonArray(new JsonObject { ["Transcript"] = text, ["Items"] = new JsonArray() }),
-    };
-
-    private static byte[] Event(params JsonObject[] results) =>
-        Encoding.UTF8.GetBytes(new JsonObject { ["Transcript"] = new JsonObject { ["Results"] = new JsonArray(results) } }.ToJsonString());
-
-    /// <summary>A TranscriptEvent frame as Transcribe sends one.</summary>
-    private static byte[] Transcript(params JsonObject[] results) => AwsEventStream.Encode(
-        [(":content-type", "application/json"), (":event-type", "TranscriptEvent"), (":message-type", "event")], Event(results));
-
-    /// <summary>An exception frame with the headers the WebSocket guide lists.</summary>
-    private static byte[] ExceptionFrame(string kind, string message) => AwsEventStream.Encode(
-        [(":content-type", "application/json"), (":exception-type", kind), (":message-type", "exception")],
-        Encoding.UTF8.GetBytes(new JsonObject { ["Message"] = message }.ToJsonString()));
-
     private static Dictionary<string, string> QueryOf(Uri url) => url.Query.TrimStart('?').Split('&')
         .Select(p => p.Split('=', 2))
         .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1]), StringComparer.Ordinal);
@@ -404,16 +398,6 @@ public sealed class AmazonTranscribeClientTests
         }
     }
 
-    /// <summary>Returns the URL as it was given, with <paramref name="extra"/> appended as a stand-in signature.</summary>
-    private sealed class FakePresigner(string extra = "X-Amz-Signature=test") : IAwsUrlPresigner
-    {
-        public Task<Uri> PresignAsync(Uri url, string region, string service, TimeSpan lifetime, CancellationToken cancellationToken)
-        {
-            Assert.Equal((Region, "transcribe", TimeSpan.FromMinutes(5)), (region, service, lifetime));
-            return Task.FromResult(new Uri($"{url.AbsoluteUri}&{extra}"));
-        }
-    }
-
     /// <summary>The real signer on a machine with no AWS credentials.</summary>
     private sealed class NoCredentials : IAwsUrlPresigner
     {
@@ -421,69 +405,6 @@ public sealed class AmazonTranscribeClientTests
 
         public Task<Uri> PresignAsync(Uri url, string region, string service, TimeSpan lifetime, CancellationToken cancellationToken) =>
             _signer.PresignAsync(url, region, service, lifetime, cancellationToken);
-    }
-
-    /// <summary>
-    /// Amazon Transcribe, scripted: keeps every frame the desk sends, and once the empty frame ends the stream sends its
-    /// <see cref="Replies"/> and closes (or stays open).
-    /// </summary>
-    private sealed class ScriptedTranscribe : ITranscribeTransport
-    {
-        public List<byte[]> Replies { get; init; } = [];
-
-        public bool CloseAfterReplies { get; init; } = true;
-
-        /// <summary>Sent at once after the first frame, then the stream closes and every later send fails.</summary>
-        public byte[]? RefuseAfterFirstFrame { get; init; }
-
-        public TranscribeHandshakeException? Refuse { get; init; }
-
-        public Uri? Url { get; private set; }
-
-        public List<AwsEventMessage> Frames { get; } = [];
-
-        public bool Disposed { get; private set; }
-
-        public Task<ITranscribeConnection> ConnectAsync(Uri url, CancellationToken cancellationToken)
-        {
-            Url = url;
-            if (Refuse is not null) throw Refuse;
-            return Task.FromResult<ITranscribeConnection>(new Connection(this));
-        }
-
-        private sealed class Connection(ScriptedTranscribe aws) : ITranscribeConnection
-        {
-            private readonly Channel<byte[]?> _out = Channel.CreateUnbounded<byte[]?>();
-            private bool _closed;
-
-            public Task SendAsync(ReadOnlyMemory<byte> message, CancellationToken cancellationToken)
-            {
-                if (_closed) throw new WebSocketException(WebSocketError.InvalidState);
-                var frame = AwsEventStream.Decode(message.Span);
-                aws.Frames.Add(frame);
-                if (aws.RefuseAfterFirstFrame is { } refusal)
-                {
-                    _closed = true;
-                    _out.Writer.TryWrite(refusal);
-                    _out.Writer.TryWrite(null);
-                }
-                else if (frame.Payload.Length == 0)
-                {
-                    foreach (var reply in aws.Replies) _out.Writer.TryWrite(reply);
-                    if (aws.CloseAfterReplies) _out.Writer.TryWrite(null);
-                }
-
-                return Task.CompletedTask;
-            }
-
-            public async Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken) => await _out.Reader.ReadAsync(cancellationToken);
-
-            public ValueTask DisposeAsync()
-            {
-                aws.Disposed = true;
-                return ValueTask.CompletedTask;
-            }
-        }
     }
 
     private sealed class ListLogger : ILogger<AmazonTranscribeClient>

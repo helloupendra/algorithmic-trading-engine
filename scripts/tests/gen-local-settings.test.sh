@@ -127,6 +127,8 @@ check "voice notes can be switched off"             '{"Enabled": false}'        
 check "spoken replies alone can be switched off"    '{"SpeakReplies": false}'                     "$(voice AI_VOICE_SPEAK_REPLIES=False)"
 check "both together"                               '{"Enabled": true, "SpeakReplies": false}'    "$(voice AI_VOICE_ENABLED=true AI_VOICE_SPEAK_REPLIES=false)"
 check "anything else for a switch is ignored"       "null"                                        "$(voice AI_VOICE_ENABLED=on AI_VOICE_SPEAK_REPLIES=1)"
+check "voxtral can be put back as the speech-to-text" '{"TranscribeProvider": "voxtral"}'          "$(voice AI_VOICE_TRANSCRIBE_PROVIDER=Voxtral)"
+check "an unknown speech-to-text is left out"       "null"                                        "$(voice AI_VOICE_TRANSCRIBE_PROVIDER=whisper)"
 check "no AWS credential is carried"                "null"                                        "$(voice AWS_ACCESS_KEY_ID=not-a-key AWS_SECRET_ACCESS_KEY=not-a-secret)"
 
 actions() {  # key=value ... -> the Ai section's Actions part as sorted JSON

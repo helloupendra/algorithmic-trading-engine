@@ -117,6 +117,25 @@ public sealed class AiVoiceHandsFreeTests
     // ---------- the endpoint: wake=1 ----------
 
     [Fact]
+    public async Task Hindi_from_transcribe_in_devanagari_is_addressed_by_the_name_as_written_in_it()
+    {
+        Setup(provider: AiVoiceSettings.AmazonTranscribe);
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("इरा, आज का P&L क्या है?", "hi-IN")));
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("चलो चाय पीते हैं", "hi-IN")));
+
+        var addressed = await Transcribe(Recording(seconds: 2), "c-abc123");
+        var ignored = await Transcribe(Recording(seconds: 2), "c-abc123");
+
+        var heard = Assert.IsType<AiVoiceWakeTranscript>(Assert.IsType<OkObjectResult>(addressed).Value);
+        Assert.Equal(("इरा, आज का P&L क्या है?", true, "आज का P&L क्या है?"), (heard.Text, heard.Addressed, heard.Question));
+        Assert.False(Assert.IsType<AiVoiceWakeTranscript>(Assert.IsType<OkObjectResult>(ignored).Value).Addressed);
+        await using var db = NewDb(_dbName);
+        var rows = await db.AiCalls.OrderBy(c => c.Id).ToListAsync();
+        Assert.Equal(new[] { "इरा, आज का P&L क्या है?", AiVoiceService.NotAddressed + "चलो चाय पीते हैं" }, rows.Select(r => r.Summary));
+        Assert.All(rows, r => Assert.Equal(AiCatalog.AmazonTranscribeModel, r.Model));
+    }
+
+    [Fact]
     public async Task An_addressed_utterance_returns_its_question_and_is_recorded_as_heard()
     {
         var (aws, _) = Setup();
@@ -260,17 +279,23 @@ public sealed class AiVoiceHandsFreeTests
     private AiVoiceService _voice = null!;
     private readonly Clock _clock = new(new DateTime(2026, 10, 12, 4, 0, 0, DateTimeKind.Utc));
 
-    private (FakeMantle Aws, AiTestKit.Monitor Options) Setup()
+    /// <param name="provider">Voxtral unless a test says otherwise: these tests were written for its scripted answers.</param>
+    private (FakeMantle Aws, AiTestKit.Monitor Options) Setup(string provider = AiVoiceSettings.Voxtral)
     {
         _ai = Build(null, NewDb(_dbName));
+        _ai.Options.CurrentValue.Voice.TranscribeProvider = provider;
         var aws = new FakeMantle();
         var services = new ServiceCollection();
         services.AddScoped(_ => NewDb(_dbName));
         var scopes = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        _transcribe = new TranscribeTestKit.ScriptedTranscribe();
         _voice = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), _ai.Options, new FakeSigner()),
-            new PollySpeechClient(new Factory(aws), _ai.Options, new FakeSigner()), _ai.Options, NullLogger<AiVoiceService>.Instance, _clock);
+            TranscribeTestKit.Client(_ai.Options, _transcribe), new PollySpeechClient(new Factory(aws), _ai.Options, new FakeSigner()), _ai.Options,
+            NullLogger<AiVoiceService>.Instance, _clock);
         return (aws, _ai.Options);
     }
+
+    private TranscribeTestKit.ScriptedTranscribe _transcribe = null!;
 
     /// <summary>The console's controller, signed in as upendra (user 1), with <paramref name="body"/> as the request's WAV.</summary>
     private AiController Console(byte[]? body = null)

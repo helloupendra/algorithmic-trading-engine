@@ -282,17 +282,22 @@ def build_bedrock_open_settings(env: dict[str, str]) -> dict:
 
 
 def build_voice_settings(env: dict[str, str]) -> dict:
-    """Voice notes to the Telegram assistant and its spoken replies: only the two switches.
+    """Voice notes to the Telegram assistant and its spoken replies: the two switches and the speech-to-text.
 
-    Both are on in code, so each is written for true and for false, and left
-    out otherwise. Transcription and Polly sign with the machine's AWS role:
-    no AWS credential is ever read or written here.
+    Both switches are on in code, so each is written for true and for false,
+    and left out otherwise. The speech-to-text is Amazon Transcribe in code;
+    AI_VOICE_TRANSCRIBE_PROVIDER=voxtral puts Voxtral on Bedrock back, and
+    anything but the two names is left out. Transcription and Polly sign with
+    the machine's AWS role: no AWS credential is ever read or written here.
     """
     voice: dict = {}
     for key, name in (("AI_VOICE_ENABLED", "Enabled"), ("AI_VOICE_SPEAK_REPLIES", "SpeakReplies")):
         switch = env.get(key, "").strip().lower()
         if switch in ("true", "false"):
             voice[name] = switch == "true"
+    provider = env.get("AI_VOICE_TRANSCRIBE_PROVIDER", "").strip().lower()
+    if provider in ("transcribe", "voxtral"):
+        voice["TranscribeProvider"] = provider
     return {"Voice": voice} if voice else {}
 
 

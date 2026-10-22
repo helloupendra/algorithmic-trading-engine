@@ -757,6 +757,170 @@ public sealed class AiVoiceTests
         Assert.Empty(db.AiCalls);
     }
 
+    // ---------- written down by Amazon Transcribe (the default from 22 Oct 2026) ----------
+
+    [Fact]
+    public void Amazon_transcribe_is_the_default_speech_to_text()
+    {
+        var voice = new AiVoiceSettings();
+
+        Assert.Equal((AiVoiceSettings.AmazonTranscribe, true, false), (voice.TranscribeProvider, voice.UsesAmazonTranscribe, voice.UsesVoxtral));
+        Assert.Equal(("ap-south-1", "hi-IN,en-IN", true), (voice.TranscribeRegion, voice.TranscribeLanguages, voice.TranscribeIdentifyMultiple));
+        Assert.Equal("Amazon Transcribe", AiCatalog.ProviderOf(AiCatalog.AmazonTranscribeModel));
+    }
+
+    [Fact]
+    public async Task A_voice_note_goes_to_transcribe_as_16_khz_pcm_and_its_hinglish_is_answered_as_typed()
+    {
+        var (ai, aws, bot, signer, assistant, _) = Setup(provider: AiVoiceSettings.AmazonTranscribe);
+        await Link(assistant);
+        bot.Sent.Clear();
+        byte[] note = OggOpus(seconds: 2, sampleRate: 48_000, channels: 1);
+        bot.File = note;
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("इरा, आज का P&L", "hi-IN"), ("kya hai?", "en-IN")));
+        aws.Speech.Enqueue((200, Mp3));
+        ai.Provider.On(Judge1, Answer("Aaj desk ne ₹2,22,414 net kamaye."));
+
+        await assistant.HandleAsync(Voice(Owner, seconds: 2), CancellationToken.None);
+
+        // The note's own sound, decoded and sent as raw 16 kHz PCM; Bedrock's audio model is not asked.
+        Assert.Equal(PcmAudio.FromWav(OggOpusDecoder.ToWav(note, 120), 120), _transcribe.Sound);
+        Assert.DoesNotContain(aws.Requests, r => r.Host.StartsWith("bedrock-mantle.", StringComparison.Ordinal));
+        Assert.Equal(new[] { "polly" }, signer.Signed.Select(s => s.Service));
+        // What was heard, in the scripts it was heard in, then the answer and the voice.
+        Assert.Equal("🎙 \"इरा, आज का P&L kya hai?\"", bot.Texts[0]);
+        Assert.Contains("₹2,22,414", bot.Texts[1]);
+        Assert.Single(bot.Voices);
+
+        await using var db = NewDb(_dbName);
+        var calls = await db.AiCalls.OrderBy(c => c.Id).ToListAsync();
+        Assert.Equal(new[] { AiCatalog.VoiceTranscribe, AiCatalog.DeskAssistant, AiCatalog.VoiceSpeak }, calls.Select(c => c.AgentKey));
+        var heard = calls[0];
+        Assert.Equal((AiCallOutcome.Ok, "amazon-transcribe", """["amazon-transcribe"]""", (int?)null, 0),
+            (heard.Outcome, heard.Model, heard.ChainJson, heard.TotalTokens, heard.MaxTokens));
+        Assert.Equal(("इरा, आज का P&L kya hai?", "इरा, आज का P&L kya hai?"), (heard.Summary, heard.Answer));
+        string asked = JsonNode.Parse(heard.MessagesJson)![0]!["content"]!.GetValue<string>();
+        Assert.StartsWith("Amazon Transcribe streaming in ap-south-1: 16 kHz mono PCM, hi-IN or en-IN, identified as spoken and switching within a recording", asked);
+        // Priced by the whole second of sound sent, at Mumbai's list price.
+        decimal cost = AmazonTranscribeClient.Cost(PcmAudio.Seconds(_transcribe.Sound), new AiVoiceSettings());
+        Assert.EndsWith(
+            $"sent as 16 kHz PCM; heard as hi-IN then en-IN; about ${cost.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)} " +
+            "at list price ($0.0001667 a second); the audio is not kept]",
+            asked);
+        // The Devanagari question is asked as typed, with the voice line after the prompt.
+        Assert.Equal("इरा, आज का P&L kya hai?", calls[1].Summary);
+        Assert.EndsWith(VoiceText.PromptNote("Ira"), calls[1].SystemPrompt);
+    }
+
+    [Fact]
+    public async Task A_console_recording_goes_to_transcribe_and_its_call_shows_the_websocket_and_the_cost()
+    {
+        Setup(provider: AiVoiceSettings.AmazonTranscribe);
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("Ira, aaj ka P&L kya hai?", "en-IN")));
+        byte[] wav = Recording(seconds: 2);
+
+        var result = await Transcribe(wav, "c-abc123");
+
+        var heard = Assert.IsType<AiVoiceTranscript>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(("Ira, aaj ka P&L kya hai?", 2.0), (heard.Text, heard.Seconds));
+        Assert.Equal(wav[44..], _transcribe.Sound);
+        await using var db = NewDb(_dbName);
+        var call = await db.AiCalls.SingleAsync();
+        Assert.Contains("[recording, 2 s, 62.5 KB, sent as 16 kHz PCM; heard as en-IN; about $0.000333 at list price ($0.0001667 a second); the audio is not kept]",
+            JsonNode.Parse(call.MessagesJson)![0]!["content"]!.GetValue<string>());
+
+        var detail = Assert.IsType<AiCallDetail>(Assert.IsType<OkObjectResult>(await Console().Call(call.Id, CancellationToken.None)).Value);
+        Assert.Equal(("GET wss://transcribestreaming.ap-south-1.amazonaws.com:8443/stream-transcription-websocket", false), (detail.Request.Endpoint, detail.Request.Stream));
+    }
+
+    [Fact]
+    public async Task A_role_without_the_transcribe_permission_is_said_with_its_call_and_asks_no_agent()
+    {
+        var log = new ListLogger();
+        var (ai, _, bot, _, assistant, _) = Setup(log: log, provider: AiVoiceSettings.AmazonTranscribe);
+        await Link(assistant);
+        bot.Sent.Clear();
+        bot.File = OggOpus(seconds: 1, sampleRate: 48_000, channels: 1);
+        _transcribe.Refuse = new TranscribeHandshakeException(403, "Forbidden");
+
+        await assistant.HandleAsync(Voice(Owner, seconds: 1), CancellationToken.None);
+
+        await using var db = NewDb(_dbName);
+        var call = await db.AiCalls.SingleAsync();
+        const string why = "http 403: Amazon Transcribe refused the stream: the server's AWS role needs transcribe:StartStreamTranscriptionWebSocket in ap-south-1, or its signature was refused";
+        Assert.Equal((AiCatalog.VoiceTranscribe, AiCallOutcome.Failed, why, string.Empty, """["amazon-transcribe"]"""), (call.AgentKey, call.Outcome, call.Error, call.Model, call.ChainJson));
+        Assert.Contains("\"httpStatus\":403", call.AttemptsJson);
+        Assert.Equal($"I could not make out that voice note: {why} (call #{call.Id}). Please try again or type the question.", bot.Texts.Single());
+        Assert.Empty(ai.Provider.Requests);
+        // A provider's trouble, not the desk's: nothing above Information.
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task With_transcribe_an_mp3_file_is_refused_before_download_and_a_wav_file_is_heard()
+    {
+        var (_, aws, bot, _, assistant, _) = Setup(provider: AiVoiceSettings.AmazonTranscribe);
+        await Link(assistant);
+        bot.Sent.Clear();
+        byte[] wav = Recording(seconds: 1);
+        bot.File = wav;
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("Hello.", "en-IN")));
+
+        await assistant.HandleAsync(Audio(Owner, "audio/mpeg", "note.mp3"), CancellationToken.None);
+        await assistant.HandleAsync(Audio(Owner, "audio/wav", "note.wav"), CancellationToken.None);
+
+        Assert.StartsWith("I cannot listen to MP3 audio at the moment. Please send it as a voice note, or as OGG or WAV audio", bot.Texts[0]);
+        Assert.Single(bot.FileRequests);
+        Assert.Equal(wav[44..], _transcribe.Sound);
+        Assert.Equal("🎙 \"Hello.\"", bot.Texts[1]);
+        Assert.DoesNotContain(aws.Requests, r => r.Host.StartsWith("bedrock-mantle.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task The_setting_chooses_who_writes_speech_down_from_one_call_to_the_next()
+    {
+        var (_, aws, _, _, _, options) = Setup(provider: AiVoiceSettings.AmazonTranscribe);
+        _transcribe.Answers.Enqueue(TranscribeTestKit.Heard(("By Transcribe.", "en-IN")));
+        aws.Transcripts.Enqueue((200, Heard("By Voxtral.")));
+
+        var first = await Transcribe(Recording(seconds: 1));
+        options.CurrentValue.Voice.TranscribeProvider = " Voxtral ";
+        var second = await Transcribe(Recording(seconds: 1));
+        options.CurrentValue.Voice.TranscribeProvider = "whisper";
+        var third = await Transcribe(Recording(seconds: 1));
+
+        Assert.Equal("By Transcribe.", Assert.IsType<AiVoiceTranscript>(Assert.IsType<OkObjectResult>(first).Value).Text);
+        Assert.Equal("By Voxtral.", Assert.IsType<AiVoiceTranscript>(Assert.IsType<OkObjectResult>(second).Value).Text);
+        Assert.StartsWith("The audio model could not make out that recording: Ai:Voice:TranscribeProvider is \"whisper\": it must be \"transcribe\" or \"voxtral\"",
+            Error(third, StatusCodes.Status502BadGateway));
+        Assert.Single(_transcribe.Urls);
+        Assert.Single(aws.Requests);
+        await using var db = NewDb(_dbName);
+        Assert.Equal(new[] { "amazon-transcribe", "bedrock-oss:" + Voxtral, string.Empty }, await db.AiCalls.OrderBy(c => c.Id).Select(c => c.Model).ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("इरा, trader: क्यों खरीदा?", "/trader क्यों खरीदा?")]
+    [InlineData("हे इरा, trader why did you buy?", "/trader why did you buy?")]
+    [InlineData("Hey Ira, reviewer, run 339?", "/reviewer run 339?")]
+    [InlineData("इरा, आज का P&L क्या है?", "इरा, आज का P&L क्या है?")]
+    [InlineData("आज का P&L क्या है?", "आज का P&L क्या है?")]
+    [InlineData("ट्रेडर, क्यों खरीदा?", "ट्रेडर, क्यों खरीदा?")]
+    public void The_name_is_found_in_devanagari_before_an_agents_prefix_word_and_hindi_is_asked_as_written(string heard, string asked) =>
+        Assert.Equal(asked, VoiceText.AsTyped(heard, TelegramAssistant.AgentCommands.Select(c => c.Command), "Ira"));
+
+    [Fact]
+    public void A_hindi_answer_is_spoken_whole_and_cut_at_a_danda_when_long()
+    {
+        Assert.Equal("आज का P&L ₹42,000 है। कल ₹31,000 था।", VoiceText.Spoken("आज का **P&L** ₹42,000 है। कल ₹31,000 था।", 600));
+        string longer = string.Concat(Enumerable.Range(1, 20).Select(i => $"रन {i} ने ₹{i * 1000:N0} कमाए। "));
+
+        string spoken = VoiceText.Spoken(longer, 120);
+
+        Assert.True(spoken.Length <= 120, spoken);
+        Assert.EndsWith("कमाए। " + VoiceText.DetailsAbove, spoken);
+    }
+
     // ---------- helpers ----------
 
     /// <summary>
@@ -877,10 +1041,15 @@ public sealed class AiVoiceTests
     }.ToJsonString();
 
     /// <param name="more">More of the API's services for the bot's scopes (Ira's actions, say).</param>
+    /// <param name="provider">
+    /// What writes speech down. Voxtral unless a test says otherwise: most of these tests were written for it and pin its
+    /// request, and it stays behind the setting; Amazon Transcribe's are in the section of their own below.
+    /// </param>
     private (Services Ai, FakeAws Aws, VoiceBot Bot, FakeSigner Signer, TelegramAssistant Assistant, AiTestKit.Monitor Options) Setup(
-        ILogger<TelegramVoice>? log = null, Action<IServiceCollection, Services>? more = null)
+        ILogger<TelegramVoice>? log = null, Action<IServiceCollection, Services>? more = null, string provider = AiVoiceSettings.Voxtral)
     {
         var ai = Build(null, NewDb(_dbName));
+        ai.Options.CurrentValue.Voice.TranscribeProvider = provider;
         var aws = new FakeAws();
         var bot = new VoiceBot();
         var signer = new FakeSigner();
@@ -892,8 +1061,10 @@ public sealed class AiVoiceTests
         more?.Invoke(services, ai);
         var scopes = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Telegram:BotToken"] = "123:TEST" }).Build();
+        _transcribe = new TranscribeTestKit.ScriptedTranscribe();
         var shared = new AiVoiceService(scopes, new BedrockOpenChatClient(new Factory(aws), ai.Options, signer),
-            new PollySpeechClient(new Factory(aws), ai.Options, signer), ai.Options, NullLogger<AiVoiceService>.Instance);
+            TranscribeTestKit.Client(ai.Options, _transcribe), new PollySpeechClient(new Factory(aws), ai.Options, signer), ai.Options,
+            NullLogger<AiVoiceService>.Instance);
         var voice = new TelegramVoice(shared, log ?? NullLogger<TelegramVoice>.Instance);
         _shared = shared;
         _ai = ai;
@@ -906,6 +1077,9 @@ public sealed class AiVoiceTests
 
     /// <summary>The one voice <see cref="Setup"/> gave Telegram, which the console's endpoints are given too.</summary>
     private AiVoiceService _shared = null!;
+
+    /// <summary>Amazon Transcribe as <see cref="Setup"/> scripted it: each stream's answer is queued on its <c>Answers</c>.</summary>
+    private TranscribeTestKit.ScriptedTranscribe _transcribe = null!;
 
     private Services _ai = null!;
 

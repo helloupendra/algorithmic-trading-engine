@@ -291,11 +291,19 @@ public static partial class AiCatalog
     /// <summary>Polly's SynthesizeSpeech, in <paramref name="region"/>.</summary>
     public static string PollyEndpoint(string region) => $"https://polly.{region}.amazonaws.com/v1/speech";
 
+    /// <summary>A transcription's model when Amazon Transcribe streaming wrote it down (<see cref="AmazonTranscribeClient"/>).</summary>
+    public const string AmazonTranscribeModel = "amazon-transcribe";
+
+    public const string AmazonTranscribeProviderName = "Amazon Transcribe";
+
+    public static bool IsAmazonTranscribe(string model) => model == AmazonTranscribeModel;
+
     /// <summary>Who serves <paramref name="model"/>, as the console names it.</summary>
     public static string ProviderOf(string model) =>
         IsBedrock(model) ? BedrockProviderName
         : IsBedrockOpen(model) ? BedrockOpenProviderName
         : IsPolly(model) ? PollyProviderName
+        : IsAmazonTranscribe(model) ? AmazonTranscribeProviderName
         : ProviderName;
 
     /// <summary>The console's chat. The one agent built in Phase 1.</summary>
@@ -360,7 +368,11 @@ public static partial class AiCatalog
     /// <summary>The AI's one Telegram message a day (run reviews and the AI Trader's day). A scheduled job, not an agent: it asks no model.</summary>
     public const string DailyDigest = "ai-digest";
 
-    /// <summary>A spoken question (a Telegram voice note, a console recording) written down by the audio model (Voxtral on Bedrock): named on each transcription's call.</summary>
+    /// <summary>
+    /// A spoken question (a Telegram voice note, a console recording) written down by the speech-to-text (Amazon
+    /// Transcribe streaming, or Voxtral on Bedrock by <see cref="AiVoiceSettings.TranscribeProvider"/>): named on each
+    /// transcription's call.
+    /// </summary>
     public const string VoiceTranscribe = "voice-transcribe";
 
     /// <summary>An answer spoken back by Amazon Polly, on Telegram or the console: named on each spoken reply's call.</summary>
