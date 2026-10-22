@@ -39,7 +39,7 @@ public class SimBrokerAccountTests
         // The address came from the broker's own whoami, not from configuration.
         var app = JsonDocument.Parse(broker.Body("POST", "/admin/accounts/OFB00007/apps")!).RootElement;
         var ips = app.GetProperty("staticIps").EnumerateArray().Select(x => x.GetString()).ToList();
-        Assert.Equal(new[] { "15.252.66.246", "13.1.1.1" }, ips);
+        Assert.Equal(new[] { "203.0.113.10", "13.1.1.1" }, ips);
 
         var funds = JsonDocument.Parse(broker.Body("POST", "/admin/accounts/OFB00007/funds")!).RootElement;
         Assert.Equal(500_000m, funds.GetProperty("amount").GetDecimal());
@@ -239,11 +239,11 @@ public class SimBrokerAccountTests
 
             return (method, path) switch
             {
-                ("GET", "/api/v1/whoami") => (HttpStatusCode.OK, """{"ip":"15.252.66.246"}"""),
+                ("GET", "/api/v1/whoami") => (HttpStatusCode.OK, """{"ip":"203.0.113.10"}"""),
                 ("POST", "/admin/accounts") => (HttpStatusCode.OK,
                     """{"clientId":"OFB00007","totpSecret":"JBSWY3DPEHPK3PXP","totpUri":"otpauth://totp/x"}"""),
                 ("POST", "/admin/accounts/OFB00007/apps") => (HttpStatusCode.OK,
-                    """{"clientId":"OFB00007","appId":"APP-NEW","appSecret":"s3cret","staticIps":["15.252.66.246","13.1.1.1"]}"""),
+                    """{"clientId":"OFB00007","appId":"APP-NEW","appSecret":"s3cret","staticIps":["203.0.113.10","13.1.1.1"]}"""),
                 ("POST", "/admin/accounts/OFB00007/funds") => (HttpStatusCode.OK, FundsJson),
                 ("POST", "/admin/accounts/OFB00007/withdrawals") => (HttpStatusCode.OK, FundsJson),
                 ("GET", "/admin/accounts/OFB00007/funds") => (HttpStatusCode.OK, FundsJson),

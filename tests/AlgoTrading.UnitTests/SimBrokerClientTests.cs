@@ -159,7 +159,7 @@ public class SimBrokerClientTests
         var result = await client.WhoAmIAsync();
 
         Assert.True(result.Succeeded);
-        Assert.Equal("15.252.66.246", result.Value);
+        Assert.Equal("203.0.113.10", result.Value);
         Assert.DoesNotContain(broker.Requests, r => r.Path == "/api/v1/session");
     }
 
@@ -276,7 +276,7 @@ public class SimBrokerClientTests
             {
                 ("POST", "/api/v1/session") => (HttpStatusCode.OK,
                     """{"accessToken":"token-1","clientId":"OFB00001","appId":"APP-TEST","expiresAt":"2026-09-22T06:00:00+05:30"}"""),
-                ("GET", "/api/v1/whoami") => (HttpStatusCode.OK, """{"ip":"15.252.66.246"}"""),
+                ("GET", "/api/v1/whoami") => (HttpStatusCode.OK, """{"ip":"203.0.113.10"}"""),
                 ("GET", "/api/v1/funds") => (HttpStatusCode.OK, FundsJson),
                 ("GET", "/api/v1/positions") => (HttpStatusCode.OK, PositionsJson),
                 ("POST", "/api/v1/orders") => (HttpStatusCode.OK, Order()),
