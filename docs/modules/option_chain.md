@@ -17,6 +17,8 @@ From a recorder that asks a vendor's option chain and writes every strike to
   nearest expiry, for NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX,
   CRUDEOIL and NATURALGAS. Each row carries OI, previous OI, volume, IV and all
   four greeks from Dhan. See [Dhan connector](../dhan/).
+  Since 2026-10-30 it also records some **later expiries**, every 5 minutes
+  (see below).
 * **FYERS** (fallback): `market_data/live/option_chain_poller.py`. A FYERS tick
   carries no open interest, so the poller merges it in from a second endpoint.
 
@@ -29,6 +31,62 @@ poller was not running has no open interest at all, permanently. Not in the
 chain, not in the OI curves, and not in any backtest of that day. A strike's
 open interest at 10:15 is knowable only because something wrote it down at
 10:15. Start the poller with the ingestor, every session.
+
+## Which expiries are recorded
+
+| Expiry | Underlyings | How often |
+| --- | --- | --- |
+| The nearest (on an expiry day, that day's) | all eight above | every minute |
+| The one after the nearest | NIFTY, BANKNIFTY, SENSEX | every 5 minutes |
+| The nearest monthly, when it is neither of those | NIFTY, SENSEX | every 5 minutes |
+
+A monthly is the last expiry Dhan lists in its month, so a monthly moved earlier
+by a holiday still counts (NIFTY's November 2026 monthly is on the 23rd).
+BANKNIFTY lists only monthlies: its nearest is this month's and its later one is
+next month's. On a monthly's own expiry day the nearest is that monthly, and only
+the next weekly is added.
+
+The later expiries never cost the nearest anything. Each round records every
+nearest expiry first; the later ones that are due are asked for only in the time
+left before the next round, through the same one-chain-every-three-seconds slot,
+and only for an underlying whose nearest was recorded in that round. A capture is
+not started with less than 10 seconds left, and one still waiting on Dhan when the
+next round is due is cut short and tried again after its interval. A round of the
+eight nearest takes about 25 seconds, so there is room for the five later ones
+(NIFTY 2, BANKNIFTY 1, SENSEX 2), which fall due together every fifth round.
+Five extra chains every five minutes against eight every minute is roughly an
+eighth more rows: an estimated 60 to 80 MB a trading day at today's row sizes.
+
+Settings (`Dhan:ChainPoller`, defaults in `DhanChainPollerSettings`, so no server
+configuration is needed): `LaterExpiryUnderlyings` (`NIFTY,BANKNIFTY,SENSEX`;
+empty turns later expiries off) and `LaterExpiryIntervalSeconds` (300, never
+less than a round). `GET /api/Dhan/chain-poller` lists them, with each later
+expiry's last attempt under `laterOutcomes`, apart from the nearest's `outcomes`.
+
+## Which expiry a read gets
+
+Every read takes an optional `expiry`. Without one, it gets **the nearest
+expiry recorded on the day of the capture it reads**: the smallest expiry, not
+before that day, with a capture that day. That is the per-minute series, the
+only one there was before 30 Oct 2026, and the one ChainFlowBuy, the AI desk,
+the market factors page and the chain tabs before an expiry is picked all read.
+A later expiry is never
+mixed in, even when it was captured a few seconds after the nearest and is
+therefore the newest row:
+
+* `GET /api/OptionChain` and `/view`: the nearest expiry's newest capture at or
+  before `asOfUtc`.
+* `/trend`: that expiry's captures of that session, so totals and PCR are one
+  expiry's, never two added together.
+* `/series` without an expiry: each day's points are that day's nearest, as
+  before. A strike listed only in a later expiry has no point that day rather
+  than another contract's.
+
+To read another expiry, name it: `GET /api/OptionChain/view?underlying=NIFTY&expiry=2026-11-10`.
+`GET /api/OptionChain/expiries/recorded?underlying=NIFTY&day=2026-10-30` says
+which expiries a day has, how many captures each, their usual spacing
+(`typicalIntervalSeconds`: about 60 for the nearest, 300 for a later one) and
+which is the default. Without `day` it answers for the newest capture's day.
 
 ## The advanced chain screen
 
@@ -57,6 +115,10 @@ and every number on it says where it came from.
   * The page opens scrolled to ATM; strike window ±10, ±20 or all.
 * **OI analysis:** OI by strike, change in OI by strike, and PCR through the
   session.
+* **Expiry:** the expiries recorded on the session shown, the nearest first and
+  chosen by default. A later expiry is marked with how often it is recorded
+  ("every 5 min", or "one capture so far" before its second). Picking the
+  nearest clears the choice, so the page follows the nearest into the next week.
 * **As of:** replays any capture of the day.
 
 **Live and per-minute.** A strike whose live quote is at most 2 minutes old and
@@ -118,11 +180,12 @@ as soon as anything comes back.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `/api/OptionChain` | the strike ladder; `asOfUtc` for replay |
-| GET | `/api/OptionChain/view` | the ladder with live quotes laid over it and the header block; `asOfUtc` for replay |
-| GET | `/api/OptionChain/trend` | spot, call and put OI and PCR at each capture of the session |
-| GET | `/api/OptionChain/series` | one strike through the session |
-| GET | `/api/OptionChain/expiries` | which expiries have been captured |
+| GET | `/api/OptionChain` | the strike ladder; `asOfUtc` for replay, `expiry` for another than the nearest |
+| GET | `/api/OptionChain/view` | the ladder with live quotes laid over it and the header block; `asOfUtc` for replay, `expiry` as above |
+| GET | `/api/OptionChain/trend` | spot, call and put OI and PCR at each capture of the session, one expiry (`expiry`, or the nearest) |
+| GET | `/api/OptionChain/series` | one strike through the session, one expiry a day (`expiry`, or each day's nearest) |
+| GET | `/api/OptionChain/expiries` | which expiries have ever been captured |
+| GET | `/api/OptionChain/expiries/recorded` | the expiries recorded on one IST day (`day`, or the newest capture's), with captures, usual spacing and which is the default |
 | GET | `/api/OptionChain/positions` | open legs of running runs on the underlying's contracts, the caller's own (an admin's: every account's); `mode` is `LivePaper` (default: strategy runs and manual books, marked at the newer of the live quote and the stored mark) or `OfflineReplay` (backtests, at their own last mark) — never both |
 | POST | `/api/OptionChain/snapshots` | the poller's write path |
 | POST | `/api/OptionChain/poller/start` · `/stop` | admin only |
