@@ -43,6 +43,13 @@ class TheRuleTests(unittest.TestCase):
         self.assertFalse(mh.derivatives_close_later(FRIDAY_BEFORE))
         self.assertTrue(mh.derivatives_close_later(MONDAY_FROM))
 
+    def test_an_option_or_a_future_is_a_derivative_and_a_share_or_an_index_is_not(self):
+        self.assertTrue(mh.is_derivative_symbol("NSE:NIFTY26D0824500CE"))
+        self.assertTrue(mh.is_derivative_symbol("NSE:BAJAJ-AUTO26DECFUT"))
+        self.assertFalse(mh.is_derivative_symbol("NSE:BAJAJ-AUTO-EQ"))
+        self.assertFalse(mh.is_derivative_symbol("NSE:NIFTY50-INDEX"))
+        self.assertFalse(mh.is_derivative_symbol(None))
+
     def test_an_expiring_index_contract_stops_at_15_30_on_its_expiry_day(self):
         # Para 4.2.4: expiring index derivatives cease at 3:30 p.m. on expiry days.
         self.assertEqual(time(15, 30), mh.contract_close(date(2026, 12, 8), index_contract_expiring_that_day=True))

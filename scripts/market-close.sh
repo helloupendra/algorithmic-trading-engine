@@ -56,7 +56,8 @@ stopped=0
 failed=0
 
 # --- 1. live runs ------------------------------------------------------------
-# Equity and index runs square off at 15:30 on their own; a commodity run holds
+# Equity and index runs square off at 15:30 on their own (15:45 from 7 Dec 2026,
+# MarketHoursService); a commodity run holds
 # until MCX closes. Stopping with flatten=true asks the platform to close what
 # is still open, through the same path the console's Stop button uses.
 #

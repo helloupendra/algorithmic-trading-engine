@@ -5,7 +5,8 @@ Two watchlists, one feed: park the equity/F&O symbols when NSE closes.
 WHY
 ---
 The broker socket carries every subscribed symbol all day, but NSE and BSE stop
-producing after 15:30 while MCX runs to 23:30. Left alone the ingestor keeps
+producing after 15:30 (options and futures after 15:45 from 7 Dec 2026) while
+MCX runs to 23:30. Left alone the ingestor keeps
 holding subscriptions that cannot tick for eight hours - work the box does not
 need to do, and noise in every "stale quote" view.
 
@@ -67,6 +68,10 @@ from telegram_notifier import (  # noqa: E402
 )
 
 import redis  # noqa: E402
+
+# The engine's NSE and BSE hours: from 7 Dec 2026 options and futures trade to 15:45.
+sys.path.insert(0, str(REPO_ROOT / "src" / "AlgoTrading.PythonEngine"))
+from core.market_hours import derivatives_close, derivatives_close_later, is_derivative_symbol  # noqa: E402
 
 STATE_FILE = REPO_ROOT / "data" / "session-watchlist-state.json"
 COMMODITY_PREFIXES = ("MCX:",)
@@ -154,9 +159,15 @@ def do_park(api: ApiClient, publisher: AlertPublisher, dry: bool) -> int:
     watchlist = api.get("/api/LiveData/watchlist") or []
     held = protected_symbols(api)
 
+    # The park is scheduled at 15:35. From 7 Dec 2026 the options and futures
+    # trade to 15:45, so before that close only the shares and indices are
+    # parked; the contracts stay on the wire until the next morning.
+    now = datetime.now(timezone.utc).astimezone(IST)
+    derivatives_trading = derivatives_close_later(now.date()) and now.time() < derivatives_close(now.date())
     candidates = [
         w for w in watchlist
         if w.get("isActive") and not is_commodity(w.get("symbol", ""))
+        and not (derivatives_trading and is_derivative_symbol(w.get("symbol", "")))
     ]
     parkable = [w for w in candidates if w["symbol"] not in held]
     skipped = [w for w in candidates if w["symbol"] in held]

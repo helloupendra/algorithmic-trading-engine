@@ -23,6 +23,7 @@ package (sentinel/clock.py), and must not pull the engine in with it.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, time
 
 #: The open of both segments.
@@ -54,3 +55,11 @@ def contract_close(day: date, index_contract_expiring_that_day: bool) -> time:
     that day at the cash close (para 4.2.4), any other at the derivatives close.
     """
     return CASH_CLOSE if index_contract_expiring_that_day else derivatives_close(day)
+
+
+_DERIVATIVE = re.compile(r"\d(CE|PE)$|FUT$", re.IGNORECASE)
+
+
+def is_derivative_symbol(symbol: str | None) -> bool:
+    """An option or future in the FYERS grammar ("NSE:NIFTY2612224500CE", "NSE:NIFTY26DECFUT"); not "-EQ" or "-INDEX"."""
+    return bool(_DERIVATIVE.search((symbol or "").strip()))
