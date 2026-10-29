@@ -201,7 +201,9 @@ export function addLeg(legs: readonly BuilderLeg[], next: Omit<BuilderLeg, 'id' 
 
 /**
  * When an expiry day ends on its exchange, in UTC milliseconds: 15:30 IST for
- * NSE and BSE; for MCX the evening close, taken as 23:30 IST, the earlier of
+ * NSE and BSE, when expiring index contracts stop, also from 7 Dec 2026 (a
+ * stock option then trades to 15:45, and its time left is understated by a
+ * quarter of an hour, never overstated); for MCX the evening close, taken as 23:30 IST, the earlier of
  * its two seasonal closes (23:55 while New York is on winter time), so the
  * time left is never overstated. The server counts the live greeks to the
  * same close (ExpirySettler.ExpiryCloseUtc).

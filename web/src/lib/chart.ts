@@ -7,6 +7,7 @@
  * chart.test.ts rather than by a screenshot of an empty chart.
  */
 
+import { nseCloseIstOf, utcHm } from './marketHours'
 import type { CoverageRow } from './queries'
 import type { SmcLayers } from '../components/SmcChart'
 
@@ -172,7 +173,9 @@ function mcxCloseHm(sessionCloseUtc: string | null | undefined): string | null {
  * - NSE and BSE: 09:15 to 15:30 IST (03:45 to 10:00Z). Before is the pre-open
  *   auction. After, the vendors go on repeating the close with stamps that
  *   move forward until the feeds stop late in the evening, and BSE replays the
- *   previous close stamped 00:00 IST (18:30Z the day before).
+ *   previous close stamped 00:00 IST (18:30Z the day before). From 7 Dec 2026
+ *   an option or a future trades to 15:45 (10:15Z) while the indices and the
+ *   shares stop at 15:30 (lib/marketHours.ts).
  * - MCX: 09:00 IST (03:30Z) to the evening close. `mcxCloseUtc` is the MCX
  *   session answer's close; without it, the later of the two seasonal closes,
  *   so a real candle is never held back.
@@ -183,7 +186,7 @@ function mcxCloseHm(sessionCloseUtc: string | null | undefined): string | null {
 export function outsideSession(symbol: string, timeUtc: string, mcxCloseUtc?: string | null): boolean {
   const exchange = symbol.slice(0, symbol.indexOf(':') + 1).toUpperCase()
   const hm = timeUtc.slice(11, 16)
-  if (exchange === 'NSE:' || exchange === 'BSE:') return hm < '03:45' || hm >= '10:00'
+  if (exchange === 'NSE:' || exchange === 'BSE:') return hm < '03:45' || hm >= utcHm(nseCloseIstOf(symbol, timeUtc.slice(0, 10)))
   if (exchange === 'MCX:') return hm < '03:30' || hm >= (mcxCloseHm(mcxCloseUtc) ?? MCX_LATEST_CLOSE)
   return false
 }

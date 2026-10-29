@@ -27,6 +27,7 @@ import { formatInrSigned } from './format'
 import { SEVERITY_LABEL, severityTone } from './incidents'
 import type { Access, Requirement } from './modules'
 import { allows } from './modules'
+import { derivativesCloseIst, minutesOf } from './marketHours'
 import { runUserLabel, shortStopReason } from './runHistory'
 import { liveNet, realizedNet } from './strategyList'
 import type {
@@ -148,12 +149,14 @@ export const PHASES: ReadonlyArray<{ key: Phase; label: string; short: string; t
 ]
 
 const NSE_OPEN_MIN = 9 * 60 + 15
-const NSE_CLOSE_MIN = 15 * 60 + 30
+/** The fallback's close: the runs' (the options'), 15:30 until 6 Dec 2026 and 15:45 from 7 Dec (lib/marketHours.ts). */
+const nseCloseMin = (nowMs: number) => minutesOf(derivativesCloseIst(istDay(nowMs)))
 
 /**
- * The phase the clock and the NSE session put the Desk in. The session is the
+ * The phase the clock and the NSE session put the Desk in: the options' session, which the runs trade (to 15:45
+ * from 7 Dec 2026). The session is the
  * API's answer (holidays and special sessions included); until it arrives,
- * the standard 09:15–15:30 on weekdays stands in, because the phase only
+ * the standard 09:15–15:30 on weekdays (15:45 from 7 Dec 2026) stands in, because the phase only
  * orders the panels and claims nothing about the market. A day without a
  * session (a weekend, a holiday) shows the last session's close.
  */
@@ -172,7 +175,7 @@ export function clockPhase(
   const weekday = new Date(nowMs + IST_OFFSET_MS).getUTCDay()
   if (weekday === 0 || weekday === 6) return 'post'
   const minute = istMinute(nowMs)
-  return minute < NSE_OPEN_MIN ? 'pre' : minute < NSE_CLOSE_MIN ? 'live' : 'post'
+  return minute < NSE_OPEN_MIN ? 'pre' : minute < nseCloseMin(nowMs) ? 'live' : 'post'
 }
 
 /** A phase the viewer clicked to look at, and what the clock said when they did. */

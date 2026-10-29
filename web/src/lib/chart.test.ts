@@ -134,6 +134,16 @@ describe('outsideSession', () => {
     expect(outsideSession('MCX:GOLD26DECFUT', t('18:10'), 'not a date')).toBe(false)
     expect(outsideSession('NIFTY', t('20:00'))).toBe(false)
   })
+
+  it('from 7 Dec 2026 keeps an option’s and a future’s last quarter hour, and not the index’s', () => {
+    const before = (hm: string) => `2026-12-04T${hm}:00Z`
+    const from = (hm: string) => `2026-12-07T${hm}:00Z`
+    expect(outsideSession('NSE:NIFTY26D0824500CE', before('10:05'))).toBe(true)
+    expect(['10:00', '10:14', '10:15'].map((hm) => outsideSession('NSE:NIFTY26D0824500CE', from(hm)))).toEqual([false, false, true])
+    expect(outsideSession('BSE:SENSEX26DECFUT', from('10:10'))).toBe(false)
+    expect(outsideSession('NSE:NIFTY50-INDEX', from('10:05'))).toBe(true)
+    expect(outsideSession('NSE:RELIANCE-EQ', from('10:05'))).toBe(true)
+  })
 })
 
 describe('structureTimeframes', () => {

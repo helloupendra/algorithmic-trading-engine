@@ -167,13 +167,16 @@ export function DeskPage() {
   const { today, day } = shownDay
   const nse = useMarketSession()
   const mcx = useMarketSession('MCX', 'COM')
-  const clock = clockPhase(nowMs, nse.data)
+  // The phase follows the options' session, which the runs trade: from 7 Dec 2026 it ends at 15:45,
+  // after the cash market (nse, which the feed cells still read: the indices go quiet at 15:30).
+  const options = useMarketSession('NSE', 'FO')
+  const clock = clockPhase(nowMs, options.data)
 
   const [pick, setPick] = useState<PhasePick | null>(null)
   const [pin, setPin] = useState<PhasePin | null>(() => readPin(deskStorage()))
   // The session's answer (or its failure) makes the clock the real one; until
   // then it is the standard hours' guess, which must not end a holiday's pin.
-  const clockKnown = nse.data !== undefined || nse.isError
+  const clockKnown = options.data !== undefined || options.isError
   const shown = shownPhase(clock, pick, pin, today, clockKnown)
   // A pick lasts until the clock moves; drop it then, so an old one cannot come back.
   useEffect(() => {

@@ -8,8 +8,9 @@
  * forward), and the tick means a different thing in each place it appears:
  *
  *  - in the manual book an unticked position is intraday and is squared off at
- *    its exchange's close (NSE/BSE 15:30 IST, MCX at the MCX close); ticked, it
- *    is held overnight;
+ *    its exchange's close (NSE/BSE 15:30 IST, an option or future 15:45 from
+ *    7 Dec 2026 (lib/marketHours.ts), MCX at the MCX close); ticked, it is held
+ *    overnight;
  *  - in a strategy run a ticked leg moves to the owner's manual book when the
  *    MARKET CLOSE stops the run. Any other stop — the Stop button, a risk rule,
  *    a runner that dies — squares off every leg: a protective stop that left
@@ -19,6 +20,7 @@
  * surprised by what happens at 15:30.
  */
 
+import { CASH_CLOSE_IST, derivativesCloseIst, istDayOf, nseCloseIstOf } from './marketHours'
 import type { LivePosition } from './types'
 
 /** An MCX contract closes with the MCX evening session, not at 15:30. */
@@ -26,15 +28,21 @@ export function isMcx(symbol: string | null | undefined): boolean {
   return (symbol ?? '').trim().toUpperCase().startsWith('MCX:')
 }
 
-/** "the close (15:30 IST)" for NSE/BSE, "the MCX close" for commodities. */
-export function closeName(symbol: string | null | undefined): string {
-  return isMcx(symbol) ? 'the MCX close' : 'the close (15:30 IST)'
+/**
+ * "the close (15:30 IST)" for NSE/BSE, "the MCX close" for commodities. From
+ * 7 Dec 2026 an option or future says "the close (15:45 IST)"; the API names
+ * an index's expiry day's 15:30 itself, which a symbol alone cannot always tell.
+ */
+export function closeName(symbol: string | null | undefined, nowMs: number = Date.now()): string {
+  return isMcx(symbol) ? 'the MCX close' : `the close (${nseCloseIstOf(symbol, istDayOf(nowMs))} IST)`
 }
 
 /** The one line under the positions table that says what the ticks do here. */
-export function carryHint(isManualBook: boolean): string {
+export function carryHint(isManualBook: boolean, nowMs: number = Date.now()): string {
+  const options = derivativesCloseIst(istDayOf(nowMs))
+  const nse = options === CASH_CLOSE_IST ? `NSE/BSE ${CASH_CLOSE_IST} IST` : `NSE/BSE ${CASH_CLOSE_IST} IST, options and futures ${options}`
   return isManualBook
-    ? 'Carry: unticked positions are intraday and are squared off at their exchange’s close (NSE/BSE 15:30 IST, MCX at its close); ticked ones are held overnight.'
+    ? `Carry: unticked positions are intraday and are squared off at their exchange’s close (${nse}, MCX at its close); ticked ones are held overnight.`
     : 'Carry: a ticked leg moves to your manual book at the market close instead of being squared off. Stop, a risk-rule trip or a runner that dies still squares off every leg.'
 }
 
@@ -56,7 +64,11 @@ export interface CarryContext {
   isManualBook: boolean
 }
 
-export function carryControl(p: Pick<LivePosition, 'status' | 'carryForward' | 'symbol'>, ctx: CarryContext): CarryControl {
+export function carryControl(
+  p: Pick<LivePosition, 'status' | 'carryForward' | 'symbol'>,
+  ctx: CarryContext,
+  nowMs: number = Date.now(),
+): CarryControl {
   const show = p.status === 'Open'
   const checked = !!p.carryForward
   if (!ctx.canControl) {
@@ -68,8 +80,8 @@ export function carryControl(p: Pick<LivePosition, 'status' | 'carryForward' | '
   let title: string
   if (ctx.isManualBook) {
     title = checked
-      ? `Carry forward: held overnight. Untick to square it off at ${closeName(p.symbol)}.`
-      : `Intraday: squared off at ${closeName(p.symbol)}. Tick to hold it overnight.`
+      ? `Carry forward: held overnight. Untick to square it off at ${closeName(p.symbol, nowMs)}.`
+      : `Intraday: squared off at ${closeName(p.symbol, nowMs)}. Tick to hold it overnight.`
   } else {
     title = checked
       ? 'Moves to your manual book at the market close. Stop, a risk-rule trip or a runner that dies still squares it off.'
@@ -111,8 +123,8 @@ export function stopCarryWarning(positions: Pick<LivePosition, 'status' | 'carry
 }
 
 /** The hint under the ticket's tick. */
-export function ticketCarryHint(carryForward: boolean, symbol: string | null | undefined): string {
+export function ticketCarryHint(carryForward: boolean, symbol: string | null | undefined, nowMs: number = Date.now()): string {
   return carryForward
     ? 'Held overnight until you close it or it expires. Each order is its own position; change its tick in the book any time.'
-    : `Intraday: squared off at ${closeName(symbol)}. Each order is its own position; change its tick in the book any time.`
+    : `Intraday: squared off at ${closeName(symbol, nowMs)}. Each order is its own position; change its tick in the book any time.`
 }

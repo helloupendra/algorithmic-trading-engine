@@ -18,7 +18,7 @@ import type { DeskAccount, Figures, StopKind } from './desk'
 import { byUnderlying, istHm, isTradingRun, stopKind, strategyLabel, sumFigures } from './desk'
 import { MANUAL_BOOK } from './orders'
 import type { AccountCurve, CurvePoint, DayAxis, Gap } from './pnlSeries'
-import { dayAxis, dayStartMs, mcxCloseMinute, minuteOfDay, recorderGaps, seriesPoints, splitAtGaps, valueAt } from './pnlSeries'
+import { dayAxis, dayStartMs, mcxCloseMinute, minuteOfDay, nseRunsCloseMinute, recorderGaps, seriesPoints, splitAtGaps, valueAt } from './pnlSeries'
 import type { LiveBar, LiveRunSummary, RunPnlSeriesResponse } from './types'
 
 // ---------------------------------------------------------------- one underlying
@@ -355,7 +355,7 @@ export function tracksLayout(input: {
     ...tracks.flatMap((t) => t.fills),
     ...accountCurves.flatMap((c) => c.points.map((p) => p.m)),
   ]
-  const axis = dayAxis(minutes, mcxCloseMinute(input.mcxCloseUtc, start))
+  const axis = dayAxis(minutes, mcxCloseMinute(input.mcxCloseUtc, start), nseRunsCloseMinute(input.day))
   const now = nowMinute != null && nowMinute >= axis.from && nowMinute <= axis.to ? nowMinute : null
   const scale = trackScale(tracks.map((t) => Math.max(0, ...t.points.map((p) => Math.abs(p.v)))))
   return { axis, groups, accounts: accountCurves, gaps, now, scale, any: tracks.some((t) => t.points.length > 0) }

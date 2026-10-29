@@ -416,6 +416,9 @@ export function StatusItems() {
   const levelAlerts = allows(accessFor(user), 'market-data')
   const backend = useBackendStatus()
   const nseSession = useMarketSession()
+  // The markets pill says when NSE's options stop (15:45 from 7 Dec 2026), the session the desk trades; the
+  // health item keeps the cash session, since the indices' quiet after 15:30 is not a silent feed.
+  const nseOptionsSession = useMarketSession('NSE', 'FO')
   const mcxSession = useMarketSession('MCX', 'COM')
   const ingestors = useIngestorStatuses()
   // Feed names label a replay; only an operator's console asks for the feed list.
@@ -426,9 +429,10 @@ export function StatusItems() {
   // rather than at the end of a retry wait that has grown to 30 s.
   useLiveNudgeWhenApiBack(down)
   const nse = down ? undefined : nseSession.data
+  const nseOptions = down ? undefined : nseOptionsSession.data
   const mcx = down ? undefined : mcxSession.data
   const heartbeats = down ? undefined : ingestors.data
-  const markets = marketPulses(nse, mcx, recapVendors(heartbeats, down ? undefined : feeds.data))
+  const markets = marketPulses(nseOptions, mcx, recapVendors(heartbeats, down ? undefined : feeds.data))
   // A trader hears about the API only when something is off with it.
   const traderBackend = isAdmin ? null : backendPulse({ isDown: down, restartedAt: backend.restartedAt, status: backend.data })
 

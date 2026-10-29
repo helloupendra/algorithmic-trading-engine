@@ -164,6 +164,12 @@ describe('clockPhase', () => {
     expect(clockPhase(ist('11:00', '2026-09-27'))).toBe('post')
   })
 
+  it('keeps the runs’ session to 15:45 from 7 Dec 2026, in the fallback too', () => {
+    expect(clockPhase(ist('15:35', '2026-12-04'))).toBe('post')
+    expect(clockPhase(ist('15:35', '2026-12-07'))).toBe('live')
+    expect(clockPhase(ist('15:45', '2026-12-07'))).toBe('post')
+  })
+
   it("ignores session bounds that are not today's", () => {
     const stale = { isTradingDay: true, sessionOpenUtc: istIso('09:15', '2026-09-25'), sessionCloseUtc: istIso('15:30', '2026-09-25') }
     expect(clockPhase(ist('11:42'), stale)).toBe('live')

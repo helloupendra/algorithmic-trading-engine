@@ -22,15 +22,26 @@ import type { PositionStatus } from './types'
 
 const NIFTY_CALL = 'NSE:NIFTY2692924500CE'
 const CRUDE = 'MCX:CRUDEOIL26OCTFUT'
+// 30 Oct 2026, 11:30 IST, and Monday 7 Dec 2026, the first day the options trade to 15:45.
+const TODAY = Date.parse('2026-10-30T06:00:00Z')
+const FROM_7_DEC = Date.parse('2026-12-07T06:00:00Z')
 
 const row = (status: PositionStatus, carryForward = false, symbol = NIFTY_CALL) => ({ status, carryForward, symbol })
 
 describe('closeName', () => {
   it('names the exchange’s own close', () => {
-    expect(closeName(NIFTY_CALL)).toBe('the close (15:30 IST)')
-    expect(closeName('BSE:SENSEX2610185000CE')).toBe('the close (15:30 IST)')
+    expect(closeName(NIFTY_CALL, TODAY)).toBe('the close (15:30 IST)')
+    expect(closeName('BSE:SENSEX2610185000CE', TODAY)).toBe('the close (15:30 IST)')
     expect(closeName(CRUDE)).toBe('the MCX close')
     expect(closeName('mcx:goldm26octfut')).toBe('the MCX close')
+  })
+
+  it('from 7 Dec 2026 names the options’ 15:45 and keeps a share’s 15:30', () => {
+    expect(closeName(NIFTY_CALL, FROM_7_DEC)).toBe('the close (15:45 IST)')
+    expect(closeName('NSE:RELIANCE-EQ', FROM_7_DEC)).toBe('the close (15:30 IST)')
+    expect(closeName(NIFTY_CALL, Date.parse('2026-12-04T06:00:00Z'))).toBe('the close (15:30 IST)')
+    expect(carryHint(true, TODAY)).toMatch(/\(NSE\/BSE 15:30 IST, MCX at its close\)/)
+    expect(carryHint(true, FROM_7_DEC)).toMatch(/\(NSE\/BSE 15:30 IST, options and futures 15:45, MCX at its close\)/)
   })
 })
 
@@ -57,7 +68,7 @@ describe('carryControl', () => {
   })
 
   it('in the manual book, says when an unticked position will be squared off', () => {
-    expect(carryControl(row('Open'), { ...owner, isManualBook: true }).title).toBe(
+    expect(carryControl(row('Open'), { ...owner, isManualBook: true }, TODAY).title).toBe(
       'Intraday: squared off at the close (15:30 IST). Tick to hold it overnight.',
     )
     expect(carryControl(row('Open', false, CRUDE), { ...owner, isManualBook: true }).title).toMatch(/the MCX close/)
@@ -113,7 +124,7 @@ describe('stopCarryWarning', () => {
 
 describe('ticketCarryHint', () => {
   it('names the close an intraday order will be squared off at', () => {
-    expect(ticketCarryHint(false, NIFTY_CALL)).toMatch(/^Intraday: squared off at the close \(15:30 IST\)/)
+    expect(ticketCarryHint(false, NIFTY_CALL, TODAY)).toMatch(/^Intraday: squared off at the close \(15:30 IST\)/)
     expect(ticketCarryHint(false, CRUDE)).toMatch(/^Intraday: squared off at the MCX close/)
     expect(ticketCarryHint(true, CRUDE)).toMatch(/^Held overnight/)
   })

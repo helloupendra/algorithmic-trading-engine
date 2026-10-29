@@ -252,7 +252,8 @@ function AccountBlock({ account, tone, multi }: { account: PositionAccount; tone
 
 export function PositionsPage() {
   const { isAdmin } = useAuth()
-  const nse = useMarketSession()
+  // The positions are options and futures: their session, to 15:45 from 7 Dec 2026, keeps the quick poll on.
+  const nse = useMarketSession('NSE', 'FO')
   const mcx = useMarketSession('MCX', 'COM')
   const marketOpen = nse.data?.isMarketOpen === true || mcx.data?.isMarketOpen === true
   const connection = useLiveConnection()

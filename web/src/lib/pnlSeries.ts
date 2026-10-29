@@ -14,6 +14,7 @@
  *   across it claiming to know what happened in between.
  */
 
+import { derivativesCloseIst, minutesOf } from './marketHours'
 import type { RunPnlSeries, RunPnlSeriesResponse } from './types'
 
 /** Minutes from 00:00 IST. */
@@ -188,9 +189,13 @@ export interface DayAxis {
  * calendar: a crude run the close stopped at 15:30 keeps it to the NSE day,
  * and a day so far is drawn across the whole session, so "now" shows how
  * much of it is still to come.
+ *
+ * `nseClose` is the day's close of the runs, the options' (nseRunsCloseMinute):
+ * 15:30 until 6 Dec 2026, 15:45 from 7 Dec. Read as 15:30 on such a day, every
+ * index run's last rows at 15:46 would stretch the axis to the MCX evening.
  */
-export function dayAxis(minutes: readonly number[], mcxClose: number = MCX_CLOSE): DayAxis {
-  if (minutes.length === 0) return { from: NSE_OPEN, to: NSE_CLOSE, evening: false }
+export function dayAxis(minutes: readonly number[], mcxClose: number = MCX_CLOSE, nseClose: number = NSE_CLOSE): DayAxis {
+  if (minutes.length === 0) return { from: NSE_OPEN, to: nseClose, evening: false }
   let first = Infinity
   let last = -Infinity
   for (const m of minutes) {
@@ -198,9 +203,14 @@ export function dayAxis(minutes: readonly number[], mcxClose: number = MCX_CLOSE
     if (m > last) last = m
   }
   const from = first < NSE_OPEN ? Math.max(MCX_OPEN, first) : NSE_OPEN
-  if (last > NSE_CLOSE + CLOSE_SLACK) return { from, to: Math.max(mcxClose, last), evening: true }
+  if (last > nseClose + CLOSE_SLACK) return { from, to: Math.max(mcxClose, last), evening: true }
   // The last row a minute past the close is drawn at the close: the axis still reads 15:30.
-  return { from, to: NSE_CLOSE, evening: false }
+  return { from, to: nseClose, evening: false }
+}
+
+/** The minute the NSE and BSE runs of an IST day ("yyyy-mm-dd") are stopped: the options' close. */
+export function nseRunsCloseMinute(day: string): number {
+  return minutesOf(derivativesCloseIst(day))
 }
 
 /** The MCX close as the session answer states it, else the usual 23:30. */
@@ -384,7 +394,7 @@ export function dayCurves(
     return [{ userId: id, points, segments: splitAtGaps(points, gaps), last: points[points.length - 1] ?? null }]
   })
   const minutes = [...accounts.flatMap((a) => a.points.map((p) => p.m)), ...runs.flatMap((r) => r.minutes)]
-  const axis = dayAxis(minutes, mcxCloseMinute(opts.mcxCloseUtc, start))
+  const axis = dayAxis(minutes, mcxCloseMinute(opts.mcxCloseUtc, start), nseRunsCloseMinute(res.date))
   const now = nowMinute != null && nowMinute >= axis.from && nowMinute <= axis.to ? nowMinute : null
   return { axis, accounts, gaps, now, any: accounts.some((a) => a.points.length > 0) }
 }

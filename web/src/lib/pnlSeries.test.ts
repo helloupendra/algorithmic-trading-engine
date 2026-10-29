@@ -14,6 +14,7 @@ import {
   mergeGaps,
   minuteLabel,
   minuteOfDay,
+  nseRunsCloseMinute,
   recorderGaps,
   seriesPoints,
   spreadLabels,
@@ -193,6 +194,15 @@ describe('dayAxis', () => {
 
   it('keeps a run the close stopped a minute late on the NSE day, ending at 15:30', () => {
     expect(dayAxis([min('09:18'), min('15:31')])).toEqual({ from: NSE_OPEN, to: NSE_CLOSE, evening: false })
+  })
+
+  it('from 7 Dec 2026 ends the NSE day at the options’ 15:45, not in the MCX evening', () => {
+    expect(nseRunsCloseMinute('2026-12-04')).toBe(min('15:30'))
+    expect(nseRunsCloseMinute('2026-12-07')).toBe(min('15:45'))
+    const close = nseRunsCloseMinute('2026-12-07')
+    expect(dayAxis([min('09:18'), min('15:46')], MCX_CLOSE, close)).toEqual({ from: NSE_OPEN, to: min('15:45'), evening: false })
+    expect(dayAxis([], MCX_CLOSE, close).to).toBe(min('15:45'))
+    expect(dayAxis([min('09:18'), min('16:07')], MCX_CLOSE, close).evening).toBe(true)
   })
 
   it('starts at the MCX open when a crude run has points before 09:15', () => {
