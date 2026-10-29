@@ -3,8 +3,10 @@
  * gathered on one page.
  *
  * Three sections, one at a time (the choice lives in the URL):
- *  - FII & DII: cash-market buying and selling, and how FIIs, DIIs, pros and
- *    clients sit in index futures, from NSE's evening files;
+ *  - FII & DII: how FIIs, DIIs, pros and clients sit in index futures and
+ *    index options at the day's close, and FII futures and FII/DII cash
+ *    buying and selling over the last sessions as charts (each with its
+ *    table a click away), from NSE's evening files;
  *  - Global: GIFT Nifty and the overseas markets that set the tone before 09:15;
  *  - Events: RBI and Fed decisions, US inflation prints, expiries and holidays.
  *
@@ -17,7 +19,7 @@
  * is sent there.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import {
@@ -30,23 +32,28 @@ import {
 import {
   EVENT_CATEGORIES,
   cashStreak,
+  cashTrend,
   formatCrore,
   formatDay,
   formatSignedContracts,
+  futuresTrend,
   gapReading,
   grouped,
   istDate,
   movedFactorSection,
+  optionsPositions,
   participantStance,
   signTone,
   splitEvents,
 } from '../../lib/factors'
-import type { GlobalCue, MarketEvent } from '../../lib/factors'
+import type { CashDay, GlobalCue, MarketEvent, ParticipantDay } from '../../lib/factors'
 import { formatOi, movePercent } from '../../lib/movers'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { Metric, ResearchNote, StatusLine } from '../markets/factorParts'
+import { OptionsNetChart, SessionChart } from './FactorCharts'
+import type { SessionPane } from './FactorCharts'
 import './factors.css'
 
 const SECTIONS = [
@@ -64,14 +71,344 @@ function sectionFrom(value: string | null): SectionKey {
 // FII & DII
 // ---------------------------------------------------------------------------
 
+/** Chart or table: the same numbers, one click apart. */
+function ViewSwitch<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T
+  options: ReadonlyArray<{ key: T; label: string }>
+  onChange: (next: T) => void
+  label: string
+}) {
+  return (
+    <div className="oc-seg" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.key} type="button" aria-pressed={value === o.key} onClick={() => onChange(o.key)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** A long share's axis: a point or two of it is the whole month's move. */
+const percentAxis = (v: number) => `${v.toFixed(1)}%`
+
+function FuturesPositionsPanel({ latest }: { latest: ParticipantDay | undefined }) {
+  return (
+    <Panel title={latest ? `Index futures positions · ${formatDay(latest.date)}` : 'Index futures positions'} className="mf-card">
+      {!latest ? (
+        <EmptyState>No participant file stored yet.</EmptyState>
+      ) : (
+        <div className="tablewrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Who</th>
+                <th className="num">Long</th>
+                <th className="num">Short</th>
+                <th className="num">Net</th>
+                <th className="num">Long share</th>
+                <th className="num">Net change</th>
+                <th>Stance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {latest.groups.map((g) => {
+                const stance = participantStance(g)
+                return (
+                  <tr key={g.clientType}>
+                    <td>{g.clientType}</td>
+                    <td className="num mono">{formatOi(g.futureIndexLong)}</td>
+                    <td className="num mono">{formatOi(g.futureIndexShort)}</td>
+                    <td className={`num mono ${signTone(g.futureIndexNet)}`}>{formatSignedContracts(g.futureIndexNet)}</td>
+                    <td className="num mono">{g.futureIndexLongPercent != null ? `${g.futureIndexLongPercent.toFixed(1)}%` : '—'}</td>
+                    <td className={`num mono ${signTone(g.futureIndexNetChange)}`}>{formatSignedContracts(g.futureIndexNetChange)}</td>
+                    <td>
+                      <Badge tone={stance.tone}>{stance.label}</Badge>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small">
+        Contracts open at the end of the day in NIFTY, BANKNIFTY and other index futures. FII long share is the number
+        desks quote: a low share means foreign funds are mostly short.
+      </p>
+    </Panel>
+  )
+}
+
+type ChartOrTable = 'chart' | 'table'
+
+const CHART_OR_TABLE: ReadonlyArray<{ key: ChartOrTable; label: string }> = [
+  { key: 'chart', label: 'Chart' },
+  { key: 'table', label: 'Table' },
+]
+
+/**
+ * The day's index options by participant, calls and puts apart: a bar for
+ * each net, or every number. NSE's file has carried these columns all
+ * along; the page showed only the futures.
+ */
+function OptionsPositionsPanel({ latest, previous }: { latest: ParticipantDay | undefined; previous: ParticipantDay | undefined }) {
+  const [view, setView] = useState<ChartOrTable>('chart')
+  const rows = useMemo(() => optionsPositions(latest, previous), [latest, previous])
+  const net = (value: number, change: number | null) => (
+    <td className="num mono">
+      {formatSignedContracts(value)}
+      {change != null && <span className="mf-sub muted">{formatSignedContracts(change)}</span>}
+    </td>
+  )
+
+  return (
+    <Panel
+      title={latest ? `Index options positions · ${formatDay(latest.date)}` : 'Index options positions'}
+      className="mf-card"
+      actions={rows.length > 0 && <ViewSwitch value={view} options={CHART_OR_TABLE} onChange={setView} label="Index options as" />}
+    >
+      {rows.length === 0 ? (
+        <EmptyState>No participant file stored yet.</EmptyState>
+      ) : view === 'chart' ? (
+        <OptionsNetChart rows={rows} previousDay={previous?.date ?? null} />
+      ) : (
+        <>
+          <div className="tablewrap">
+            <table className="table mf-opt-table">
+              <thead>
+                <tr>
+                  <th />
+                  <th colSpan={3} className="mf-group">Index calls</th>
+                  <th colSpan={3} className="mf-group">Index puts</th>
+                </tr>
+                <tr>
+                  <th>Who</th>
+                  <th className="num">Long</th>
+                  <th className="num">Short</th>
+                  <th className="num">Net</th>
+                  <th className="num">Long</th>
+                  <th className="num">Short</th>
+                  <th className="num">Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.clientType}>
+                    <td>{r.clientType}</td>
+                    <td className="num mono">{formatOi(r.callLong)}</td>
+                    <td className="num mono">{formatOi(r.callShort)}</td>
+                    {net(r.callNet, r.callNetChange)}
+                    <td className="num mono">{formatOi(r.putLong)}</td>
+                    <td className="num mono">{formatOi(r.putShort)}</td>
+                    {net(r.putNet, r.putNetChange)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <p className="muted small">
+        Contracts open at the end of the day in index options, bought (long) and written (short), calls and puts apart.
+        Net is long less short{view === 'chart' ? ': right of the line net long, left net short, one scale for both' : ''}.
+        Every contract has a buyer and a writer, so on each side the four nets add up to zero.
+        {previous ? ` Under each net, its change since ${formatDay(previous.date)}.` : ''}
+      </p>
+    </Panel>
+  )
+}
+
+type FuturesView = 'net' | 'longShare' | 'table'
+
+const FUTURES_VIEWS: ReadonlyArray<{ key: FuturesView; label: string }> = [
+  { key: 'net', label: 'Net' },
+  { key: 'longShare', label: 'Long share' },
+  { key: 'table', label: 'Table' },
+]
+
+/** FII index futures by session: net contracts as bars, or the long share as a line, or the table. */
+function FiiFuturesPanel({ days }: { days: ParticipantDay[] }) {
+  const [view, setView] = useState<FuturesView>('net')
+  const trend = useMemo(() => futuresTrend(days), [days])
+  const panes = useMemo<SessionPane[]>(
+    () =>
+      view === 'longShare'
+        ? [{ key: 'long', label: 'Long share', kind: 'line', values: trend.map((p) => p.longPercent), baseline: 50 }]
+        : [{ key: 'net', label: 'Net', kind: 'bars', values: trend.map((p) => p.net), baseline: 0 }],
+    [trend, view],
+  )
+  const readout = (index: number) => {
+    const p = trend[index]
+    return (
+      <>
+        <span className="chart-readout__time mono">{formatDay(p.date)}</span>
+        <span>net <b className="mono">{formatSignedContracts(p.net)}</b></span>
+        <span>long share <b className="mono">{p.longPercent != null ? `${p.longPercent.toFixed(1)}%` : '—'}</b></span>
+        <span>change <b className="mono">{formatSignedContracts(p.netChange)}</b></span>
+      </>
+    )
+  }
+
+  return (
+    <Panel
+      title={`FII net index futures · last ${trend.length} session${trend.length === 1 ? '' : 's'}`}
+      className="mf-card"
+      actions={<ViewSwitch value={view} options={FUTURES_VIEWS} onChange={setView} label="FII index futures as" />}
+    >
+      {trend.length === 0 ? (
+        <EmptyState>No history yet.</EmptyState>
+      ) : view === 'table' ? (
+        // Twenty sessions scroll in place past eight, so this panel stays the
+        // height of its neighbour.
+        <div className={`tablewrap${days.length > 8 ? ' tablewrap--rows8' : ''}`}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="num">Net</th>
+                <th className="num">Long share</th>
+                <th className="num">Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...trend].reverse().map((p) => (
+                <tr key={p.date}>
+                  <td>{formatDay(p.date)}</td>
+                  <td className={`num mono ${signTone(p.net)}`}>{formatSignedContracts(p.net)}</td>
+                  <td className="num mono">{p.longPercent != null ? `${p.longPercent.toFixed(1)}%` : '—'}</td>
+                  <td className={`num mono ${signTone(p.netChange)}`}>{formatSignedContracts(p.netChange)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <SessionChart
+          dates={trend.map((p) => p.date)}
+          panes={panes}
+          format={view === 'longShare' ? percentAxis : formatSignedContracts}
+          label={view === 'longShare' ? 'FII long share of index futures by session' : 'FII net index futures contracts by session'}
+          readout={readout}
+        />
+      )}
+      <p className="muted small">
+        {view === 'longShare'
+          ? 'Long share: longs over longs and shorts, read against its own range. 50% is as many shorts as longs.'
+          : view === 'net'
+            ? 'Net: contracts long less contracts short at the day’s close. Under the zero line FIIs are net short.'
+            : 'Net: contracts long less contracts short at the day’s close; change is against the session before.'}
+      </p>
+    </Panel>
+  )
+}
+
+/** FII and DII cash-market buying less selling, a pane each on one scale, or the table. */
+function CashPanel({ cash }: { cash: CashDay[] }) {
+  const [view, setView] = useState<ChartOrTable>('chart')
+  const fiiCash = cashStreak(cash, 'fii')
+  const diiCash = cashStreak(cash, 'dii')
+  const trend = useMemo(() => cashTrend(cash), [cash])
+  const panes = useMemo<SessionPane[]>(
+    () => [
+      { key: 'fii', label: 'FII net', kind: 'bars', values: trend.map((d) => d.fii), baseline: 0 },
+      { key: 'dii', label: 'DII net', kind: 'bars', values: trend.map((d) => d.dii), baseline: 0 },
+    ],
+    [trend],
+  )
+  const readout = (index: number) => {
+    const d = trend[index]
+    return (
+      <>
+        <span className="chart-readout__time mono">{formatDay(d.date)}</span>
+        <span>FII net <b className="mono">{formatCrore(d.fii)}</b></span>
+        <span>DII net <b className="mono">{formatCrore(d.dii)}</b></span>
+      </>
+    )
+  }
+
+  return (
+    <Panel
+      title="Cash market · FII and DII net (₹ crore)"
+      className="mf-card"
+      actions={cash.length > 0 && <ViewSwitch value={view} options={CHART_OR_TABLE} onChange={setView} label="Cash market as" />}
+    >
+      {cash.length === 0 ? (
+        <EmptyState>No FII/DII figures stored yet. NSE publishes only the latest day, so history builds up from the day collection started.</EmptyState>
+      ) : (
+        <>
+          <div className="mf-metrics mf-metrics--tight">
+            <Metric
+              label={`FII net · ${cash.length} day${cash.length === 1 ? '' : 's'}`}
+              value={formatCrore(fiiCash.total)}
+              sub={`${fiiCash.buyingDays} buying day${fiiCash.buyingDays === 1 ? '' : 's'} of ${fiiCash.days}`}
+              tone={signTone(fiiCash.total)}
+            />
+            <Metric
+              label={`DII net · ${cash.length} day${cash.length === 1 ? '' : 's'}`}
+              value={formatCrore(diiCash.total)}
+              sub={`${diiCash.buyingDays} buying day${diiCash.buyingDays === 1 ? '' : 's'} of ${diiCash.days}`}
+              tone={signTone(diiCash.total)}
+            />
+          </div>
+          {view === 'chart' ? (
+            <SessionChart
+              dates={trend.map((d) => d.date)}
+              panes={panes}
+              format={formatCrore}
+              label="FII and DII net cash-market buying by day, in rupees crore"
+              readout={readout}
+            />
+          ) : (
+            <div className={`tablewrap${cash.length > 8 ? ' tablewrap--rows8' : ''}`}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Day</th>
+                    <th className="num">FII buy</th>
+                    <th className="num">FII sell</th>
+                    <th className="num">FII net</th>
+                    <th className="num">DII buy</th>
+                    <th className="num">DII sell</th>
+                    <th className="num">DII net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cash.map((d) => (
+                    <tr key={d.date}>
+                      <td>{formatDay(d.date)}</td>
+                      <td className="num mono">{grouped(d.fii?.buy)}</td>
+                      <td className="num mono">{grouped(d.fii?.sell)}</td>
+                      <td className={`num mono ${signTone(d.fii?.net)}`}>{formatCrore(d.fii?.net)}</td>
+                      <td className="num mono">{grouped(d.dii?.buy)}</td>
+                      <td className="num mono">{grouped(d.dii?.sell)}</td>
+                      <td className={`num mono ${signTone(d.dii?.net)}`}>{formatCrore(d.dii?.net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="muted small">Buying less selling in the cash market. Under the zero line the group sold more than it bought that day.</p>
+        </>
+      )}
+    </Panel>
+  )
+}
+
+/**
+ * Two rows: where each group stood at the newest day's close, in futures and
+ * in options; then how FIIs' futures and both groups' cash moved over the
+ * sessions shown.
+ */
 function FlowsSection() {
   const flows = useMarketFlows(20)
   const data = flows.data
-  const latest = data?.participants[0]
-  const fiiHistory = (data?.participants ?? []).map((d) => ({ date: d.date, fii: d.groups.find((g) => g.clientType === 'FII') }))
-  const fiiCash = cashStreak(data?.cash ?? [], 'fii')
-  const diiCash = cashStreak(data?.cash ?? [], 'dii')
-  const maxCash = Math.max(1, ...(data?.cash ?? []).flatMap((d) => [Math.abs(d.fii?.net ?? 0), Math.abs(d.dii?.net ?? 0)]))
 
   return (
     <>
@@ -82,153 +419,13 @@ function FlowsSection() {
       {data && (
         <>
           <div className="mf-grid">
-            <Panel title={latest ? `Index futures positions · ${formatDay(latest.date)}` : 'Index futures positions'} className="mf-card">
-              {!latest ? (
-                <EmptyState>No participant file stored yet.</EmptyState>
-              ) : (
-                <div className="tablewrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Who</th>
-                      <th className="num">Long</th>
-                      <th className="num">Short</th>
-                      <th className="num">Net</th>
-                      <th className="num">Long share</th>
-                      <th className="num">Net change</th>
-                      <th>Stance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {latest.groups.map((g) => {
-                      const stance = participantStance(g)
-                      return (
-                        <tr key={g.clientType}>
-                          <td>{g.clientType}</td>
-                          <td className="num mono">{formatOi(g.futureIndexLong)}</td>
-                          <td className="num mono">{formatOi(g.futureIndexShort)}</td>
-                          <td className={`num mono ${signTone(g.futureIndexNet)}`}>{formatSignedContracts(g.futureIndexNet)}</td>
-                          <td className="num mono">{g.futureIndexLongPercent != null ? `${g.futureIndexLongPercent.toFixed(1)}%` : '—'}</td>
-                          <td className={`num mono ${signTone(g.futureIndexNetChange)}`}>{formatSignedContracts(g.futureIndexNetChange)}</td>
-                          <td>
-                            <Badge tone={stance.tone}>{stance.label}</Badge>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-                </div>
-              )}
-              <p className="muted small">
-                Contracts open at the end of the day in NIFTY, BANKNIFTY and other index futures. FII long share is the number
-                desks quote: a low share means foreign funds are mostly short.
-              </p>
-            </Panel>
-
-            <Panel title="FII net index futures · last sessions" className="mf-card">
-              {fiiHistory.length === 0 ? (
-                <EmptyState>No history yet.</EmptyState>
-              ) : (
-                // Twenty sessions scroll in place past eight, so this panel
-                // is the height of its neighbour and the cash market stays on
-                // the first screen.
-                <div className={`tablewrap${fiiHistory.length > 8 ? ' tablewrap--rows8' : ''}`}>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Day</th>
-                      <th className="num">Net</th>
-                      <th>Long share</th>
-                      <th className="num">Change</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fiiHistory.map((h) => (
-                      <tr key={h.date}>
-                        <td>{formatDay(h.date)}</td>
-                        <td className={`num mono ${signTone(h.fii?.futureIndexNet)}`}>{formatSignedContracts(h.fii?.futureIndexNet)}</td>
-                        <td>
-                          <div className="mf-bar-read">
-                            <div className="mf-bar">
-                              <span
-                                className={`mf-bar__fill ${(h.fii?.futureIndexLongPercent ?? 0) >= 50 ? 'pos' : 'neg'}`}
-                                style={{ width: `${h.fii?.futureIndexLongPercent ?? 0}%` }}
-                              />
-                            </div>
-                            <span className="mf-bar__label mono small">
-                              {h.fii?.futureIndexLongPercent != null ? `${h.fii.futureIndexLongPercent.toFixed(1)}%` : '—'}
-                            </span>
-                          </div>
-                        </td>
-                        <td className={`num mono ${signTone(h.fii?.futureIndexNetChange)}`}>{formatSignedContracts(h.fii?.futureIndexNetChange)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </Panel>
+            <FuturesPositionsPanel latest={data.participants[0]} />
+            <OptionsPositionsPanel latest={data.participants[0]} previous={data.participants[1]} />
           </div>
-
-          <Panel title="Cash market · FII and DII buying and selling (₹ crore)" className="mf-card">
-            {data.cash.length === 0 ? (
-              <EmptyState>No FII/DII figures stored yet. NSE publishes only the latest day, so history builds up from the day collection started.</EmptyState>
-            ) : (
-              <>
-                <div className="mf-metrics mf-metrics--tight">
-                  <Metric
-                    label={`FII net · ${data.cash.length} day${data.cash.length === 1 ? '' : 's'}`}
-                    value={formatCrore(fiiCash.total)}
-                    sub={`${fiiCash.buyingDays} buying day${fiiCash.buyingDays === 1 ? '' : 's'} of ${fiiCash.days}`}
-                    tone={signTone(fiiCash.total)}
-                  />
-                  <Metric
-                    label={`DII net · ${data.cash.length} day${data.cash.length === 1 ? '' : 's'}`}
-                    value={formatCrore(diiCash.total)}
-                    sub={`${diiCash.buyingDays} buying day${diiCash.buyingDays === 1 ? '' : 's'} of ${diiCash.days}`}
-                    tone={signTone(diiCash.total)}
-                  />
-                </div>
-                <div className={`tablewrap${data.cash.length > 8 ? ' tablewrap--rows8' : ''}`}>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Day</th>
-                      <th className="num">FII buy</th>
-                      <th className="num">FII sell</th>
-                      <th className="num">FII net</th>
-                      <th />
-                      <th className="num">DII net</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.cash.map((d) => (
-                      <tr key={d.date}>
-                        <td>{formatDay(d.date)}</td>
-                        <td className="num mono">{grouped(d.fii?.buy)}</td>
-                        <td className="num mono">{grouped(d.fii?.sell)}</td>
-                        <td className={`num mono ${signTone(d.fii?.net)}`}>{formatCrore(d.fii?.net)}</td>
-                        <td className="mf-barcell">
-                          <div className="mf-bar">
-                            <span className={`mf-bar__fill ${(d.fii?.net ?? 0) >= 0 ? 'pos' : 'neg'}`} style={{ width: `${(Math.abs(d.fii?.net ?? 0) / maxCash) * 100}%` }} />
-                          </div>
-                        </td>
-                        <td className={`num mono ${signTone(d.dii?.net)}`}>{formatCrore(d.dii?.net)}</td>
-                        <td className="mf-barcell">
-                          <div className="mf-bar">
-                            <span className={`mf-bar__fill ${(d.dii?.net ?? 0) >= 0 ? 'pos' : 'neg'}`} style={{ width: `${(Math.abs(d.dii?.net ?? 0) / maxCash) * 100}%` }} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              </>
-            )}
-          </Panel>
+          <div className="mf-grid">
+            <FiiFuturesPanel days={data.participants} />
+            <CashPanel cash={data.cash} />
+          </div>
         </>
       )}
 

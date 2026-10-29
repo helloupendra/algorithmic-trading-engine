@@ -321,6 +321,96 @@ export function formatDay(date: string): string {
   return dt.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 
+/* --------------------------------------------------------- chart series -- */
+
+/** One group's index futures through the sessions shown, oldest first: what the trend chart draws. */
+export interface FuturesTrendPoint {
+  date: string
+  net: number | null
+  longPercent: number | null
+  netChange: number | null
+}
+
+/**
+ * A participant group's index futures day by day, oldest first (the API
+ * answers newest first). A day whose file has no row for the group keeps its
+ * place with no values, so the chart leaves a gap rather than joining the
+ * days either side.
+ */
+export function futuresTrend(days: readonly ParticipantDay[], clientType = 'FII'): FuturesTrendPoint[] {
+  return [...days].reverse().map((d) => {
+    const g = d.groups.find((x) => x.clientType === clientType)
+    return { date: d.date, net: g?.futureIndexNet ?? null, longPercent: g?.futureIndexLongPercent ?? null, netChange: g?.futureIndexNetChange ?? null }
+  })
+}
+
+/** FII and DII net cash (₹ crore) day by day, oldest first; a side NSE did not publish is null. */
+export function cashTrend(days: readonly CashDay[]): Array<{ date: string; fii: number | null; dii: number | null }> {
+  return [...days].reverse().map((d) => ({ date: d.date, fii: d.fii?.net ?? null, dii: d.dii?.net ?? null }))
+}
+
+/** One group's index options at a day's end, each side netted: bought (long) less written (short). */
+export interface OptionsPosition {
+  clientType: string
+  callLong: number
+  callShort: number
+  callNet: number
+  /** Against the previous stored day; null when there is none to compare with. */
+  callNetChange: number | null
+  putLong: number
+  putShort: number
+  putNet: number
+  putNetChange: number | null
+}
+
+/**
+ * Each group's index options on one day, in the file's order (FII, DII,
+ * Pro, Client), with the change in each net since `previous`, the stored day
+ * before. Every contract has a buyer and a writer, so the groups' nets on a
+ * side add up to zero: one group's net long is the others' net short.
+ */
+export function optionsPositions(day: ParticipantDay | undefined, previous?: ParticipantDay): OptionsPosition[] {
+  if (!day) return []
+  return day.groups.map((g) => {
+    const before = previous?.groups.find((p) => p.clientType === g.clientType)
+    const callNet = g.optionIndexCallLong - g.optionIndexCallShort
+    const putNet = g.optionIndexPutLong - g.optionIndexPutShort
+    return {
+      clientType: g.clientType,
+      callLong: g.optionIndexCallLong,
+      callShort: g.optionIndexCallShort,
+      callNet,
+      callNetChange: before ? callNet - (before.optionIndexCallLong - before.optionIndexCallShort) : null,
+      putLong: g.optionIndexPutLong,
+      putShort: g.optionIndexPutShort,
+      putNet,
+      putNetChange: before ? putNet - (before.optionIndexPutLong - before.optionIndexPutShort) : null,
+    }
+  })
+}
+
+/** The largest net on either side, which every bar of the options chart is scaled against (at least 1). */
+export function optionsNetScale(rows: readonly OptionsPosition[]): number {
+  return Math.max(1, ...rows.flatMap((r) => [Math.abs(r.callNet), Math.abs(r.putNet)]))
+}
+
+/**
+ * The value range a set of daily bars is drawn over: every value of every
+ * pane, and zero, which every bar stands on. One range for all the panes, so
+ * FII's bars and DII's are the same rupees per pixel and can be read against
+ * each other.
+ */
+export function sharedBarRange(series: ReadonlyArray<ReadonlyArray<number | null>>): { min: number; max: number } {
+  const values = series.flat().filter((v): v is number => v != null && Number.isFinite(v))
+  return { min: Math.min(0, ...values), max: Math.max(0, ...values) }
+}
+
+/** The range of a line's values, or null when it has none. */
+export function valueRange(values: ReadonlyArray<number | null>): { min: number; max: number } | null {
+  const present = values.filter((v): v is number => v != null && Number.isFinite(v))
+  return present.length === 0 ? null : { min: Math.min(...present), max: Math.max(...present) }
+}
+
 /** A market's net cash flow over the days shown, and how many of them were buying days. */
 export function cashStreak(days: CashDay[], side: 'fii' | 'dii'): { total: number; buyingDays: number; days: number } {
   const values = days.map((d) => d[side]?.net).filter((v): v is number => v != null)

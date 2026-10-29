@@ -28,6 +28,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
+import { barPath, niceStep } from '../../lib/bars'
 import { formatDateTime, formatInrSigned, formatInrWhole, formatNumber } from '../../lib/format'
 import type { BacktestDailyPnl, BacktestEquityPoint } from '../../lib/types'
 import { formatDay, PnlValue } from '../strategies/shared'
@@ -241,27 +242,6 @@ function useElementWidth(ref: React.RefObject<HTMLDivElement | null>, fallback: 
     return () => observer.disconnect()
   }, [ref])
   return width
-}
-
-/** 1/2/5 × 10^k so that the extreme splits into 2–5 clean ticks. */
-function niceStep(maxAbs: number): number {
-  const raw = maxAbs / 4
-  const mag = 10 ** Math.floor(Math.log10(Math.max(raw, 1)))
-  for (const m of [1, 2, 5, 10]) {
-    if (m * mag >= raw) return m * mag
-  }
-  return 10 * mag
-}
-
-/** Bar from the baseline to the value: square at the baseline, rounded at the data end. */
-function barPath(x: number, w: number, yBase: number, yValue: number, radius: number): string {
-  const top = Math.min(yBase, yValue)
-  const bottom = Math.max(yBase, yValue)
-  const r = Math.min(radius, (bottom - top) / 2, w / 2)
-  if (yValue < yBase) {
-    return `M${x},${bottom} V${top + r} Q${x},${top} ${x + r},${top} H${x + w - r} Q${x + w},${top} ${x + w},${top + r} V${bottom} Z`
-  }
-  return `M${x},${top} V${bottom - r} Q${x},${bottom} ${x + r},${bottom} H${x + w - r} Q${x + w},${bottom} ${x + w},${bottom - r} V${top} Z`
 }
 
 export function DailyPnlChart({ days }: { days: BacktestDailyPnl[] }) {

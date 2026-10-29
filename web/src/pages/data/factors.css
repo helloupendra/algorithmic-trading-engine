@@ -65,17 +65,63 @@
 .mf-tone--warn { background: var(--warn); }
 .mf-tone--neutral { background: var(--line-strong); }
 
-.mf-bar { position: relative; height: 16px; min-width: 90px; border-radius: 4px; background: var(--line-soft); overflow: hidden; }
-.mf-bar__fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; opacity: 0.55; }
-.mf-bar__fill.pos { background: var(--pos); }
-.mf-bar__fill.neg { background: var(--neg); }
-/* A bar with its reading beside it, never over it: painted on the track, a
-   short fill (an 11% long share) put the label's first digits on the colour
-   and the rest on the track, which read as a glitch on every row. */
-.mf-bar-read { display: flex; align-items: center; gap: 8px; min-width: 150px; }
-.mf-bar-read .mf-bar { flex: 1 1 auto; }
-.mf-bar__label { flex: none; min-width: 4.5ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-.mf-barcell { width: 18%; }
+/* The trend charts (inline SVG at the panel's width): thin bars square at
+   the baseline and rounded at the data end, a hairline grid, the baseline one
+   step stronger, 10.5px ticks, and a whole session's column under the
+   pointer or keyboard focus. */
+.mf-svg { width: 100%; }
+.mf-svg .chart-readout { margin-bottom: 6px; }
+.mf-svg svg { display: block; overflow: visible; }
+.mf-svg__grid { stroke: var(--line-soft); stroke-width: 1; }
+.mf-svg__base { stroke: var(--line-strong); stroke-width: 1; }
+.mf-svg__tick {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.mf-svg__pane { fill: var(--text-2); font-size: 11.5px; font-weight: 600; }
+.mf-svg__bar { fill: var(--brand); }
+.mf-svg__bar.is-hover { fill: var(--brand-hi); }
+.mf-svg__line { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.mf-svg__dot { fill: var(--brand); stroke: var(--surface); stroke-width: 2; }
+.mf-svg__focus { fill: var(--brand-soft); }
+.mf-svg__hit { fill: transparent; cursor: crosshair; outline: none; }
+.mf-svg__hit:focus-visible { stroke: var(--brand); stroke-width: 1; }
+
+/* The day's index options by participant: a bar either side of a centre line,
+   one scale for calls and puts, the signed number beside each. One hue: a net
+   short is a position, not a loss. Each row's cells sit on the grid's columns. */
+.mf-opt {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 16px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.mf-opt__row { display: contents; }
+.mf-opt__head { text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mf-opt__who { font-size: 12.5px; color: var(--text); }
+.mf-net { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mf-net__track { position: relative; flex: 1 1 auto; min-width: 56px; height: 14px; }
+.mf-net__track::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.mf-net__fill { position: absolute; top: 0; bottom: 0; background: var(--brand); }
+.mf-net__fill--long { left: calc(50% + 1px); border-radius: 0 4px 4px 0; }
+.mf-net__fill--short { right: 50%; border-radius: 4px 0 0 4px; }
+.mf-net__value { flex: none; min-width: 7ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.mf-net__value .mf-sub { color: var(--text-3); }
+
+/* The options table: calls and puts under a header each; a net's day change under it. */
+.mf-opt-table th.mf-group { text-align: center; border-bottom: 1px solid var(--line-soft); }
+.mf-sub { display: block; font-size: 11px; }
 
 .mf-status {
   display: flex;
