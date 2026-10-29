@@ -11,7 +11,7 @@
  * fills so far are already in the run's net on the grid.
  */
 
-import { dayMonth, plainNumber, weekdayOf } from '../../lib/desk'
+import { columnUnit, dayMonth, plainNumber, weekdayOf } from '../../lib/desk'
 import { formatInrSigned } from '../../lib/format'
 import type { DeskLinks, DeskView } from './data'
 import { useDeskLegs } from './data'
@@ -33,6 +33,8 @@ export function Legs({ view, links }: { view: DeskView; links: DeskLinks }) {
           : 'held from the last session'
   const toneOf = new Map(view.allAccounts.map((a) => [a.id, a.tone]))
   const multi = view.accounts.length > 1
+  // One unit down the P&L column, from the legs it shows.
+  const pnlUnit = columnUnit((list ?? []).slice(0, SHOWN).map((l) => l.pnl))
 
   return (
     <>
@@ -90,7 +92,7 @@ export function Legs({ view, links }: { view: DeskView; links: DeskLinks }) {
                   </td>
                   <td className="r dk-n dk-t2">{l.lots}L</td>
                   <td className="r dk-n dk-hide-s">{l.ltp != null ? plainNumber(l.ltp, l.ltp >= 1000 ? 0 : 2) : '—'}</td>
-                  <td className="r">{l.pnl != null ? <Money value={l.pnl} compact /> : <span className="dk-t3">no mark</span>}</td>
+                  <td className="r">{l.pnl != null ? <Money value={l.pnl} compact unit={pnlUnit} /> : <span className="dk-t3">no mark</span>}</td>
                 </tr>
               ))}
             </tbody>

@@ -8,6 +8,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { compactInr } from '../../lib/desk'
+import type { InrUnit } from '../../lib/desk'
 import { toneClass } from './data'
 import { formatInrSigned } from '../../lib/format'
 
@@ -70,11 +71,14 @@ export function Dot({ tone }: { tone?: 'pos' | 'neg' | 'warn' | 'live' | 'info' 
   return <i className={`dk-dot${tone && tone !== 'info' ? ` dk-dot--${tone}` : ''}`} aria-hidden="true" />
 }
 
-/** A net figure: in full ("+₹2,551"), or dense ("+2.6k") with the full figure in its title. */
-export function Money({ value, compact = false, className = '' }: { value: number; compact?: boolean; className?: string }) {
+/**
+ * A net figure: in full ("+₹2,551"), or dense ("+2.6k") with the full figure
+ * in its title; in a column, dense in the column's `unit` (columnUnit).
+ */
+export function Money({ value, compact = false, unit, className = '' }: { value: number; compact?: boolean; unit?: InrUnit; className?: string }) {
   return (
     <span className={`dk-n ${toneClass(value)} ${className}`.trim()} title={compact ? formatInrSigned(value) : undefined}>
-      {compact ? compactInr(value) : formatInrSigned(value)}
+      {compact ? compactInr(value, true, unit) : formatInrSigned(value)}
     </span>
   )
 }

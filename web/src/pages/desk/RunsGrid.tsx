@@ -10,7 +10,9 @@
  * The columns are whatever underlyings ran today, however many: each takes
  * the width its figures need, and past what the panel can hold the table
  * scrolls sideways under a fixed Strategy column and a fixed Net column, so
- * the row is never read without its name or its answer. The panel's own width
+ * the row is never read without its name or its answer. Each money column is
+ * written in one unit, the one its largest figure takes (lib/desk gridUnits),
+ * so a column reads down without −45.1k sitting over −1.51L. The panel's own width
  * (a container query in desk.css), not the window's, picks the short names;
  * the trades and charges columns and the "runs · lots" lines go by what the
  * panel can hold beside the underlyings, so four of them keep the columns in
@@ -27,8 +29,8 @@
 import { Fragment, useCallback, useLayoutEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { CellMark, DeskAccount, GridCell, GridRow, PlanCell } from '../../lib/desk'
-import { compactInr, istHm, underlyingShort } from '../../lib/desk'
+import type { CellMark, DeskAccount, GridCell, GridRow, GridUnits, InrUnit, PlanCell } from '../../lib/desk'
+import { compactInr, gridUnits, istHm, underlyingShort } from '../../lib/desk'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
 import type { DeskLinks, DeskView } from './data'
 import { toneClass, useDeskPlan } from './data'
@@ -55,8 +57,8 @@ function Marks({ marks }: { marks: CellMark[] }) {
   )
 }
 
-/** One account's line in a cell: marks, the account's colour, the net (a link to the run). */
-function CellLine({ cell, account, multi, links }: { cell: GridCell | null; account: DeskAccount; multi: boolean; links: DeskLinks }) {
+/** One account's line in a cell: marks, the account's colour, the net (a link to the run), in its column's unit. */
+function CellLine({ cell, account, multi, links, unit }: { cell: GridCell | null; account: DeskAccount; multi: boolean; links: DeskLinks; unit: InrUnit }) {
   if (!cell) {
     return (
       <div className="dk-pc">
@@ -69,7 +71,7 @@ function CellLine({ cell, account, multi, links }: { cell: GridCell | null; acco
   const f = cell.figures
   const last = cell.runs[cell.runs.length - 1]
   const title = `${account.name}: net ${formatInrSigned(f.net)} = gross ${formatInrSigned(f.gross)} − charges ${formatInrWhole(f.charges)} · ${f.trades} trade${f.trades === 1 ? '' : 's'}${f.open ? ` · open ${formatInrSigned(f.open)}` : ''}`
-  const value = f.trades === 0 && f.open === 0 && f.net === 0 ? <span className="dk-t3">0</span> : compactInr(f.net)
+  const value = f.trades === 0 && f.open === 0 && f.net === 0 ? <span className="dk-t3">0</span> : compactInr(f.net, true, unit)
   return (
     <div className="dk-pc">
       <Marks marks={cell.marks} />
@@ -159,7 +161,7 @@ function ListColumns({ accounts }: { accounts: readonly DeskAccount[] }) {
  * totals in the same shape. Rendered beside the table; desk.css shows one
  * or the other by the panel's width.
  */
-function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; multi: boolean }) {
+function GridList({ view, links, multi, units }: { view: DeskView; links: DeskLinks; multi: boolean; units: GridUnits }) {
   const grid = view.grid!
   return (
     <div className="dk-gl dk-gl--pnl" aria-label="Runs by strategy">
@@ -172,7 +174,7 @@ function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; mu
               <span className="dk-xs dk-t3 dk-gl__detail">{rowDetail(row, view)}</span>
             </span>
             <b className={`dk-n ${toneClass(row.figures.net)}`} title={formatInrSigned(row.figures.net)}>
-              {compactInr(row.figures.net)}
+              {compactInr(row.figures.net, true, units.net)}
             </b>
           </div>
           <div className="dk-gl__cells">
@@ -184,7 +186,7 @@ function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; mu
                     {underlyingShort(u)}
                   </span>
                   {row.cells[u].map((c, i) => (
-                    <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} />
+                    <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} unit={units.byUnderlying[u]} />
                   ))}
                 </div>
               ))}
@@ -203,7 +205,7 @@ function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; mu
               <span className="dk-xs dk-t3 dk-gl__detail">{t.runs} runs</span>
             </span>
             <b className={`dk-n dk-net ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
-              {compactInr(t.figures.net)}
+              {compactInr(t.figures.net, true, units.net)}
             </b>
           </div>
           <div className="dk-gl__cells dk-gl__cells--tot">
@@ -212,7 +214,7 @@ function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; mu
               if (!f) return null
               return (
                 <span key={u} className="dk-n" title={`${u}: ${formatInrSigned(f.net)}`}>
-                  <span className="dk-t3">{underlyingShort(u)}</span> <span className={toneClass(f.net)}>{compactInr(f.net)}</span>
+                  <span className="dk-t3">{underlyingShort(u)}</span> <span className={toneClass(f.net)}>{compactInr(f.net, true, units.byUnderlying[u])}</span>
                 </span>
               )
             })}
@@ -243,6 +245,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
     )
   }
   const multi = grid.accounts.length > 1
+  const units = gridUnits(grid)
   const anyMark = grid.rows.some((r) => Object.values(r.cells).some((cs) => cs.some((c) => c && c.marks.length)))
   // By the data, not the panel's width alone: a panel that holds four
   // underlyings with room to spare keeps the figure columns, one that cannot
@@ -275,18 +278,18 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                 </td>
                 {grid.underlyings.map((u) => (
                   <td key={u} className="dk-u">
-                    {row.cells[u].every((c) => c == null) ? null : row.cells[u].map((c, i) => <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} />)}
+                    {row.cells[u].every((c) => c == null) ? null : row.cells[u].map((c, i) => <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} unit={units.byUnderlying[u]} />)}
                   </td>
                 ))}
                 {!tight && <td className="r dk-n dk-t2">{row.figures.trades.toLocaleString('en-IN')}</td>}
                 {!tight && (
                   <td className="r dk-n dk-t3" title={formatInrWhole(row.figures.charges)}>
-                    {compactInr(row.figures.charges, false)}
+                    {compactInr(row.figures.charges, false, units.charges)}
                   </td>
                 )}
                 <td className="r dk-n dk-fix dk-fix--r">
                   <b className={toneClass(row.figures.net)} style={{ fontWeight: 500 }} title={formatInrSigned(row.figures.net)}>
-                    {compactInr(row.figures.net)}
+                    {compactInr(row.figures.net, true, units.net)}
                   </b>
                 </td>
               </tr>
@@ -302,18 +305,18 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                   const f = t.byUnderlying[u]
                   return (
                     <td key={u} className={`r dk-n dk-u ${f ? toneClass(f.net) : ''}`} title={f ? formatInrSigned(f.net) : undefined}>
-                      {f ? compactInr(f.net) : ''}
+                      {f ? compactInr(f.net, true, units.byUnderlying[u]) : ''}
                     </td>
                   )
                 })}
                 {!tight && <td className="r dk-n dk-t2">{t.figures.trades.toLocaleString('en-IN')}</td>}
                 {!tight && (
                   <td className="r dk-n dk-t3" title={formatInrWhole(t.figures.charges)}>
-                    {compactInr(t.figures.charges, false)}
+                    {compactInr(t.figures.charges, false, units.charges)}
                   </td>
                 )}
                 <td className={`r dk-n dk-net dk-fix dk-fix--r ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
-                  {compactInr(t.figures.net)}
+                  {compactInr(t.figures.net, true, units.net)}
                 </td>
               </tr>
             ))}
@@ -321,7 +324,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
         </table>
       </div>
       {overflows && <p className="dk-note dk-gridhint">Scroll sideways for the other underlyings; the strategy and its net stay put.</p>}
-      <GridList view={view} links={links} multi={multi} />
+      <GridList view={view} links={links} multi={multi} units={units} />
       {(multi || anyMark) && (
         <div className="dk-foot">
           {multi && (

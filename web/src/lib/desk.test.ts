@@ -9,6 +9,7 @@ import {
   carriedRunIds,
   chainLevels,
   clockPhase,
+  columnUnit,
   commodityRoot,
   compactInr,
   dayLabel,
@@ -23,7 +24,9 @@ import {
   figureTone,
   forecastCounts,
   forecastRows,
+  gridUnits,
   indexRows,
+  inrUnit,
   legLabel,
   liveIncidents,
   modelStanding,
@@ -597,6 +600,41 @@ describe('buildGrid', () => {
   it('reports lots when every run of a row trades the same, else null', () => {
     expect(grid.rows[0].lots).toBe(2)
     expect(buildGrid([run({ lots: 1 }), run({ lots: 2, underlying: 'SENSEX' })], [ADMIN]).rows[0].lots).toBeNull()
+  })
+})
+
+describe('gridUnits', () => {
+  // Three strategies, two on NIFTY and one on SENSEX, with the review's figures.
+  const grid = buildGrid(
+    [
+      stopped({ strategyName: 'GhostTangentCrossings', underlying: 'NIFTY' }, 74_000, 3_800, 12),
+      stopped({ strategyName: 'Fulcrum', underlying: 'NIFTY' }, -41_000, 4_100, 20),
+      stopped({ strategyName: 'SmcStructureBreak', underlying: 'SENSEX' }, 26_000, 177_000, 600),
+    ],
+    [ADMIN],
+  )
+  const units = gridUnits(grid)
+
+  it('gives each money column the unit of its largest figure, totals included', () => {
+    expect(grid.rows.map((r) => r.figures.net)).toEqual([70_200, -45_100, -151_000])
+    expect(units.net).toBe('lakh')
+    expect(units.charges).toBe('lakh')
+    // NIFTY's figures (+70.2k, −45.1k, total +25.1k) stay in thousands; SENSEX's are lakhs.
+    expect(units.byUnderlying).toEqual({ NIFTY: 'thousand', SENSEX: 'lakh' })
+  })
+
+  it("reads every account's line in a cell, and a total larger than any row", () => {
+    const two = buildGrid(
+      [
+        stopped({ strategyName: 'GhostTangentCrossings', underlying: 'NIFTY' }, 60_000, 0, 4),
+        stopped({ userId: 2, userName: 'coderforchange', strategyName: 'GhostTangentCrossings', underlying: 'NIFTY' }, 900, 0, 1),
+        stopped({ strategyName: 'Fulcrum', underlying: 'NIFTY' }, 50_000, 0, 4),
+      ],
+      [ADMIN, CFC],
+    )
+    // No row reaches a lakh; the admin's total (₹1,10,000) does, so the whole column is in lakhs.
+    expect(two.rows.map((r) => r.figures.net)).toEqual([60_900, 50_000])
+    expect(gridUnits(two)).toEqual({ byUnderlying: { NIFTY: 'lakh' }, charges: 'rupee', net: 'lakh' })
   })
 })
 
@@ -1180,6 +1218,27 @@ describe('figures', () => {
     expect(compactInr(136000)).toBe('+1.36L')
     expect(compactInr(0)).toBe('0')
     expect(compactInr(29900, false)).toBe('29.9k')
+  })
+
+  it('takes the unit a figure needs on its own, from what it rounds to', () => {
+    expect(inrUnit(482)).toBe('rupee')
+    expect(inrUnit(999.4)).toBe('rupee')
+    expect(inrUnit(-999.6)).toBe('thousand')
+    expect(inrUnit(-45_100)).toBe('thousand')
+    expect(inrUnit(100_000)).toBe('lakh')
+  })
+
+  it('writes a column in the unit of its largest figure, blank cells aside', () => {
+    // The Desk's Net column as the review found it: +70.2k, −45.1k and −1.51L in one column.
+    const net = [70_200, -45_100, -151_000]
+    expect(columnUnit(net)).toBe('lakh')
+    expect(net.map((v) => compactInr(v, true, columnUnit(net)))).toEqual(['+0.70L', '−0.45L', '−1.51L'])
+    // Charges of 3.8k next to 1.77L.
+    expect([3_800, 177_000].map((v) => compactInr(v, false, 'lakh'))).toEqual(['0.04L', '1.77L'])
+    expect(columnUnit([null, 8_220, undefined, -482])).toBe('thousand')
+    expect(compactInr(-482, true, 'thousand')).toBe('−0.5k')
+    expect(columnUnit([])).toBe('rupee')
+    expect(columnUnit([null, Number.NaN])).toBe('rupee')
   })
 
   it('signs a number with Indian grouping and a true minus', () => {
