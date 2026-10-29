@@ -158,6 +158,12 @@ public class TradingDbContext : DbContext
     /// <summary>What the candle-pattern scanner watches and whether it notifies.</summary>
     public DbSet<CandlePatternRule> CandlePatternRules => Set<CandlePatternRule>();
 
+    /// <summary>Each user's price and PCR levels to be told about. See <see cref="LevelAlertRule"/>.</summary>
+    public DbSet<LevelAlertRule> LevelAlertRules => Set<LevelAlertRule>();
+
+    /// <summary>Every time a level alert fired. See <see cref="LevelAlertFire"/>.</summary>
+    public DbSet<LevelAlertFire> LevelAlertFires => Set<LevelAlertFire>();
+
     // Multi-provider foundation: who we can connect to, who serves what, and
     // what each vendor calls an instrument we already know.
     public DbSet<BrokerAccount> BrokerAccounts => Set<BrokerAccount>();

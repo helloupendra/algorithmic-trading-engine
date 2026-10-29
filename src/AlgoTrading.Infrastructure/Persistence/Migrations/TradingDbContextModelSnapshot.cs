@@ -2489,6 +2489,165 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("instrument_vendor_symbols", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.LevelAlertFire", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Condition")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<bool>("DeliveredToTelegram")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("FiredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<decimal>("Level")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("PreviousAsOfUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("PreviousValue")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<long>("RuleId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("SeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TelegramNote")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("Value")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("ValueAsOfUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "FiredUtc" }, "IX_level_alert_fires_FiredUtc");
+
+                    b.HasIndex(new[] { "RuleId" }, "IX_level_alert_fires_RuleId");
+
+                    b.HasIndex(new[] { "UserId", "FiredUtc" }, "IX_level_alert_fires_UserId_FiredUtc");
+
+                    b.ToTable("level_alert_fires", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.LevelAlertRule", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Armed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Condition")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("ExpiresOn")
+                        .HasColumnType("date");
+
+                    b.Property<int>("FireCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("LastFiredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Level")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("Notify")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("RearmBy")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<bool>("Repeat")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Status" }, "IX_level_alert_rules_Status");
+
+                    b.HasIndex(new[] { "UserId" }, "IX_level_alert_rules_UserId");
+
+                    b.ToTable("level_alert_rules", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_level_alert_rules_Condition", "\"Condition\" IN ('above', 'below', 'touch')");
+
+                            t.HasCheckConstraint("CK_level_alert_rules_Kind", "\"Kind\" IN ('price', 'pcr')");
+
+                            t.HasCheckConstraint("CK_level_alert_rules_Status", "\"Status\" IN ('active', 'paused', 'fired')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.LiveBar", b =>
                 {
                     b.Property<long>("Id")
@@ -4919,6 +5078,24 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ModelKey", "ModelVersion")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.LevelAlertFire", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.LevelAlertRule", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

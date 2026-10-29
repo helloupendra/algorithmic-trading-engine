@@ -20,6 +20,9 @@ public static class DeskEventKinds
 
     /// <summary>A position's carry-forward tick changed, or a leg moved to the manual book at the close.</summary>
     public const string Carry = "carry";
+
+    /// <summary>A level alert fired: a price or a PCR crossed a level its owner set. No run.</summary>
+    public const string Alert = "alert";
 }
 
 /// <summary>

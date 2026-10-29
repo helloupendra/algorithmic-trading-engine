@@ -298,6 +298,13 @@ public static class DependencyInjection
         services.AddScoped<Patterns.IndicatorAlertScanner>();
         services.AddHostedService<Patterns.IndicatorAlertService>();
 
+        // Level alerts: each user's price and PCR levels, read every few seconds
+        // from the quotes and chains already stored; an admin's also to Telegram.
+        services.AddSingleton<LevelAlerts.LevelAlertState>();
+        services.AddScoped<LevelAlerts.LevelAlertReader>();
+        services.AddScoped<LevelAlerts.LevelAlertScanner>();
+        services.AddHostedService<LevelAlerts.LevelAlertService>();
+
         return services;
     }
 }
