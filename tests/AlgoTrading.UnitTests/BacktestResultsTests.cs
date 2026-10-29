@@ -5,7 +5,7 @@ namespace AlgoTrading.UnitTests;
 
 /// <summary>
 /// What a backtest's results view is built from: the thinned equity curve the
-/// console dates the deepest fall from.
+/// console dates the deepest fall from, and the charges a run is netted of.
 /// </summary>
 public class BacktestResultsTests
 {
@@ -62,4 +62,38 @@ public class BacktestResultsTests
         var curve = Curve(i => 100_000m - i, 10);
         Assert.Same(curve, BacktestRunViewBuilder.ThinCurve(curve, 2_000));
     }
+
+    [Fact]
+    public void RunCharges_FlatRateIsPerLotPerFill()
+    {
+        Assert.Equal(400m, BacktestRunViewBuilder.RunCharges(costModel: false, chargesPerLot: 40m, filledLots: 10, 200_000m, latest: null));
+        Assert.Equal(0m, BacktestRunViewBuilder.RunCharges(costModel: false, chargesPerLot: 0m, filledLots: 10, 200_000m, latest: null));
+    }
+
+    [Fact]
+    public void RunCharges_RealCostsAreWhatTheLatestSnapshotWasNettedOf()
+    {
+        // ₹2,00,000 capital, ₹5,000 realized, ₹0 open, balance ₹2,03,812.40:
+        // the runner had charged ₹1,187.60 by then. A flat rate typed next to
+        // a costs block is ignored, as the runner ignores it.
+        var latest = new BacktestEquityPoint { AtUtc = Start, Equity = 203_812.40m, Realized = 5_000m, Unrealized = 0m };
+
+        Assert.Equal(1_187.60m, BacktestRunViewBuilder.RunCharges(costModel: true, chargesPerLot: 40m, filledLots: 10, 200_000m, latest));
+        Assert.Equal(0m, BacktestRunViewBuilder.RunCharges(costModel: true, chargesPerLot: 40m, filledLots: 10, 200_000m, latest: null));
+    }
+
+    [Theory]
+    [InlineData("{\"costs\":{\"slippage_percent\":0.5}}", true)]
+    [InlineData("{\"costs\":true}", true)]
+    [InlineData("{\"costs\":\"yes\"}", true)]
+    [InlineData("{\"costs\":1}", true)]
+    [InlineData("{\"costs\":{}}", false)]
+    [InlineData("{\"costs\":false}", false)]
+    [InlineData("{\"costs\":\"false\"}", false)]
+    [InlineData("{\"costs\":0}", false)]
+    [InlineData("{\"charges_per_lot\":40}", false)]
+    [InlineData("not json", false)]
+    [InlineData(null, false)]
+    public void HasCostModel_ReadsTheCostsBlockAsTheRunnerDoes(string? json, bool expected)
+        => Assert.Equal(expected, BacktestRunParameters.HasCostModel(json));
 }

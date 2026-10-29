@@ -123,6 +123,37 @@ public sealed record BacktestRunParameters(
     }
 
     /// <summary>
+    /// Whether the run carries a <c>costs</c> block, read the way the runner
+    /// reads it (backtest/rules.py): a non-empty object, or any truthy value —
+    /// true, "true" / "yes" / "1", a non-zero number, a non-empty array. With
+    /// one the runner charges the real costs of every fill and ignores
+    /// charges_per_lot.
+    /// </summary>
+    public static bool HasCostModel(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("costs", out var costs)) return false;
+            return costs.ValueKind switch
+            {
+                JsonValueKind.Object => costs.EnumerateObject().Any(),
+                JsonValueKind.Array => costs.GetArrayLength() > 0,
+                JsonValueKind.True => true,
+                JsonValueKind.String => costs.GetString()?.Trim().ToLowerInvariant() is "true" or "yes" or "1",
+                JsonValueKind.Number => costs.TryGetDecimal(out var n) && n != 0m,
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Validates an "HH:MM" IST square-off time. Null/whitespace means the
     /// default; an empty string means none. Returns null with a message when invalid.
     /// </summary>

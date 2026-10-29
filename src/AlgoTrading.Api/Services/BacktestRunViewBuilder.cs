@@ -275,13 +275,29 @@ public sealed class BacktestRunViewBuilder
 
         DecorateExits(view.Positions, orders, signalById);
 
-        // Charges: flat rupees per lot per fill. The runner's ledger nets them
-        // into the P&L it watches for SL/target and into every equity snapshot;
-        // the stored positions carry price P&L only, so they are netted here.
-        decimal chargesPerLot = view.ChargesPerLot;
-        decimal charges = chargesPerLot > 0
-            ? chargesPerLot * orders.Where(o => o.Status == "Filled").Sum(o => o.Quantity)
-            : 0m;
+        // Equity curve (historical SnapshotUtc, posted by the runner).
+        var snapshots = await _dbContext.SimulationEquitySnapshots.AsNoTracking()
+            .Where(x => x.SimulationRunId == run.Id)
+            .OrderBy(x => x.SnapshotUtc)
+            .ThenBy(x => x.Id)
+            .Select(x => new BacktestEquityPoint
+            {
+                AtUtc = x.SnapshotUtc,
+                Equity = x.CurrentEquity,
+                Realized = x.RealizedPnl,
+                Unrealized = x.UnrealizedPnl
+            })
+            .ToListAsync(cancellationToken);
+
+        // Charges. The runner's ledger nets them into the P&L it watches for
+        // SL/target and into every equity snapshot; the stored positions carry
+        // price P&L only, so they are netted here.
+        decimal charges = RunCharges(
+            BacktestRunParameters.HasCostModel(run.ParametersJson),
+            view.ChargesPerLot,
+            orders.Where(o => o.Status == "Filled").Sum(o => o.Quantity),
+            run.InitialCapital,
+            snapshots.Count > 0 ? snapshots[^1] : null);
 
         decimal realized = paperPositions.Sum(x => x.RealizedPnl);
         decimal unrealized = paperPositions
@@ -308,20 +324,6 @@ public sealed class BacktestRunViewBuilder
             PremiumReceived = 0m
         };
 
-        // Equity curve (historical SnapshotUtc, posted by the runner).
-        var snapshots = await _dbContext.SimulationEquitySnapshots.AsNoTracking()
-            .Where(x => x.SimulationRunId == run.Id)
-            .OrderBy(x => x.SnapshotUtc)
-            .ThenBy(x => x.Id)
-            .Select(x => new BacktestEquityPoint
-            {
-                AtUtc = x.SnapshotUtc,
-                Equity = x.CurrentEquity,
-                Realized = x.RealizedPnl,
-                Unrealized = x.UnrealizedPnl
-            })
-            .ToListAsync(cancellationToken);
-
         view.Daily = BuildDaily(paperPositions);
         view.Metrics = BuildMetrics(paperPositions, snapshots, view.Daily);
         view.EquityCurve = ThinCurve(snapshots, MaxCurvePoints);
@@ -344,6 +346,31 @@ public sealed class BacktestRunViewBuilder
     // ------------------------------------------------------------------
     // Pieces
     // ------------------------------------------------------------------
+
+    /// <summary>
+    /// What a run was charged. A flat rate is rupees per lot per fill: the rate
+    /// times the lots filled. A run with a costs block was charged the real
+    /// costs instead — brokerage, STT, exchange, SEBI, stamp duty and GST on
+    /// each fill's turnover, which only the runner prices, and it ignores the
+    /// flat rate — so its charges are what its latest equity snapshot was
+    /// netted of: capital + realized + unrealized − equity. A finished replay
+    /// writes its last snapshot after the final square-off, so that is the
+    /// whole bill; a running one's is the bill so far. Until 29 Oct such a run
+    /// was netted of the flat rate (₹0 unless one was typed as well), and its
+    /// Net P&amp;L disagreed with the end of its own equity curve by every rupee
+    /// of statutory charges. The runs list still nets the flat rate: it reads
+    /// no snapshots, and a latest-snapshot read per run is too slow there.
+    /// </summary>
+    internal static decimal RunCharges(bool costModel, decimal chargesPerLot, int filledLots, decimal initialCapital, BacktestEquityPoint? latest)
+    {
+        if (costModel)
+        {
+            return latest is null
+                ? 0m
+                : Math.Max(0m, initialCapital + latest.Realized + latest.Unrealized - latest.Equity);
+        }
+        return chargesPerLot > 0 ? chargesPerLot * filledLots : 0m;
+    }
 
     /// <summary>
     /// exitPrice = fill of the latest opposite-side order for the position's
