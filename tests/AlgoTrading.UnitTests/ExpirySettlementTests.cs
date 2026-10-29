@@ -78,6 +78,44 @@ public class ExpirySettlementTests
     }
 
     [Fact]
+    public async Task From_7_December_an_expiring_index_option_still_settles_at_its_15_30_close()
+    {
+        // Para 4.2.4 of SEBI's 15 Oct 2026 circular: expiring index contracts stop at 15:30 on their expiry day
+        // while the rest of the segment trades to 15:45. Tuesday 8 Dec 2026 is NIFTY's.
+        using var h = Harness.Create();
+        const string call = "NSE:NIFTY26D0824500CE";
+        long id = h.OpenManual(call, "LONG", lots: 1, entry: 120m);
+        h.Contract(call, "NSE", "FO", "CE", "NIFTY", 24500m, new DateOnly(2026, 12, 8));
+        h.Bar(Nifty, Ist(2026, 12, 8, 15, 29), 24650.35m);
+
+        Assert.Equal(1, (await h.Settler.SettleDueAsync(Ist(2026, 12, 8, 15, 36), CancellationToken.None)).Settled);
+        var pos = h.Position(id);
+        Assert.Equal(150.35m, pos.LastMarkPrice);
+        Assert.Equal(Ist(2026, 12, 8, 15, 30), pos.ClosedUtc);
+    }
+
+    [Fact]
+    public async Task From_7_December_a_stock_option_settles_after_its_15_45_close_on_the_share_s_15_30_price()
+    {
+        // A stock option trades to 15:45 on its expiry day; the share's continuous session still ends at 15:30.
+        using var h = Harness.Create();
+        const string call = "NSE:RELIANCE26DEC1500CE";
+        const string share = "NSE:RELIANCE-EQ";
+        var expiry = new DateOnly(2026, 12, 29);
+        long id = h.OpenManual(call, "LONG", lots: 1, entry: 20m);
+        h.Contract(call, "NSE", "FO", "CE", "RELIANCE", 1500m, expiry);
+        h.Bar(share, Ist(2026, 12, 29, 15, 29), 1540m);
+
+        var early = await h.Settler.SettleDueAsync(Ist(2026, 12, 29, 15, 36), CancellationToken.None);
+        Assert.Equal(1, early.NotDueYet);
+
+        Assert.Equal(1, (await h.Settler.SettleDueAsync(Ist(2026, 12, 29, 15, 51), CancellationToken.None)).Settled);
+        var pos = h.Position(id);
+        Assert.Equal(40m, pos.LastMarkPrice);
+        Assert.Equal(Ist(2026, 12, 29, 15, 45), pos.ClosedUtc);
+    }
+
+    [Fact]
     public async Task Nothing_settles_before_the_close_and_its_grace()
     {
         using var h = Harness.Create();

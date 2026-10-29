@@ -420,7 +420,9 @@ public sealed class ExpirySettler
     /// </summary>
     internal DateTime ReferenceCloseUtc(Contract contract, DateTime contractCloseUtc)
     {
-        if (contract.Kind == "FUT" || contract.Exchange is not ("NSE" or "BSE")) return contractCloseUtc;
+        // Only the equity derivatives segment: a contract of a segment the session rules do not know (NSE's currency
+        // options, closing at 17:00) keeps the contract's own, late close for its price as well.
+        if (contract.Kind == "FUT" || contract.Exchange is not ("NSE" or "BSE") || contract.Segment != "FO") return contractCloseUtc;
         try
         {
             var cash = _sessions.GetSessionInfo(IstTime.MiddayUtc(contract.Expiry), contract.Exchange, "CM").SessionCloseUtc;
