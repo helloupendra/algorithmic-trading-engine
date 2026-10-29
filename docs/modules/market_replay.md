@@ -19,9 +19,10 @@ abhi chal raha hai, same", whenever he wants.
    It then plays the day's ticks in the order they arrived, at the chosen speed:
    - to the API's **replay book**, which prices the runs' fills and marks;
    - then to the Redis stream `market:ticks`, marked `isReplay`, which the runs trade on.
-5. When the day is played out, past 15:30 so the runs see the close, the API stops the runs. They are squared off at
-   the replay's closing prices, and the book is cleared. Stop does the same at any point. Pause holds the replay's
-   clock still.
+5. When the day is played out, past 15:30 so the runs see the close (a day from 7 Dec 2026 to 15:48, past its 15:45
+   derivatives close; a recap of an index's expiry day still ends at 15:30, with the expiring contracts), the API
+   stops the runs. They are squared off at the replay's closing prices, and the book is cleared. Stop does the same
+   at any point. Pause holds the replay's clock still.
 
 Recap runs are tests: they are left out of every live total (the run history, Today, track records, the AI tools).
 Trade → History lists them apart: its **Recap runs** toggle shows the recap runs alone, each marked "Recap test" with

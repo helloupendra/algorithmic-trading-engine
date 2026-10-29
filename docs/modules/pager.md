@@ -48,7 +48,10 @@ count. The manual order book and alerter runs are not strategy runs; with the
 plan readable, runs outside it do not count either.
 
 "The day's last close" is the MCX close when MCX trades today, unless the plan
-is known to have no MCX runs; then 15:30.
+is known to have no MCX runs; then 15:30. The pager is deployed by hand (`~/openfno-pager`) and keeps 15:30 also
+from 7 Dec 2026, when the desk's NSE and BSE runs trade to 15:45 ([the rule](desk_timetable.md#the-1545-derivatives-close-from-7-december-2026)):
+between 15:30 and 15:45 it does not page for the API or a missing broker sign-in. That errs on the quiet side; moving
+its windows is a change of the `dtime(15, 30)` windows in `problems()` (`scripts/pager/pager.py`) when wanted.
 
 ## What never pages
 

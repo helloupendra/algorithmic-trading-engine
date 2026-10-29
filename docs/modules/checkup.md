@@ -45,7 +45,7 @@ once the plan's spots are priced (on 28 Sep the 23 runs went live 09:16–09:19)
 So at 08:55 a plan with nothing live yet is a note, not a failure: see Morning
 plan below.
 
-The NSE close (15:30) and the forecast scoring (15:50) come before 16:00, and
+The NSE close (15:30; the runs' 15:45 from 7 Dec 2026) and the forecast scoring (15:50) come before 16:00, and
 `market-close.sh` (23:58) comes before 00:15.
 
 Messages go to the desk's system channel (`TELEGRAM_SYSTEM_CHAT_ID`). A message
@@ -63,7 +63,7 @@ the console has every report either way.
 | Live feeds | ✓ | | ✓ | | `/api/Feeds`: one running before the open, none after the last close. |
 | Morning plan | ✓ | | | | Every run in `config/morning-plan.txt` live, by account. Before 09:25, while the morning job has not finished (the desk's day marker, `market-open-<date>` in its state directory), a run not live yet is a note: the job deploys after the open. After 09:25, or once the job has finished, a run not live is to do, with how the job ended. The Desk reads the same file, run by run, from `GET /api/Desk/plan` ([Sentinel](sentinel.md)). |
 | Market data recorders | ✓ | | | ✓ | `/api/MarketIntelligence/status`: every [recorder](market_intelligence.md) on schedule, failing sources, and how far the 2020 backfills have to go. A stalled news recorder is to do: a headline not recorded today cannot be fetched later. |
-| Runs after the close | | ✓ | | | No NSE/BSE strategy run still live after 15:30; crude runs noted until the MCX close. |
+| Runs after the close | | ✓ | | | No NSE/BSE strategy run still live after 15:30 (15:45 from 7 Dec 2026, the derivatives close; the item names the day's); crude runs noted until the MCX close. |
 | Runs overnight | | | ✓ | | No strategy run live after the day's last close. |
 | Strategy legs after the close | | ✓ | | | No NSE/BSE leg open in a strategy run. |
 | Manual books | ✓ | ✓ | | ✓ | What is held, and what was ticked to carry. After the close, an NSE leg left open without the Carry tick (the square-off should have closed it). A carried leg with no stop-loss or target. |

@@ -31,7 +31,7 @@ On 27 Sep the owner asked, first: "if I want to carry forward a position, it sho
 
 | Tick | Product | At its exchange's close |
 |---|---|---|
-| **off** (the default) | intraday (MIS) | **squared off** at its last price — NSE and BSE at 15:30 IST, MCX at the MCX close (23:30 IST while New York is on summer time, 23:55 otherwise) |
+| **off** (the default) | intraday (MIS) | **squared off** at its last price — NSE and BSE at 15:30 IST (from 7 Dec 2026 an option or future at 15:45, but an index option expiring that day at 15:30; see [the 7 Dec rule](desk_timetable.md#the-1545-derivatives-close-from-7-december-2026)), MCX at the MCX close (23:30 IST while New York is on summer time, 23:55 otherwise) |
 | **on** | carry forward (NRML) | **held overnight**, until it is closed by hand, by its own stop-loss/target, or settled at expiry |
 
 The ticket has the tick, **"Carry forward (hold overnight)"**, off by default. Each ticket order opens a position of its own (its own group), so two orders never merge into one position and their ticks never combine; should an order ever add to a held position, the position stays carried if either asked for it. The tick can be changed later on any open position in the book (the **Carry** column of the book's run card, `PUT …/positions/{id}/carry-forward`); each change is a `CARRY_FORWARD` row on the book's activity (`Carry forward unticked by trader: NIFTY 24500 CE · 29 Sep — intraday — squared off at the close (15:30 IST)`) and a row in the activity log.

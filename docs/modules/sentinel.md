@@ -251,7 +251,8 @@ plan is checked only on weekdays from 09:25, and each line until five minutes
 before its own market's close: the NSE and BSE lines until 15:25, the crude
 lines until five minutes before the MCX close the calendar gives (23:25 while
 the US is on daylight saving, 23:50 while it is not). That follows the desk,
-which since 27 Sep stops the NSE and BSE runs at 15:30 and the crude runs at
+which since 27 Sep stops the NSE and BSE runs at 15:30 (15:45 from 7 Dec 2026,
+see below) and the crude runs at
 the MCX close; a crude run's "MCX closed (23:30 IST)" is an ending on purpose,
 and one that dies in the afternoon stays reported through the evening rather
 than being let go at 15:30 with the index runs. With every market shut, a
@@ -270,6 +271,20 @@ The calendar comes from the API. When the API stops answering — every deploy
 that changes it restarts it — Sentinel uses what the calendar said earlier the
 same day, kept in `logs/sentinel/calendar.json`, so a holiday stays a holiday;
 only with no answer at all that day does it fall back to plain weekdays.
+
+**From 7 Dec 2026 the desk stops the NSE and BSE runs at 15:45**, the new
+derivatives close ([the rule](desk_timetable.md#the-1545-derivatives-close-from-7-december-2026)).
+Sentinel reads that close from `core/market_hours.py` (`sentinel/clock.py`,
+`nse_runs_stop`), the one module it imports from outside its package, and a
+change to that file restarts it like a change to its own: the close checkup's
+"Runs after the close" and "Manual books" items, the times they point at in
+`logs/api.log`, the log rules' hold until the close and the plan's last
+minute follow it. Its NSE session (`Session.nse_open`) stays the cash
+market's, 09:15–15:30, on purpose: the feed rule reads every tick of the NSE
+group, and after 15:30 the indices and shares go quiet, so a recording list
+with no option on it would read as a silent feed. In return a run that dies
+between 15:30 and 15:45 from 7 Dec is not reported as a death in the session;
+the desk's own 15:45 stop closes it either way.
 
 ## Running it
 

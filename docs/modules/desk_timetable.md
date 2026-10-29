@@ -8,14 +8,67 @@ Two words need care:
 - **Weekday** means Monday to Friday. **Trading day** means an NSE trading day in the exchange calendar
   (`market_holidays`). A weekday can be an exchange holiday: Gandhi Jayanti on Friday 2 Oct 2026 is one.
 - **"After the close"** in the deploy gate means after `market-close.sh` has run at **23:58**. It does not mean the
-  NSE close at 15:30 or the MCX close at 23:30.
+  NSE close at 15:30 (15:45 for options and futures from 7 Dec 2026) or the MCX close at 23:30.
 
 ## Sessions
 
 | Market | Session |
 |---|---|
-| NSE (equity and F&O) | 09:15–15:30 |
+| NSE and BSE cash, and the indices (computed from cash prices) | 09:15–15:30 |
+| NSE and BSE options and futures | 09:15–15:30 until 6 Dec 2026; **09:15–15:45 from 7 Dec 2026**. On an index's expiry day its expiring contracts still stop at 15:30. |
 | MCX | 09:00–23:30, or 23:55 while the US is off daylight saving |
+
+### The 15:45 derivatives close from 7 December 2026
+
+SEBI's circular HO/47/11/11(3)2025-MRD-POD2/I/23843/2026 of 15 Oct 2026 (its effective date is in para 6.1):
+
+- index and stock derivatives trade to **15:45** on every trading day (paras 4.2.4 and 4.2.5), except that on an expiry
+  day the **expiring index contracts stop at 15:30**. Stock derivatives trade to 15:45 on their expiry day too;
+- the cash market keeps its continuous session to 15:30, followed by a Closing Auction Session from 15:30 to 15:40
+  (para 4.2.1). The indices therefore stop moving at about 15:30 while their options trade on;
+- an expiring index derivative settles on the index value computed from its constituents' VWAP over the last 30
+  minutes of the cash session (para 1.1.9);
+- orders carried into the closing auction (para 4.8) start on 8 Feb 2027. They concern the cash market, where the
+  desk places no orders.
+
+The rule and its date live in one place per language: `EquityMarketHours` (C#), `core/market_hours.py` (the Python
+engine and Sentinel) and `web/src/lib/marketHours.ts` (the console). A later circular is a change of
+`LaterDerivativesCloseFrom` / `LATER_DERIVATIVES_CLOSE_FROM` and the close beside it. `MarketSessionService` answers
+the **FO** segment from it and the **CM** segment with 15:30, so code that asks for FO moves on 7 Dec and code that
+asks for CM does not. Any day before 7 Dec, today's and every day a backtest or a replay reads included, answers
+15:30 exactly as before.
+
+What moves to 15:45 from 7 Dec (each item at 15:30 on the days before):
+
+| What | How |
+|---|---|
+| The close sweep's stop of NSE and BSE runs, reason `Market closed (15:45 IST)` | `MarketCloseRules`. A run on an index whose options expire that day still stops at 15:30 (the runner trades the nearest expiry, which is that day's); a stock run trades to 15:45. |
+| Feeds, the FYERS chain poller and the alerter stopped | `MarketHoursService`, with the same reason as the runs |
+| The Dhan chain recorder, live greeks, chain and straddle pages | the FO session |
+| The manual book's intraday square-off | options and futures at 15:45, an index option expiring that day at 15:30, a share at 15:30 (`ManualIntradaySquareOff`) |
+| A live run may still start | until 15:45, except an index on its expiry day after 15:30 (`StrategyStartService.WhyMarketClosed`) |
+| Option and future 1-minute bars, and their nightly candles | kept to 15:45 (`LiveDataService`, `DailyCandleArchiveService`); an index's or a share's still end at 15:30 |
+| Ira's close briefing (15:55), the AI agents' quiet hours and the situation builder's (to 16:00), the news scorer and the market-intelligence backfills (to 15:55) | the same ten or fifteen minutes after the derivatives close they kept after 15:30. The AI digest waits for the later of the close and 15:45, as before. |
+| A replay or recap of a day from 7 Dec | plays to 15:48 and ends at that day's 15:45 (15:30 for an index's expiry-day recap) |
+| Sentinel's close checks and hold times, the console's Desk phase, markets pill, Day P&L axis, carry texts and option charts | the day's derivatives close |
+
+What stays at 15:30 on every day: the indices and shares (their bars, forecasts and the analysis scoring, the
+VIX), backtests (driven by the index's candles, which end at 15:30; a live run may hold its legs to 15:45 while a
+backtest of the same day ends by 15:30), the feed failover and the feeds' own stall watch, Sentinel's NSE session for
+its feed rule (after 15:30 the indices go quiet, and a recording list without options would read as a silent feed),
+and the AI Trader's shadow book with its baseline and lesson checks (its own 15:30 square-off, written into its
+prompts and its history; its live book is a manual book and follows the manual book's close). A strategy's own
+square-off time (`eod_square_off_ist`, 15:15 by default) is its rule and stays.
+
+Expiry settlement (`ExpirySettler`) stamps an expiring index contract at 15:30 and a stock contract at 15:45 from
+7 Dec, and reads the underlying's last print before 15:30 in both cases. It does not compute the exchange's new
+VWAP settlement price: an index's own bars carry no volume, and the desk keeps neither every constituent's minute
+bars nor the index weights. The reason line names the price used, so the gap of a few points on a day that moves
+in its last half hour is visible.
+
+From 7 Dec the index stops ticking at 15:30 while a run's option legs are open to 15:45. A strategy reads the index,
+so in those fifteen minutes it has nothing new to act on; its legs are still marked and risk-guarded on their own
+quotes until the close squares them off.
 
 ## A weekday, in order
 

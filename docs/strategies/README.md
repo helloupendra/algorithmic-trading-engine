@@ -18,6 +18,15 @@ statement. It is enforced by
 not done until its spec exists.** The test reads the registry, so a new
 strategy fails the suite the moment it is discoverable and has no spec.
 
+The specs say the platform stops a live run at **15:30**, which is every day
+until 6 Dec 2026. From 7 Dec 2026 the NSE and BSE options trade to 15:45, and
+the market-close stop of a run is at 15:45 (`Market closed (15:45 IST)`),
+except on the expiry day of the index a run trades, when its expiring
+contracts and the run still stop at 15:30. The index itself stops at 15:30, so
+a strategy that reads it has nothing new to act on after then; a strategy's
+own square-off time stays as its spec gives it. The rule is in
+[the desk's timetable](../modules/desk_timetable.md#the-1545-derivatives-close-from-7-december-2026).
+
 ## The rules
 
 - English, precise, no marketing. A number that cannot be traced to a row or
