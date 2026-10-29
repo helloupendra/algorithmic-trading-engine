@@ -328,7 +328,8 @@ public sealed class DataCuratorChecks(TradingDbContext db, IMarketSessionService
             .Select(s => new { s.SourceName, s.Status, s.LastHeartbeatUtc, s.LastError })
             .ToListAsync(cancellationToken);
         checkedList.Add($"Feed heartbeats of the last 7 days ({feeds.Count} feeds).");
-        var info = sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "CM");
+        // The feeds carry the options, so they live to the derivatives close (15:45 from 7 Dec 2026).
+        var info = sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "FO");
         if (feeds.Count == 0)
         {
             if (info.IsTradingDay)
@@ -537,16 +538,20 @@ public sealed class DataCuratorChecks(TradingDbContext db, IMarketSessionService
         return null;
     }
 
-    /// <summary>A symbol's session on the day: MCX's for an MCX symbol, BSE's for a BSE one, NSE's otherwise.</summary>
+    /// <summary>
+    /// A symbol's session on the day: MCX's for an MCX symbol, BSE's for a BSE one, NSE's otherwise; for a future
+    /// the derivatives segment's, which closes at 15:45 from 7 Dec 2026, for an index or a share the cash market's.
+    /// </summary>
     private (DateTime Open, DateTime Close, bool Trading) Session(string symbol, DateOnly day)
     {
         int colon = symbol.IndexOf(':');
         string exchange = colon > 0 ? symbol[..colon].ToUpperInvariant() : "NSE";
+        string segment = EquityMarketHours.SegmentOf(symbol);
         var info = exchange switch
         {
             "MCX" => sessions.GetSessionInfo(IstTime.MiddayUtc(day), "MCX", "COM"),
-            "BSE" => sessions.GetSessionInfo(IstTime.MiddayUtc(day), "BSE", "CM"),
-            _ => sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "CM"),
+            "BSE" => sessions.GetSessionInfo(IstTime.MiddayUtc(day), "BSE", segment),
+            _ => sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", segment),
         };
         return (Utc(info.SessionOpenUtc), Utc(info.SessionCloseUtc), info.IsTradingDay);
     }

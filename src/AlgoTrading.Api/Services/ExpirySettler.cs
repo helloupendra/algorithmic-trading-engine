@@ -49,6 +49,18 @@ namespace AlgoTrading.Api.Services;
 /// pass tries again.
 /// </para>
 /// <para>
+/// From 7 Dec 2026 the exchange settles expiring index derivatives on the index
+/// value computed from its constituents' volume-weighted prices over the last 30
+/// minutes of the cash session, 15:00–15:30 (SEBI circular of 15 Oct 2026, para
+/// 1.1.9), not on the closing index. This settlement does not compute that number
+/// and does not pretend to: an index's own bars carry no volume, and the desk
+/// keeps neither every constituent's minute bars nor the index weights. It goes
+/// on settling at the index's last print before 15:30, and the reason line says
+/// so ("last recorded bar"); the two can differ by a few points on a day that
+/// moves in its last half hour. A stock option's S is the share's last print
+/// before 15:30 too, ahead of the closing auction that sets the exchange's price.
+/// </para>
+/// <para>
 /// Idempotent: a position already closed is skipped by the write itself
 /// (<see cref="IPaperTradingService.SettleExpiredPositionAsync"/>), so a pass
 /// after a restart or a second pass in the same minute changes nothing. The
@@ -59,7 +71,10 @@ namespace AlgoTrading.Api.Services;
 /// </remarks>
 public sealed class ExpirySettler
 {
-    /// <summary>How long after the close a contract is settled: 15:35 IST for NSE and BSE.</summary>
+    /// <summary>
+    /// How long after its close a contract is settled: 15:35 IST for NSE and BSE
+    /// (an index contract's still, a stock contract's 15:50 from 7 Dec 2026).
+    /// </summary>
     public static readonly TimeSpan Grace = TimeSpan.FromMinutes(5);
 
     /// <summary>How recent a price must be, relative to the close, to count as the day's closing price.</summary>
@@ -139,7 +154,7 @@ public sealed class ExpirySettler
             string referenceSymbol = await ReferenceSymbolAsync(contract, cancellationToken);
             var observed = string.IsNullOrWhiteSpace(referenceSymbol)
                 ? null
-                : await ClosingPriceAsync(referenceSymbol, contract.Expiry, closeUtc, cancellationToken);
+                : await ClosingPriceAsync(referenceSymbol, contract.Expiry, ReferenceCloseUtc(contract, closeUtc), cancellationToken);
 
             if (observed is null)
             {
@@ -393,19 +408,48 @@ public sealed class ExpirySettler
     }
 
     internal DateTime ExpiryCloseUtc(Contract contract) =>
-        ExpiryCloseUtc(_sessions, contract.Exchange, contract.Segment, contract.Expiry);
+        ExpiryCloseUtc(_sessions, contract.Exchange, contract.Segment, contract.Expiry, contract.Underlying);
 
     /// <summary>
-    /// When a contract's expiry day closes on its exchange: 15:30 IST for NSE
-    /// and BSE, the evening close for MCX (which follows New York's clocks).
-    /// Also the moment the live greeks count time to expiry to.
+    /// When the underlying's price is read for <paramref name="contract"/>: an
+    /// NSE or BSE option's index or share at the cash close (15:30), which from
+    /// 7 Dec 2026 comes before a stock option's own close at 15:45 — the share
+    /// stops trading continuously then, and its later minutes are the closing
+    /// auction's, which the live bars do not keep. A future, and an MCX option
+    /// (written on a future), at the contract's own close.
     /// </summary>
-    public static DateTime ExpiryCloseUtc(IMarketSessionService sessions, string exchange, string segment, DateOnly expiry)
+    internal DateTime ReferenceCloseUtc(Contract contract, DateTime contractCloseUtc)
     {
-        var middayUtc = IstTime.FromIst(expiry.ToDateTime(new TimeOnly(12, 0)));
+        if (contract.Kind == "FUT" || contract.Exchange is not ("NSE" or "BSE")) return contractCloseUtc;
         try
         {
-            return sessions.GetSessionInfo(middayUtc, exchange, segment).SessionCloseUtc;
+            var cash = _sessions.GetSessionInfo(IstTime.MiddayUtc(contract.Expiry), contract.Exchange, "CM").SessionCloseUtc;
+            return cash < contractCloseUtc ? cash : contractCloseUtc;
+        }
+        catch (NotSupportedException)
+        {
+            return contractCloseUtc;
+        }
+    }
+
+    /// <summary>
+    /// When a contract stops trading on its expiry day: on NSE and BSE an index
+    /// option or future at the cash close (15:30 IST — the expiring index
+    /// contracts stop then on every expiry day, from 7 Dec 2026 too, while the
+    /// rest of the segment trades to 15:45), a stock option or future at the
+    /// derivatives close (15:30; 15:45 from 7 Dec 2026); MCX at its evening close,
+    /// which follows New York's clocks. An NSE or BSE contract of an unknown
+    /// underlying counts as a stock's, the later close, so a settlement can come
+    /// late but never early. Also the moment the live greeks count time to expiry to.
+    /// </summary>
+    public static DateTime ExpiryCloseUtc(IMarketSessionService sessions, string exchange, string segment, DateOnly expiry, string? underlying)
+    {
+        var middayUtc = IstTime.FromIst(expiry.ToDateTime(new TimeOnly(12, 0)));
+        bool expiringIndex = exchange is "NSE" or "BSE" && segment == "FO"
+                             && !string.IsNullOrWhiteSpace(underlying) && UnderlyingCatalog.IsIndex(underlying);
+        try
+        {
+            return sessions.GetSessionInfo(middayUtc, exchange, expiringIndex ? "CM" : segment).SessionCloseUtc;
         }
         catch (NotSupportedException)
         {

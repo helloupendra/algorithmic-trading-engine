@@ -55,7 +55,8 @@ public sealed class AiTraderBaselineScorer(TradingDbContext db, IBaselineMarket 
     {
         var today = IstTime.DateOf(nowUtc);
         if (day != today) return day < today;
-        var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
+        // The cash close, 15:30, where the shadow book and this rule square off (AiTraderShadowBook), from 7 Dec 2026 too.
+        var info = sessions.GetSessionInfo(nowUtc, "NSE", "CM");
         return info.IsTradingDay && nowUtc >= info.SessionCloseUtc + SettleAfterClose;
     }
 
@@ -63,7 +64,7 @@ public sealed class AiTraderBaselineScorer(TradingDbContext db, IBaselineMarket 
     {
         var row = new AiTraderBaseline { Day = day, Rule = TrendRule, Underlying = Underlying };
         var decideUtc = IstTime.FromIst(day.ToDateTime(DecideAt));
-        var info = sessions.GetSessionInfo(decideUtc, "NSE", "FO");
+        var info = sessions.GetSessionInfo(decideUtc, "NSE", "CM");
         // A look on a weekend or holiday ("Run now") makes it a day it decided on; the bars before its 11:00 are
         // an earlier session's, and there is nothing to trade.
         if (!info.IsTradingDay) return Note(row, $"No NSE session on {day.ToString("d MMM", CultureInfo.InvariantCulture)}: nothing to trade.");

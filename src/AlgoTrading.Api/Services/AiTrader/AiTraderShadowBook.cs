@@ -102,7 +102,10 @@ public sealed class AiTraderShadowBook(TradingDbContext db, IAiTraderQuotes quot
                 p.MarkUtc = clockUtc;
             }
 
-            bool atClose = clockUtc >= sessions.GetSessionInfo(clockUtc, "NSE", "FO").SessionCloseUtc;
+            // The shadow book's own rule, written into the AI Trader's prompts and every score of its history: squared
+            // off at the cash close, 15:30, also from 7 Dec 2026 when options trade to 15:45. On an expiry day the
+            // nearest contract it buys stops at 15:30 anyway.
+            bool atClose = clockUtc >= sessions.GetSessionInfo(clockUtc, "NSE", "CM").SessionCloseUtc;
             string? reason = atClose ? SessionClose
                 : sell is decimal low && low <= p.StopLoss ? Stopped
                 : sell is decimal high && high >= p.Target ? TargetHit

@@ -52,6 +52,14 @@ public static class MarketIntelligenceSchedule
     public static readonly TimeSpan QuietFrom = new(9, 0, 0);
     public static readonly TimeSpan QuietUntil = new(15, 40, 0);
 
+    /// <summary>
+    /// The end of the quiet on <paramref name="istDay"/>: ten minutes after the
+    /// derivatives close, when the desk has stopped its runs. 15:40 until 6 Dec
+    /// 2026 (<see cref="QuietUntil"/>), 15:55 from 7 Dec, when options trade to 15:45.
+    /// </summary>
+    public static TimeSpan QuietUntilOn(DateOnly istDay)
+        => QuietUntil + (EquityMarketHours.DerivativesCloseOn(istDay) - EquityMarketHours.CashClose);
+
     private static TimeSpan IstTimeOfDay(DateTime nowUtc) => IstTime.ToIst(nowUtc).TimeOfDay;
 
     /// <summary>
@@ -73,11 +81,12 @@ public static class MarketIntelligenceSchedule
         return time >= EveningFrom && time <= EveningUntil;
     }
 
-    /// <summary>True while the backfills must wait: 09:00–15:40 IST on an NSE trading day.</summary>
+    /// <summary>True while the backfills must wait: 09:00–15:40 IST on an NSE trading day (to 15:55 from 7 Dec 2026).</summary>
     public static bool InQuietWindow(DateTime nowUtc, Func<DateOnly, bool> isTradingDay)
     {
         var time = IstTimeOfDay(nowUtc);
-        return time >= QuietFrom && time < QuietUntil && isTradingDay(IstTime.DateOf(nowUtc));
+        var day = IstTime.DateOf(nowUtc);
+        return time >= QuietFrom && time < QuietUntilOn(day) && isTradingDay(day);
     }
 
     /// <summary>The snapshot times of one IST date, as UTC; none on a weekend.</summary>

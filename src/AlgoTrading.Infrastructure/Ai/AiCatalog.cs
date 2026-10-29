@@ -1079,14 +1079,14 @@ public static partial class AiCatalog
     public static readonly AiAgentDef AiTraderReflectAgent = new(
         AiTraderReflect, 0, "AI Trader reflection", "Reads each finished replay or live day of the AI Trader's decisions and proposes at most three lessons.",
         "Lessons from its own days; each is tested on its past looks before it reads one.",
-        "Outside 09:00–15:45 IST on trading days: a replay once it has ended, a live day from its 15:45", "5",
+        "Outside 09:00–15:45 IST on trading days (16:00 from 7 Dec 2026): a replay once it has ended, a live day from its 15:45", "5",
         Built: true, "judge", "The day's decisions, its shadow positions and the baseline rule's trade.", NoOrders, AiTraderReflectPrompt);
 
     /// <summary>The lesson test's pseudo-agent: named on its reports.</summary>
     public static readonly AiAgentDef AiTraderLessonCheckAgent = new(
         AiTraderLessonCheck, 0, "AI Trader lesson check", "Asks the AI Trader up to 16 past looks with and without a proposed lesson and plays both answers on the recorded prices.",
         "A lesson is used only if it beats the lessons it would join on past looks; the owner does not approve each one.",
-        "After a reflection, one past look a minute, outside 09:00–15:45 IST on trading days", "5",
+        "After a reflection, one past look a minute, outside 09:00–15:45 IST on trading days (16:00 from 7 Dec 2026)", "5",
         Built: true, "judge", "Past looks' briefs, the recorded chain and ticks.", NoOrders);
 
     /// <summary>The re-embedding's pseudo-agent: named on its one call.</summary>

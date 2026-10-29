@@ -22,11 +22,12 @@ public static class ArchiveSchedule
     public static readonly TimeSpan AfterLastClose = TimeSpan.FromMinutes(20);
 
     /// <summary>
-    /// The sessions the archive covers: NSE and BSE close at 15:30 (or a special
-    /// session's own close); MCX trades into the night, to 23:30, or to 23:55
-    /// while New York is on standard time.
+    /// The sessions the archive covers: NSE and BSE close with their derivatives,
+    /// the later segment (15:30, 15:45 from 7 Dec 2026, or a special session's own
+    /// close); MCX trades into the night, to 23:30, or to 23:55 while New York is
+    /// on standard time, which still decides the time.
     /// </summary>
-    private static readonly (string Exchange, string Segment)[] Sessions = [("NSE", "CM"), ("BSE", "CM"), ("MCX", "COM")];
+    private static readonly (string Exchange, string Segment)[] Sessions = [("NSE", "FO"), ("BSE", "FO"), ("MCX", "COM")];
 
     // A day is due by its own end plus AfterLastClose, so the latest due day is
     // never more than two days back; the search stops there.

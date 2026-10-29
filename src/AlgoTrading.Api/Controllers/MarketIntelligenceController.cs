@@ -130,7 +130,7 @@ public class MarketIntelligenceController : ControllerBase
     /// Asks a history backfill to run or resume now: <c>breadth</c>,
     /// <c>participant-oi</c>, <c>global-daily</c> or <c>all</c>. It skips what
     /// is stored, and inside 09:00–15:40 IST on a trading day it waits for
-    /// 15:40 (the answer says so). Admin-only.
+    /// 15:40 (15:55 from 7 Dec 2026; the answer says so). Admin-only.
     /// </summary>
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("backfill/{dataset}")]
@@ -145,13 +145,15 @@ public class MarketIntelligenceController : ControllerBase
         _status.RequestBackfill(datasets);
         bool quiet = MarketIntelligenceSchedule.InQuietWindow(_time.GetUtcNow().UtcDateTime,
             d => _sessions.GetSessionInfo(IstTime.MiddayUtc(d), "NSE", "CM").IsTradingDay);
+        // 15:40 until 6 Dec 2026, 15:55 from 7 Dec, when the derivatives close at 15:45.
+        string until = TimeOnly.FromTimeSpan(MarketIntelligenceSchedule.QuietUntilOn(Today())).ToString("HH:mm", CultureInfo.InvariantCulture);
 
         return Accepted(new BackfillRequestResponse
         {
             Datasets = datasets,
             StartsNow = !quiet,
             Message = quiet
-                ? "Queued: backfills do not run 09:00-15:40 IST on trading days. It starts after 15:40 IST."
+                ? $"Queued: backfills do not run 09:00-{until} IST on trading days. It starts after {until} IST."
                 : "Started: it skips what is stored. Follow it on GET api/MarketIntelligence/status.",
         });
     }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services;
@@ -298,7 +299,7 @@ public sealed class ManualOrderService(
                          + $"({units} qty) of {symbol} at {price} — filled on the {priceBasis}. "
                          + (command.CarryForward
                              ? "Carried forward: held overnight until you close it."
-                             : $"Intraday: squared off at the {(symbol.StartsWith("MCX:", StringComparison.OrdinalIgnoreCase) ? "MCX close" : "close (15:30 IST)")}.");
+                             : $"Intraday: squared off at the {PositionCarryForward.CloseName(symbol, IstTime.DateOf(DateTime.UtcNow), instrument.ExpiryDate)}.");
 
         return new ManualOrderOutcome(new ManualOrderFill(
             book.Id, groupId, symbol, side, command.Quantity, lot.LotSize, units, price.Value, priceBasis, command.StopLossPrice,

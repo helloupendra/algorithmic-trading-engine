@@ -36,6 +36,12 @@ namespace AlgoTrading.Api.Services;
 /// evening) waits for the next close, as a run started then does.
 /// </para>
 /// <para>
+/// From 7 Dec 2026 an NSE or BSE option or future is squared off at the
+/// derivatives close, 15:45, and a share at the cash close, 15:30; an index
+/// option expiring that day still goes at 15:30, when its trading stops
+/// (<see cref="EquityMarketHours"/>). Until then all three are 15:30.
+/// </para>
+/// <para>
 /// It runs in the API, every minute, from <see cref="MarketHoursService"/>.
 /// <c>scripts/market-close.sh</c> still leaves the book alone: at 23:35 it
 /// would square off carried positions too, and it cannot tell them apart.
@@ -89,7 +95,8 @@ public sealed class ManualIntradaySquareOff
             .ToListAsync(cancellationToken);
         if (candidates.Count == 0) return 0;
 
-        var due = DuePositions(_sessions, nowUtc, candidates);
+        var expiring = await ExpiringIndexSymbolsAsync(nowUtc, candidates, cancellationToken);
+        var due = DuePositions(_sessions, nowUtc, candidates, expiring);
         int closed = 0;
 
         // One close per book and reason, so an NSE and an MCX position squared
@@ -120,21 +127,54 @@ public sealed class ManualIntradaySquareOff
     }
 
     /// <summary>
-    /// The positions due now: each exchange's latest close is asked once, and a
-    /// position is due when that close came after it became intraday.
+    /// The candidates that are index options or futures expiring today, when an
+    /// expiry can bring their close forward (<see cref="MarketCloseRules.ExpiryCanCloseFirst"/>);
+    /// otherwise none, without a query.
     /// </summary>
-    public static IReadOnlyList<Due> DuePositions(IMarketSessionService sessions, DateTime nowUtc, IEnumerable<Candidate> candidates)
+    private async Task<IReadOnlySet<string>?> ExpiringIndexSymbolsAsync(
+        DateTime nowUtc, IReadOnlyList<Candidate> candidates, CancellationToken cancellationToken)
     {
-        var closes = new Dictionary<string, DateTime?>(StringComparer.Ordinal);
+        if (!MarketCloseRules.ExpiryCanCloseFirst(nowUtc)) return null;
+
+        var today = IstTime.DateOf(nowUtc);
+        var symbols = candidates.Select(c => c.Symbol).Where(EquityMarketHours.IsDerivative).Distinct().ToList();
+        if (symbols.Count == 0) return null;
+
+        var rows = await _dbContext.Instruments.AsNoTracking()
+            .Where(x => symbols.Contains(x.Symbol) && x.ExpiryDate == today)
+            .Select(x => new { x.Symbol, x.Underlying })
+            .ToListAsync(cancellationToken);
+        return rows
+            .Where(x => UnderlyingCatalog.IsIndex(string.IsNullOrWhiteSpace(x.Underlying) ? UnderlyingCatalog.InferUnderlying(x.Symbol) : x.Underlying))
+            .Select(x => x.Symbol)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The positions due now: each exchange's latest close is asked once per kind
+    /// of contract, and a position is due when that close came after it became
+    /// intraday. An NSE or BSE share goes at the cash close, an option or future
+    /// at the derivatives close, and one in <paramref name="expiringIndexSymbols"/>
+    /// at its expiry's (<see cref="MarketCloseRules.LastCloseOfExpiringUtc"/>).
+    /// </summary>
+    public static IReadOnlyList<Due> DuePositions(
+        IMarketSessionService sessions, DateTime nowUtc, IEnumerable<Candidate> candidates, IReadOnlySet<string>? expiringIndexSymbols = null)
+    {
+        var closes = new Dictionary<(string Exchange, string Kind), DateTime?>();
         var due = new List<Due>();
 
         foreach (var c in candidates)
         {
             string exchange = MarketCloseRules.ExchangeOf(null, c.Symbol);
-            if (!closes.TryGetValue(exchange, out var close))
+            string kind = exchange == MarketCloseRules.Mcx ? "COM"
+                : expiringIndexSymbols?.Contains(c.Symbol) == true ? "expiring"
+                : EquityMarketHours.SegmentOf(c.Symbol);
+            if (!closes.TryGetValue((exchange, kind), out var close))
             {
-                close = MarketCloseRules.LastCloseUtc(sessions, nowUtc, exchange);
-                closes[exchange] = close;
+                close = kind == "expiring"
+                    ? MarketCloseRules.LastCloseOfExpiringUtc(sessions, nowUtc, exchange)
+                    : MarketCloseRules.LastCloseUtc(sessions, nowUtc, exchange, kind);
+                closes[(exchange, kind)] = close;
             }
 
             DateTime intradaySince = c.CarryForwardChangedUtc is { } changed && changed > c.OpenedUtc
@@ -151,8 +191,8 @@ public sealed class ManualIntradaySquareOff
     }
 
     /// <summary>
-    /// "Intraday — squared off at the close (15:30 IST)", or at the MCX close
-    /// with the time that actually applied.
+    /// "Intraday — squared off at the close (15:30 IST)", or at the MCX close,
+    /// with the time that actually applied (15:45 for an option from 7 Dec 2026).
     /// </summary>
     public static string ReasonFor(string exchange, DateTime closedAtUtc)
     {

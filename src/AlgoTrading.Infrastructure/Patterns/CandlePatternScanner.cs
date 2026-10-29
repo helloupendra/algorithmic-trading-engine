@@ -156,7 +156,7 @@ public sealed class CandlePatternScanner
         var (ruleCount, plan) = await PlanAsync(nowUtc, cancellationToken);
         var sessions = SessionsFor(plan.Symbols, nowUtc, settings.AfterCloseGrace);
 
-        var scannable = plan.Symbols.Where(s => sessions.TryGetValue(CandlePatternRules.ExchangeOf(s), out var x) && x.InSession).ToList();
+        var scannable = plan.Symbols.Where(s => sessions.TryGetValue(CandlePatternRules.SessionKeyOf(s), out var x) && x.InSession).ToList();
         var bars = await LoadMinuteBarsAsync(scannable, sessions, cancellationToken);
 
         var asOf = nowUtc - settings.Settle;
@@ -166,7 +166,7 @@ public sealed class CandlePatternScanner
         foreach (var watch in plan.Watches)
         {
             if (!bars.TryGetValue(watch.Symbol, out var minutes)) continue;
-            var session = sessions[CandlePatternRules.ExchangeOf(watch.Symbol)];
+            var session = sessions[CandlePatternRules.SessionKeyOf(watch.Symbol)];
             var closed = SessionBarAggregator.Aggregate(minutes, session.Window, watch.TimeframeMinutes, asOf)
                 .Where(b => b.IsClosed)
                 .ToList();
@@ -207,14 +207,14 @@ public sealed class CandlePatternScanner
     {
         var (_, plan) = await PlanAsync(nowUtc, cancellationToken);
         var sessions = SessionsFor(plan.Symbols, nowUtc, TimeSpan.Zero);
-        var open = plan.Symbols.Where(s => sessions.TryGetValue(CandlePatternRules.ExchangeOf(s), out var x) && x.InSession).ToList();
+        var open = plan.Symbols.Where(s => sessions.TryGetValue(CandlePatternRules.SessionKeyOf(s), out var x) && x.InSession).ToList();
         var bars = await LoadMinuteBarsAsync(open, sessions, cancellationToken);
 
         var result = new List<FormingCandle>();
         foreach (var watch in plan.Watches)
         {
             var exchange = CandlePatternRules.ExchangeOf(watch.Symbol);
-            if (!sessions.TryGetValue(exchange, out var session) || !session.InSession)
+            if (!sessions.TryGetValue(CandlePatternRules.SessionKeyOf(watch.Symbol), out var session) || !session.InSession)
             {
                 result.Add(new FormingCandle(watch.Symbol, watch.TimeframeMinutes, exchange, false, null, null, null, 0, 0, [], [], null));
                 continue;
@@ -255,17 +255,22 @@ public sealed class CandlePatternScanner
         return (rules.Count(r => r.IsEnabled), plan);
     }
 
+    /// <summary>
+    /// One session per exchange and segment (<see cref="CandlePatternRules.SessionKeyOf"/>): from 7 Dec 2026 an
+    /// index future's candles run to 15:45 while its index's end at 15:30.
+    /// </summary>
     private Dictionary<string, ExchangeSession> SessionsFor(IEnumerable<string> symbols, DateTime nowUtc, TimeSpan afterCloseGrace)
     {
         var result = new Dictionary<string, ExchangeSession>(StringComparer.Ordinal);
-        foreach (var exchange in symbols.Select(CandlePatternRules.ExchangeOf).Distinct(StringComparer.Ordinal))
+        foreach (var symbol in symbols.DistinctBy(CandlePatternRules.SessionKeyOf, StringComparer.Ordinal))
         {
+            var exchange = CandlePatternRules.ExchangeOf(symbol);
             try
             {
-                var info = _sessions.GetSessionInfo(nowUtc, exchange, exchange == "MCX" ? "COM" : "CM");
+                var info = _sessions.GetSessionInfo(nowUtc, exchange, CandlePatternRules.SegmentOf(symbol));
                 var window = new SessionWindow(info.SessionOpenUtc, info.SessionCloseUtc);
                 bool inSession = info.IsTradingDay && nowUtc >= window.OpenUtc && nowUtc < window.CloseUtc + afterCloseGrace;
-                result[exchange] = new ExchangeSession(exchange, window, info.IsTradingDay, inSession);
+                result[CandlePatternRules.SessionKeyOf(symbol)] = new ExchangeSession(exchange, window, info.IsTradingDay, inSession);
             }
             catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
             {
@@ -284,7 +289,7 @@ public sealed class CandlePatternScanner
         var result = new Dictionary<string, List<MinuteBar>>(StringComparer.Ordinal);
         if (symbols.Count == 0) return result;
 
-        var windows = symbols.Select(s => sessions[CandlePatternRules.ExchangeOf(s)].Window).ToList();
+        var windows = symbols.Select(s => sessions[CandlePatternRules.SessionKeyOf(s)].Window).ToList();
         var from = windows.Min(w => w.OpenUtc);
         var to = windows.Max(w => w.CloseUtc);
 
@@ -412,7 +417,7 @@ public sealed class CandlePatternScanner
         foreach (var symbol in symbols)
         {
             var exchange = CandlePatternRules.ExchangeOf(symbol);
-            if (!sessions.TryGetValue(exchange, out var session))
+            if (!sessions.TryGetValue(CandlePatternRules.SessionKeyOf(symbol), out var session))
             {
                 states.Add(new PatternSymbolState(symbol, exchange, false, 0, null, $"no session rules for {exchange}"));
                 continue;

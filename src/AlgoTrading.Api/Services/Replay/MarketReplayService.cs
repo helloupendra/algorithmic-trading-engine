@@ -175,8 +175,9 @@ public sealed class MarketReplayService(
         var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
         if (!info.IsTradingDay) return null;
         var ist = TimeOnly.FromDateTime(IstTime.ToIst(nowUtc));
+        // The options' session: to 15:45 from 7 Dec 2026, when the live runs trade on after the cash close.
         return ist >= MarketMorning && nowUtc < info.SessionCloseUtc
-            ? "NSE trades today until 15:30. A replay plays after the close, or on a holiday or weekend."
+            ? $"NSE trades today until {IstTime.ToIst(info.SessionCloseUtc):HH:mm}. A replay plays after the close, or on a holiday or weekend."
             : null;
     }
 
@@ -743,8 +744,11 @@ public sealed class MarketReplayService(
     private bool FitsBeforeLiveTrading(int speed, string fromIst)
     {
         var from = TimeOnly.ParseExact(fromIst, "HH:mm", CultureInfo.InvariantCulture);
-        // The player plays until 15:40; ten minutes more for its start and the last checks.
-        var length = TimeSpan.FromMinutes((new TimeOnly(15, 40) - from).TotalMinutes / Math.Max(1, speed) + 10);
+        // The player plays until 15:40 at most (desk_replay.PLAY_UNTIL, 15:33). A day from 7 Dec 2026 plays to 15:48,
+        // and once such a day can be queued (today is on or after it) every day is allowed that much, to 15:55: a
+        // queue that waits an evening too long is the safe way to be wrong. Ten minutes more for its start and checks.
+        var playsUntil = EquityMarketHours.DerivativesCloseLater(IstTime.DateOf(Now)) ? new TimeOnly(15, 55) : new TimeOnly(15, 40);
+        var length = TimeSpan.FromMinutes((playsUntil - from).TotalMinutes / Math.Max(1, speed) + 10);
         if (Now + length >= sessions.GetNextMarketOpenUtc(Now, "MCX", "COM")) return false;
 
         var today = IstTime.DateOf(Now);
@@ -839,13 +843,16 @@ public sealed class MarketReplayService(
             session.Error ?? mine?.Error, session.RunIds, views, session.StartedBy, session.AiTrader);
     }
 
-    /// <summary>How far through the replayed session (09:15–15:30) a clock is, 0 to 1.</summary>
+    /// <summary>
+    /// How far through the replayed session (09:15–15:30; to 15:45 for a day from 7 Dec 2026, when the options and the
+    /// runs went on to then) a clock is, 0 to 1. The player's own (desk_replay.Plan.progress) uses the same close.
+    /// </summary>
     public static double ProgressOf(DateTime? clockUtc, DateOnly day, string state)
     {
         if (state == StateFinished) return 1;
         if (clockUtc is not DateTime clock) return 0;
         var open = IstTime.FromIst(day.ToDateTime(SessionOpen));
-        var close = IstTime.FromIst(day.ToDateTime(SessionClose));
+        var close = IstTime.FromIst(day.ToDateTime(EquityMarketHours.DerivativesCloseOn(day)));
         return Math.Clamp((clock - open).TotalSeconds / (close - open).TotalSeconds, 0, 1);
     }
 

@@ -53,12 +53,17 @@ public sealed class AiTraderSituationBuilder(
     /// <summary>
     /// 08:45 to 15:45 IST on a trading day: from the morning job until a quarter of an hour after the NSE close, both
     /// from the session service, so an exchange holiday is not a session and a weekday is not by itself a trading day.
+    /// The close is the options' (the desk's runs stop then), so from 7 Dec 2026 it is 08:45 to 16:00.
     /// </summary>
     public static bool InSession(DateTime nowUtc, IMarketSessionService sessions)
     {
-        var info = sessions.GetSessionInfo(nowUtc, "NSE", "CM");
+        var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
         return info.IsTradingDay && nowUtc >= info.SessionOpenUtc.AddMinutes(-30) && nowUtc < info.SessionCloseUtc.AddMinutes(15);
     }
+
+    /// <summary>"15:45", or "16:00" from 7 Dec 2026: when <see cref="InSession"/> ends on the IST day of <paramref name="nowUtc"/>.</summary>
+    internal static string SessionEndsText(DateTime nowUtc)
+        => EquityMarketHours.DerivativesCloseOn(IstTime.DateOf(nowUtc)).AddMinutes(15).ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>Starts (or restarts) the history from <paramref name="from"/>, or from the first stored 1-minute index candle.</summary>
     public async Task<DateOnly?> StartAsync(DateOnly? from, CancellationToken cancellationToken)
@@ -321,7 +326,7 @@ public sealed class AiTraderSituationsStatus
     public void NotStarted() => Set("not started", "Not started: POST api/AiTrader/situations/backfill builds the history.");
 
     public void Waiting(DateTime nowUtc) => Set("waiting", string.Create(CultureInfo.InvariantCulture,
-        $"Waiting: it does not run from 08:45 to 15:45 IST on a trading day (now {IstTime.ToIst(nowUtc):HH:mm})."));
+        $"Waiting: it does not run from 08:45 to {AiTraderSituationBuilder.SessionEndsText(nowUtc)} IST on a trading day (now {IstTime.ToIst(nowUtc):HH:mm})."));
 
     public void Running(DateOnly lastDay, DateOnly through, DateTime startedUtc)
     {
@@ -346,7 +351,8 @@ public sealed class AiTraderSituationsStatus
     {
         lock (_lock)
         {
-            (_state, _message, _lastDay, _through) = ("paused", "Paused for the session; it carries on after 15:45 IST.", lastDay, through);
+            (_state, _message, _lastDay, _through) = ("paused",
+                $"Paused for the session; it carries on after {AiTraderSituationBuilder.SessionEndsText(DateTime.UtcNow)} IST.", lastDay, through);
         }
     }
 

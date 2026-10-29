@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Infrastructure.Services;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,18 +14,30 @@ namespace AlgoTrading.Api.Services
     /// <summary>
     /// Auto-shutdown at the close. Every strategy run is stopped — its open paper
     /// positions squared off — at the close of the market it trades on: NSE and
-    /// BSE runs at 15:30 IST, MCX runs at the MCX close (<see cref="MarketCloseRules"/>).
+    /// BSE runs at the derivatives close (15:30 IST; 15:45 from 7 Dec 2026, but
+    /// 15:30 on the expiry day of the index a run trades), MCX runs at the MCX
+    /// close (<see cref="MarketCloseRules"/>).
     /// A leg ticked "carry forward" is moved to the run owner's manual book
     /// instead (<see cref="PositionCarryForward"/>), and the manual book's own
     /// unticked positions are squared off at their exchange's close
     /// (<see cref="ManualIntradaySquareOff"/>).
-    /// At 15:30 on weekdays the live data feeds, the chain poller and the alerter
-    /// are stopped too, except the feeds MCX still needs, which go at the MCX
-    /// close — so nothing keeps consuming the host after its session ends.
+    /// At the derivatives close on weekdays the live data feeds, the chain poller
+    /// and the alerter are stopped too, except the feeds MCX still needs, which go
+    /// at the MCX close — so nothing keeps consuming the host after its session
+    /// ends. Until 7 Dec 2026 that is 15:30, as it always was; from then the feeds
+    /// carry the options to 15:45.
     /// </summary>
     public class MarketHoursService : BackgroundService
     {
+        /// <summary>The reason the feeds, the poller and the alerter are stopped with at a 15:30 close (<see cref="MarketClosedReasonOn"/>).</summary>
         public const string MarketClosedReason = "Market closed (15:30 IST)";
+
+        /// <summary>
+        /// The reason they are stopped with on <paramref name="istDay"/>: "Market closed (15:30 IST)" until
+        /// 6 Dec 2026, "Market closed (15:45 IST)" from 7 Dec — the run sweep's words for the same close.
+        /// </summary>
+        public static string MarketClosedReasonOn(DateOnly istDay)
+            => MarketCloseRules.ReasonFor(MarketCloseRules.Nse, IstTime.FromIst(istDay.ToDateTime(EquityMarketHours.DerivativesCloseOn(istDay))));
 
         private readonly ILogger<MarketHoursService> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
@@ -36,7 +49,7 @@ namespace AlgoTrading.Api.Services
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
-        // Connector keys of the feeds left running for MCX at 15:30; each is
+        // Connector keys of the feeds left running for MCX at the equity close; each is
         // removed once it has been stopped at the MCX close.
         private readonly HashSet<string> _feedsKeptOpenForMcx = new(StringComparer.OrdinalIgnoreCase);
         public const string McxClosedReason = "MCX closed";
@@ -75,7 +88,8 @@ namespace AlgoTrading.Api.Services
                     var nowIst = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, _istZone);
 
                     // Strategy runs, each at the close of its own market: NSE and
-                    // BSE at 15:30, MCX at the MCX close. Until 27 Sep every run
+                    // BSE at the derivatives close (15:30; 15:45 from 7 Dec 2026),
+                    // MCX at the MCX close. Until 27 Sep every run
                     // went at 15:30, once a day behind a "done today" flag kept in
                     // memory — so an API process started after 15:30 swept at
                     // start-up and squared off a crude run trading the evening
@@ -98,14 +112,21 @@ namespace AlgoTrading.Api.Services
                         _hasShutdownToday = false;
                     }
 
-                    // Check if it's a weekday and time is exactly 15:30 IST (3:30 PM) or shortly after
+                    // On a weekday, at the derivatives close or shortly after: 15:30 IST
+                    // until 6 Dec 2026, 15:45 from 7 Dec, when options and futures trade on
+                    // after the cash market and the indices have closed. The feeds carry
+                    // their ticks and the poller their chains, so neither may stop earlier.
+                    var today = DateOnly.FromDateTime(nowIst);
+                    var feedsClose = EquityMarketHours.DerivativesCloseOn(today);
                     if (!_hasShutdownToday &&
                         nowIst.DayOfWeek != DayOfWeek.Saturday &&
                         nowIst.DayOfWeek != DayOfWeek.Sunday)
                     {
-                        if (nowIst.TimeOfDay >= new TimeSpan(15, 30, 0))
+                        if (nowIst.TimeOfDay >= feedsClose.ToTimeSpan())
                         {
-                            _logger.LogInformation("Market has closed (15:30 IST). Triggering auto-shutdown of heavy processes to save system load.");
+                            var closedReason = MarketClosedReasonOn(today);
+                            _logger.LogInformation("Market has closed ({Close} IST). Triggering auto-shutdown of heavy processes to save system load.",
+                                feedsClose.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture));
 
                             // Stop every live feed (managed, or adopted after an API restart) —
                             // unless the commodity session is still on and the list carries
@@ -142,7 +163,7 @@ namespace AlgoTrading.Api.Services
                                 }
                                 else
                                 {
-                                    var feedStop = await feed.StopAsync(MarketClosedReason, stoppingToken);
+                                    var feedStop = await feed.StopAsync(closedReason, stoppingToken);
                                     _logger.LogInformation("Market close: {Feed} {Outcome}.", feed.Descriptor.Name, feedStop.Message);
                                 }
                             }
@@ -151,7 +172,7 @@ namespace AlgoTrading.Api.Services
                             // and left running it spent the evening of 2026-09-08 storing the
                             // same numbers every five seconds until FYERS answered 429
                             // ("request limit reached") — a quota the next morning needs.
-                            var pollerStop = await _poller.StopAsync(MarketClosedReason, stoppingToken);
+                            var pollerStop = await _poller.StopAsync(closedReason, stoppingToken);
                             _logger.LogInformation("Market close: chain poller {Outcome}.", pollerStop.Message);
 
                             // The strategy runs are not stopped here: the sweep at the
@@ -160,7 +181,7 @@ namespace AlgoTrading.Api.Services
 
                             // The alerter too: it watches the same closed market, and left
                             // running it sat "waiting for ticks" until the next reboot.
-                            var alerterStop = await _alerts.StopAsync(MarketClosedReason, stoppingToken);
+                            var alerterStop = await _alerts.StopAsync(closedReason, stoppingToken);
                             _logger.LogInformation("Market close: alerter {Outcome}.", alerterStop.WasRunning ? "stopped" : "was not running");
 
                             _hasShutdownToday = true;
@@ -267,13 +288,43 @@ namespace AlgoTrading.Api.Services
         /// a replay played that afternoon must not be cut there.
         /// </remarks>
         internal static IReadOnlyList<MarketCloseRules.RunToStop> RunsDueAtClose(
-            IMarketSessionService sessions, DateTime nowUtc, IEnumerable<RunningStrategy> runs, IReadOnlySet<long> replayRuns)
+            IMarketSessionService sessions, DateTime nowUtc, IEnumerable<RunningStrategy> runs, IReadOnlySet<long> replayRuns,
+            IReadOnlySet<string>? indicesExpiringToday = null)
             => MarketCloseRules.RunsToStop(
                 sessions,
                 nowUtc,
                 runs
                     .Where(r => !r.StopRequested && !replayRuns.Contains(r.RunId))
-                    .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)));
+                    .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)),
+                indicesExpiringToday);
+
+        /// <summary>
+        /// The indices of the desk's runs that expire today, when an expiry can bring their close forward
+        /// (<see cref="MarketCloseRules.ExpiryCanCloseFirst"/>); otherwise none, with no scope opened. A lookup
+        /// that fails is logged and counts as none: every run then stops at the derivatives close, the later of
+        /// the two, rather than the whole sweep failing with it.
+        /// </summary>
+        private static async Task<IReadOnlySet<string>?> IndicesExpiringTodayAsync(
+            IServiceScopeFactory scopeFactory, ILogger logger, DateTime nowUtc, IReadOnlyList<RunningStrategy> runs,
+            CancellationToken cancellationToken)
+        {
+            if (runs.Count == 0 || !MarketCloseRules.ExpiryCanCloseFirst(nowUtc)) return null;
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+                return await MarketCloseRules.IndicesExpiringTodayAsync(db, nowUtc, runs.Select(r => r.Underlying), cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Market close: today's index expiries could not be read; every NSE and BSE run is judged by the derivatives close.");
+                return null;
+            }
+        }
 
         /// <summary>
         /// Stops, squaring off, every run whose market has closed since it
@@ -298,7 +349,9 @@ namespace AlgoTrading.Api.Services
             try
             {
                 var replayRuns = await ReplayRunIdsAsync(scopeFactory, logger, cancellationToken);
-                var due = RunsDueAtClose(sessions, nowUtc, runs.List(), replayRuns);
+                var desk = runs.List();
+                var expiring = await IndicesExpiringTodayAsync(scopeFactory, logger, nowUtc, desk, cancellationToken);
+                var due = RunsDueAtClose(sessions, nowUtc, desk, replayRuns, expiring);
                 if (due.Count == 0) return 0;
 
                 using var scope = scopeFactory.CreateScope();

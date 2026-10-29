@@ -344,7 +344,7 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconci
 builder.Services.AddHostedService<AlgoTrading.Api.Services.DaemonOutputAdoption>();
 // Register the background service that guards active runs against global kill-switches and rate limits
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
-// Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
+// Squares off each run at its market's close (NSE/BSE 15:30, 15:45 from 7 Dec 2026; MCX at the MCX close) and stops the feeds
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 // Once a minute: each live run's P&L (and a last row for a run that just ended).
 builder.Services.AddHostedService<AlgoTrading.Api.Services.RunPnlRecorderService>();

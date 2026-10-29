@@ -21,8 +21,9 @@ namespace AlgoTrading.Api.Services;
 /// <para>
 /// One pass a couple of minutes after the API starts — the catch-up for
 /// anything that expired while it was down — then every five minutes, so an
-/// NSE or BSE expiry settles between 15:35 and 15:40 IST and an MCX expiry
-/// shortly after its evening close.
+/// NSE or BSE expiry settles between 15:35 and 15:40 IST (a stock contract's
+/// between 15:50 and 15:55 from 7 Dec 2026, when it trades to 15:45) and an MCX
+/// expiry shortly after its evening close.
 /// </para>
 /// </remarks>
 public sealed class CarriedPositionsService : BackgroundService

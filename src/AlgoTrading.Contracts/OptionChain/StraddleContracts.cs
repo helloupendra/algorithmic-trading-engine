@@ -82,7 +82,7 @@ public class IvHistoryDayResponse
     public decimal? OpenIv { get; set; }
     public DateTime? OpenCapturedUtc { get; set; }
 
-    /// <summary>ATM IV at the last capture five minutes before the close (15:25 on NSE); null until then, or when none was priced.</summary>
+    /// <summary>ATM IV at the last capture five minutes before the close (15:25 on NSE, 15:40 from 7 Dec 2026); null until then, or when none was priced.</summary>
     public decimal? CloseIv { get; set; }
     public DateTime? CloseCapturedUtc { get; set; }
 

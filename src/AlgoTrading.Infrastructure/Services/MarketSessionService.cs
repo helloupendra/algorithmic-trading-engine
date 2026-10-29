@@ -11,14 +11,23 @@ namespace AlgoTrading.Infrastructure.Services;
 /// as a broken one.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Until 2026-09-14 this knew only weekends. That day was Ganesh Chaturthi: the
 /// morning job restarted the API and waited for a broker sign-in until 14:30,
 /// and every feed reported a closed market as an open one that had gone silent.
+/// </para>
+/// <para>
+/// On NSE and BSE the segment matters from 7 Dec 2026: CM (shares and the
+/// indices) closes at 15:30 and FO (options and futures) at 15:45
+/// (<see cref="EquityMarketHours"/>). Before that day the two answer alike.
+/// The FO answer is the segment's: an index contract expiring that day stops
+/// at 15:30 inside it, which only a caller that knows the contract can tell
+/// (<see cref="EquityMarketHours.ContractCloseOn"/>). A special session keeps
+/// the one set of hours the calendar holds for its exchange, for both segments.
+/// </para>
 /// </remarks>
 public class MarketSessionService : IMarketSessionService
 {
-    private static readonly TimeOnly EquityOpen = new(9, 15);
-    private static readonly TimeOnly EquityClose = new(15, 30);
 
     // MCX runs from 09:00 into the night. Its close tracks the US energy and
     // metals markets, so it moves with American daylight saving: 23:30 IST while
@@ -62,7 +71,8 @@ public class MarketSessionService : IMarketSessionService
 
         bool supported = market switch
         {
-            // Cash and equity derivatives trade the same hours and share one list.
+            // Cash and equity derivatives share one holiday list; from 7 Dec 2026
+            // the derivatives close later (WindowsOn).
             "NSE" or "BSE" => seg is "CM" or "FO",
             // COM is what MCX calls the segment; CM is accepted too because the
             // console's default query string carries it.
@@ -78,7 +88,8 @@ public class MarketSessionService : IMarketSessionService
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, zone);
         var today = DateOnly.FromDateTime(localNow);
 
-        var windows = WindowsOn(market, today);
+        bool derivatives = seg == "FO";
+        var windows = WindowsOn(market, today, derivatives);
         var holiday = _calendar.HolidayOn(market, today);
         var special = _calendar.SpecialSessionOn(market, today);
 
@@ -86,7 +97,7 @@ public class MarketSessionService : IMarketSessionService
         // at" read sensibly on a page; IsTradingDay says whether they apply.
         var (dayOpen, dayClose) = windows.Count > 0
             ? (windows[0].Open, windows[^1].Close)
-            : NominalHours(market, today);
+            : NominalHours(market, today, derivatives);
 
         return new MarketSessionInfo
         {
@@ -98,7 +109,7 @@ public class MarketSessionService : IMarketSessionService
             IsMarketOpen = windows.Any(w => localNow >= w.Open && localNow < w.Close),
             SessionOpenUtc = TimeZoneInfo.ConvertTimeToUtc(dayOpen, zone),
             SessionCloseUtc = TimeZoneInfo.ConvertTimeToUtc(dayClose, zone),
-            NextMarketOpenUtc = TimeZoneInfo.ConvertTimeToUtc(NextOpen(market, localNow), zone),
+            NextMarketOpenUtc = TimeZoneInfo.ConvertTimeToUtc(NextOpen(market, localNow, derivatives), zone),
             TimeZoneId = zone.Id,
             IsHoliday = holiday is not null,
             HolidayName = holiday?.Name,
@@ -127,8 +138,9 @@ public class MarketSessionService : IMarketSessionService
     /// <summary>
     /// The IST windows the exchange trades on a date, in order. Empty when it does
     /// not trade at all. A special session replaces everything else that day.
+    /// <paramref name="derivatives"/> asks for NSE's or BSE's FO segment.
     /// </summary>
-    private List<(DateTime Open, DateTime Close)> WindowsOn(string market, DateOnly date)
+    private List<(DateTime Open, DateTime Close)> WindowsOn(string market, DateOnly date, bool derivatives)
     {
         var special = _calendar.SpecialSessionOn(market, date);
         if (special is not null)
@@ -142,7 +154,7 @@ public class MarketSessionService : IMarketSessionService
             return [];
 
         if (market != "MCX")
-            return [(date.ToDateTime(EquityOpen), date.ToDateTime(EquityClose))];
+            return [(date.ToDateTime(EquityMarketHours.Open), date.ToDateTime(EquityClose(date, derivatives)))];
 
         var close = McxCloseFor(date);
         return closure switch
@@ -153,18 +165,22 @@ public class MarketSessionService : IMarketSessionService
         };
     }
 
-    private static (DateTime Open, DateTime Close) NominalHours(string market, DateOnly date)
+    private static (DateTime Open, DateTime Close) NominalHours(string market, DateOnly date, bool derivatives)
         => market == "MCX"
             ? (date.ToDateTime(McxOpen), date.ToDateTime(McxCloseFor(date)))
-            : (date.ToDateTime(EquityOpen), date.ToDateTime(EquityClose));
+            : (date.ToDateTime(EquityMarketHours.Open), date.ToDateTime(EquityClose(date, derivatives)));
+
+    /// <summary>NSE's or BSE's regular close on a date: the derivatives' for FO, the cash market's for CM.</summary>
+    private static TimeOnly EquityClose(DateOnly date, bool derivatives)
+        => derivatives ? EquityMarketHours.DerivativesCloseOn(date) : EquityMarketHours.CashClose;
 
     /// <summary>The first session start after <paramref name="localNow"/>, today included.</summary>
-    private DateTime NextOpen(string market, DateTime localNow)
+    private DateTime NextOpen(string market, DateTime localNow, bool derivatives)
     {
         var today = DateOnly.FromDateTime(localNow);
         for (int offset = 0; offset <= NextOpenSearchDays; offset++)
         {
-            foreach (var (open, _) in WindowsOn(market, today.AddDays(offset)))
+            foreach (var (open, _) in WindowsOn(market, today.AddDays(offset), derivatives))
             {
                 if (open > localNow) return open;
             }
@@ -174,7 +190,7 @@ public class MarketSessionService : IMarketSessionService
         // Answer with the weekday rule rather than with nothing.
         var next = today.AddDays(1);
         while (next.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) next = next.AddDays(1);
-        return next.ToDateTime(market == "MCX" ? McxOpen : EquityOpen);
+        return next.ToDateTime(market == "MCX" ? McxOpen : EquityMarketHours.Open);
     }
 
     /// <summary>

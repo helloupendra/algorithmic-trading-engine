@@ -66,9 +66,11 @@ public sealed class MarketBriefBuilder(
         text.Append(CultureInfo.InvariantCulture, $"MARKET BRIEF — {ist:ddd d MMM yyyy, HH:mm} IST{(replay ? " (a replay of that day)" : string.Empty)}\n");
         if (session.IsTradingDay)
         {
+            // The options' session, which the AI Trader trades: 09:15–15:30 until 6 Dec 2026, 09:15–15:45 from 7 Dec.
             int since = (int)Math.Max(0, (asOf - session.SessionOpenUtc).TotalMinutes);
             int left = (int)Math.Max(0, (session.SessionCloseUtc - asOf).TotalMinutes);
-            text.Append(CultureInfo.InvariantCulture, $"NSE session 09:15–15:30: {since} min since the open, {left} min to the close.\n");
+            text.Append(CultureInfo.InvariantCulture,
+                $"NSE session {IstTime.ToIst(session.SessionOpenUtc):HH:mm}–{IstTime.ToIst(session.SessionCloseUtc):HH:mm}: {since} min since the open, {left} min to the close.\n");
         }
         else
         {
@@ -134,7 +136,8 @@ public sealed class MarketBriefBuilder(
     private async Task<string> IndexLineAsync(string name, string spot, string exchange, DateTime asOf, bool replay, CancellationToken cancellationToken)
     {
         var minutes = await MinutesAsync(spot, asOf, replay, cancellationToken);
-        var info = sessions.GetSessionInfo(asOf, exchange, "FO");
+        // The index is computed from cash prices: its session is the cash market's, 09:15–15:30 on every day.
+        var info = sessions.GetSessionInfo(asOf, exchange, "CM");
         var today = minutes.Where(b => b.BarStartUtc >= info.SessionOpenUtc && b.BarStartUtc < info.SessionCloseUtc).ToList();
         if (today.Count == 0) return $"{name}: no bars recorded yet today.";
 

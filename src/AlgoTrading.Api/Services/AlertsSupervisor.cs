@@ -19,7 +19,7 @@ namespace AlgoTrading.Api.Services;
 /// closed the row, and the three processes outlived the session until the
 /// next reboot. Now the row is created Running here, the runner is given its
 /// id, and the row is closed by whatever ends the process — a Stop, an exit,
-/// or the 15:30 market close.
+/// or the market close (15:30; 15:45 from 7 Dec 2026).
 /// </remarks>
 public sealed class AlertsSupervisor
 {

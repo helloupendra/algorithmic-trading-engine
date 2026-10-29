@@ -116,7 +116,7 @@ public sealed class PositionCarryForward
 
         bool book = IsManualBook(run);
         string label = (await ContractLabelsAsync(new[] { position.Symbol }, cancellationToken))[position.Symbol];
-        string reason = DescribeChange(label, position.Symbol, carryForward, book, by);
+        string reason = DescribeChange(label, position.Symbol, carryForward, book, by, IstTime.DateOf(DateTime.UtcNow));
         string metadata = JsonSerializer.Serialize(new { reason, by, positionId, symbol = position.Symbol, carryForward });
 
         var update = await _paperTrading.SetCarryForwardAsync(
@@ -138,22 +138,28 @@ public sealed class PositionCarryForward
     /// The activity line for a change of the tick. Says what will happen at the
     /// close, because that is the only thing the tick changes.
     /// </summary>
-    public static string DescribeChange(string label, string symbol, bool carryForward, bool manualBook, string by)
+    public static string DescribeChange(string label, string symbol, bool carryForward, bool manualBook, string by, DateOnly istDay)
     {
         string what = carryForward ? "ticked" : "unticked";
         string then = (carryForward, manualBook) switch
         {
             (true, true) => "held overnight",
-            (false, true) => $"intraday — squared off at the {CloseName(symbol)}",
+            (false, true) => $"intraday — squared off at the {CloseName(symbol, istDay)}",
             (true, false) => "moves to the manual book at the close instead of being squared off",
             (false, false) => "squared off with the run at the close"
         };
         return $"Carry forward {what} by {by}: {label} — {then}";
     }
 
-    /// <summary>"close (15:30 IST)" for NSE and BSE, "MCX close" for commodities.</summary>
-    public static string CloseName(string symbol) =>
-        MarketCloseRules.ExchangeOf(null, symbol) == MarketCloseRules.Mcx ? "MCX close" : "close (15:30 IST)";
+    /// <summary>
+    /// "close (15:30 IST)" for NSE and BSE, "MCX close" for commodities. From 7 Dec
+    /// 2026 an option or future says "close (15:45 IST)", but on an index's expiry day
+    /// when the symbol shows it (<see cref="EquityMarketHours.CloseOf"/>).
+    /// </summary>
+    public static string CloseName(string symbol, DateOnly istDay, DateOnly? expiry = null) =>
+        MarketCloseRules.ExchangeOf(null, symbol) == MarketCloseRules.Mcx
+            ? "MCX close"
+            : $"close ({EquityMarketHours.CloseOf(symbol, istDay, expiry).ToString("HH:mm", CultureInfo.InvariantCulture)} IST)";
 
     // ------------------------------------------------------------ the close --
 

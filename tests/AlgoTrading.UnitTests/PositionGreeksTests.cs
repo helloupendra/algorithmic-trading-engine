@@ -291,7 +291,7 @@ public class PositionGreeksTests
         var expected = PositionGreeks.Compute(
             isCall: true, optionPrice: 95m, optionAsOfUtc: ReplayClock.AddSeconds(-20),
             underlyingPrice: 25000m, underlyingAsOfUtc: ReplayClock,
-            strike: 25000m, expiryUtc: ExpirySettler.ExpiryCloseUtc(Sessions(), "NSE", "FO", ReplayedExpiry),
+            strike: 25000m, expiryUtc: ExpirySettler.ExpiryCloseUtc(Sessions(), "NSE", "FO", ReplayedExpiry, "NIFTY"),
             onFuture: false)!;
         var call = built.ByPosition[1];
         Assert.Equal(PositionGreeks.SourceComputed, call.Source);

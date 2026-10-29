@@ -100,6 +100,8 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
         foreach (var symbol in symbols)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // An option or a future trades to the derivatives close; read off the symbol once, not per bar.
+            bool derivative = EquityMarketHours.IsDerivative(symbol);
             try
             {
                 var bars = await _db.LiveBars.AsNoTracking()
@@ -122,7 +124,7 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                     // a minute until 20:00 IST on 2026-09-18 — and those bars
                     // rolled up into flat candles a chart reads as a market that
                     // traded without moving.
-                    .Where(b => !IsExchangeAfterClose(symbol, b.BarStartUtc))
+                    .Where(b => !IsExchangeAfterClose(symbol, derivative, b.BarStartUtc))
                     .ToList();
                 result.LiveBarsRead += bars.Count;
 
@@ -135,7 +137,7 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                     .Where(c => c.Symbol == symbol && c.SourceKey == SourceKey && c.TimeStampUtc >= fromUtc && c.TimeStampUtc <= toUtc)
                     .ToListAsync(cancellationToken);
                 outsideSession = outsideSession
-                    .Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc) || IsExchangeAfterClose(symbol, c.TimeStampUtc))
+                    .Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc) || IsExchangeAfterClose(symbol, derivative, c.TimeStampUtc))
                     .ToList();
                 if (outsideSession.Count > 0)
                 {
@@ -187,14 +189,22 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
     }
 
     /// <summary>
-    /// A minute after the equity close. Only NSE and BSE: MCX trades into the
-    /// night and its evening bars are the session, not an echo of it.
+    /// A minute after the symbol's close. Only NSE and BSE: MCX trades into the
+    /// night and its evening bars are the session, not an echo of it. A share or
+    /// an index closes at 15:30; an option or future at the derivatives close of
+    /// the bar's own day, 15:45 from 7 Dec 2026 (<see cref="EquityMarketHours"/>),
+    /// so an earlier day's archive is cut where it always was. Like the live-bar
+    /// guard, an expiring contract keeps its minutes to the derivatives close.
     /// </summary>
-    private static bool IsExchangeAfterClose(string symbol, DateTime barStartUtc)
+    private static bool IsExchangeAfterClose(string symbol, bool derivative, DateTime barStartUtc)
     {
         if (!symbol.StartsWith("NSE:", StringComparison.Ordinal) && !symbol.StartsWith("BSE:", StringComparison.Ordinal))
             return false;
-        return IstTime.ToIst(barStartUtc).TimeOfDay >= IstTime.SessionClose;
+        var ist = IstTime.ToIst(barStartUtc);
+        var close = derivative
+            ? EquityMarketHours.DerivativesCloseOn(DateOnly.FromDateTime(ist))
+            : EquityMarketHours.CashClose;
+        return ist.TimeOfDay >= close.ToTimeSpan();
     }
 
     private async Task WriteAsync(string symbol, string resolution, IReadOnlyList<ProviderHistoryBar> rolled, CandleArchiveResult result, CancellationToken ct)

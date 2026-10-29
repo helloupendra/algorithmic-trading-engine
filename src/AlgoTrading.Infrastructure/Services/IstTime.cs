@@ -13,9 +13,12 @@ public static class IstTime
 {
     public static readonly TimeSpan Offset = TimeSpan.FromMinutes(330);
 
-    /// <summary>Regular NSE/BSE session bounds.</summary>
-    public static readonly TimeSpan SessionOpen = new(9, 15, 0);
-    public static readonly TimeSpan SessionClose = new(15, 30, 0);
+    /// <summary>
+    /// Regular NSE/BSE cash session bounds, which the indices keep too. The
+    /// derivatives close later from 7 Dec 2026 (<see cref="EquityMarketHours"/>).
+    /// </summary>
+    public static readonly TimeSpan SessionOpen = EquityMarketHours.Open.ToTimeSpan();
+    public static readonly TimeSpan SessionClose = EquityMarketHours.CashClose.ToTimeSpan();
 
     public static readonly TimeZoneInfo Zone = ResolveZone();
 

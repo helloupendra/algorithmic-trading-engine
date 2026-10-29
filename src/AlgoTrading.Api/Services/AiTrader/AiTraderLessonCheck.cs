@@ -368,7 +368,8 @@ public sealed class AiTraderLessonCheck(
         string? symbol = plan.Option == "CE" ? row?.Call : row?.Put;
         if (string.IsNullOrWhiteSpace(symbol)) return null;
 
-        var close = sessions.GetSessionInfo(clockUtc, "NSE", "FO").SessionCloseUtc;
+        // Played to the shadow book's 15:30 square-off (AiTraderShadowBook), from 7 Dec 2026 too.
+        var close = sessions.GetSessionInfo(clockUtc, "NSE", "CM").SessionCloseUtc;
         var ticks = await market.TicksAsync(symbol, clockUtc, close, cancellationToken);
         var entry = ticks.FirstOrDefault(t => t.Ask is > 0 || t.Last is > 0);
         if (entry is null) return null;

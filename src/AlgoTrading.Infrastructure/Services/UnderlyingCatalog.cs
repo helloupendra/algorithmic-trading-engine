@@ -171,6 +171,15 @@ public static class UnderlyingCatalog
         return lead.Success ? lead.Value : upper;
     }
 
+    /// <summary>True for a FYERS futures symbol: "NSE:BANKNIFTY26SEPFUT".</summary>
+    public static bool IsFutureSymbol(string? symbol)
+    {
+        if (string.IsNullOrWhiteSpace(symbol)) return false;
+        var s = symbol.Trim();
+        var body = s.Contains(':') ? s[(s.IndexOf(':') + 1)..] : s;
+        return Future.IsMatch(body);
+    }
+
     /// <summary>
     /// Parses a FYERS option symbol (monthly or weekly grammar). Returns null for
     /// anything that is not an option.

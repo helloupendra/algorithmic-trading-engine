@@ -116,8 +116,11 @@ public sealed class AssistantExamAgent(
         return TimeOnly.FromDateTime(ist) >= after;
     }
 
-    /// <summary>An exam never asks while NSE trades: the Assistant's model and the desk's database are busy then.</summary>
-    private bool MarketOpen(DateTime nowUtc) => sessions?.IsMarketOpen(nowUtc, "NSE", "CM") == true;
+    /// <summary>
+    /// An exam never asks while NSE trades: the Assistant's model and the desk's database are busy then. The options'
+    /// session, which the desk's runs trade: to 15:45 from 7 Dec 2026.
+    /// </summary>
+    private bool MarketOpen(DateTime nowUtc) => sessions?.IsMarketOpen(nowUtc, "NSE", "FO") == true;
 
     private Task<AiExam?> OpenExamAsync(CancellationToken cancellationToken) =>
         db.AiExams.Where(e => e.FinishedUtc == null).OrderBy(e => e.Id).FirstOrDefaultAsync(cancellationToken);

@@ -1,8 +1,10 @@
+using System.Globalization;
 using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.Replay;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Api.Services.AiTrader;
@@ -104,7 +106,11 @@ public sealed class AiTraderLessonAgent(
         var s = settings.CurrentValue;
         if (!s.AiTraderLessons) return "Ai:AiTraderLessons is off";
         if (!s.HasMemory(AiCatalog.AiTrader)) return "the AI Trader has no memory (Ai:MemoryEnabled, Ai:MemoryAgents)";
-        if (InSession(sessions, nowUtc)) return "the NSE session (09:00–15:45 IST on a trading day)";
+        if (InSession(sessions, nowUtc))
+        {
+            var until = TimeOnly.FromDateTime(IstTime.ToIst(sessions.GetSessionInfo(nowUtc, "NSE", "FO").SessionCloseUtc + SessionMargin));
+            return $"the NSE session (09:00–{until.ToString("HH:mm", CultureInfo.InvariantCulture)} IST on a trading day)";
+        }
         var replay = await replays.LoadAsync(cancellationToken);
         if (replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State)) return $"replay #{replay.Id} is playing with the AI Trader";
         return null;

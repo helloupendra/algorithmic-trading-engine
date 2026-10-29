@@ -220,14 +220,26 @@ public sealed class AiTraderBookReader(
     /// The book as the brief tells it to the model. In shadow and replay it is the shadow book
     /// (<see cref="AiTraderShadowBook"/>), and the brief says how it is kept.
     /// </summary>
+    /// <remarks>
+    /// The live book is a manual book, squared off by <see cref="ManualIntradaySquareOff"/> at the options' close:
+    /// "15:30" until 6 Dec 2026; from 7 Dec "15:45 (15:30 for a contract expiring today)". The shadow book keeps
+    /// its own 15:30.
+    /// </remarks>
     public static string Describe(AiTraderBook book, AiTraderRules rules, string mode)
     {
+        static string LiveSquareOff(DateTime clockUtc)
+        {
+            var day = IstTime.DateOf(clockUtc);
+            string close = EquityMarketHours.DerivativesCloseOn(day).ToString("HH:mm", CultureInfo.InvariantCulture);
+            return EquityMarketHours.DerivativesCloseLater(day) ? $"{close} (15:30 for a contract expiring today)" : close;
+        }
+
         var text = new StringBuilder();
         text.Append(mode switch
         {
             AiTraderModes.Replay => "YOUR BOOK (this replay's shadow book, fresh at its start: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
             AiTraderModes.Shadow => "YOUR BOOK (shadow: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
-            _ => "YOUR BOOK (live: your own paper account; an allowed buy is placed in it at the ask with your stop and target on the position, checked every few seconds, and squared off at 15:30; a Validator checks each buy or strategy start first and can block it; nothing reaches a broker)\n",
+            _ => $"YOUR BOOK (live: your own paper account; an allowed buy is placed in it at the ask with your stop and target on the position, checked every few seconds, and squared off at {LiveSquareOff(book.ClockUtc)}; a Validator checks each buy or strategy start first and can block it; nothing reaches a broker)\n",
         });
 
         decimal budget = rules.DailyLossLimit + Math.Min(0m, book.NetToday);

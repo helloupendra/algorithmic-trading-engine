@@ -19,6 +19,7 @@ namespace AlgoTrading.Infrastructure.Services;
 public class LiveDataService : ILiveDataService
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _symbolLocks = new();
+    private static readonly ConcurrentDictionary<string, string> _segmentBySymbol = new(StringComparer.Ordinal);
     
     private static readonly Histogram TickProcessingLatency = Metrics.CreateHistogram(
         "algotrading_tick_processing_latency_seconds",
@@ -57,6 +58,14 @@ public class LiveDataService : ILiveDataService
     /// The session comes from <see cref="IMarketSessionService"/>, so holidays,
     /// MCX's split sessions and its daylight-saving close are already accounted
     /// for; an exchange it does not know keeps its bars rather than losing them.
+    ///
+    /// The segment is the symbol's own (<see cref="EquityMarketHours.SegmentOf"/>):
+    /// from 7 Dec 2026 NSE's and BSE's options and futures trade to 15:45 while
+    /// the shares and the indices stop at 15:30, so an option's 15:40 minute is
+    /// a bar and NIFTY 50's is an echo. An index contract that expires that day
+    /// stops at 15:30 too, but a monthly symbol does not say which day it
+    /// expires, so its minutes to 15:45 are kept: at worst a flat bar or two of
+    /// a contract that no longer trades, never a real bar lost.
     /// </summary>
     private bool InSession(string symbol, DateTime barStartUtc)
     {
@@ -65,9 +74,9 @@ public class LiveDataService : ILiveDataService
 
         try
         {
-            // NSE and BSE cash and derivatives share one set of hours, so the
-            // segment only has to separate the commodity exchange from them.
-            return _sessions.GetSessionInfo(barStartUtc, exchange, exchange == "MCX" ? "COM" : "CM").IsMarketOpen;
+            // Read off the symbol once per process: this runs on every tick.
+            var segment = _segmentBySymbol.GetOrAdd(symbol, EquityMarketHours.SegmentOf);
+            return _sessions.GetSessionInfo(barStartUtc, exchange, segment).IsMarketOpen;
         }
         catch (NotSupportedException)
         {

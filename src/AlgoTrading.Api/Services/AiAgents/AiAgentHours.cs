@@ -16,15 +16,24 @@ public static class AiAgentHours
     public static readonly TimeOnly QuietUntil = new(15, 45);
 
     /// <summary>
-    /// Whether <paramref name="nowUtc"/> is inside 09:00–15:45 IST on an NSE trading day, by the exchange calendar: a
-    /// weekday holiday is not one, a weekend special session is.
+    /// The end of the quiet on <paramref name="istDay"/>: a quarter of an hour after the derivatives close, when the
+    /// desk's runs have been stopped. 15:45 until 6 Dec 2026 (<see cref="QuietUntil"/>), 16:00 from 7 Dec, when
+    /// options trade to 15:45.
+    /// </summary>
+    public static TimeOnly QuietUntilOn(DateOnly istDay)
+        => QuietUntil.Add(EquityMarketHours.DerivativesCloseOn(istDay) - EquityMarketHours.CashClose);
+
+    /// <summary>
+    /// Whether <paramref name="nowUtc"/> is inside 09:00–15:45 IST (16:00 from 7 Dec 2026) on an NSE trading day, by
+    /// the exchange calendar: a weekday holiday is not one, a weekend special session is.
     /// </summary>
     public static bool InSession(DateTime nowUtc, IMarketSessionService sessions)
     {
         var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
         if (!info.IsTradingDay) return false;
-        var clock = TimeOnly.FromDateTime(IstTime.ToIst(nowUtc));
-        return clock >= QuietFrom && clock < QuietUntil;
+        var ist = IstTime.ToIst(nowUtc);
+        var clock = TimeOnly.FromDateTime(ist);
+        return clock >= QuietFrom && clock < QuietUntilOn(DateOnly.FromDateTime(ist));
     }
 
     /// <summary>Whether the IST day is an NSE trading day in the exchange calendar.</summary>

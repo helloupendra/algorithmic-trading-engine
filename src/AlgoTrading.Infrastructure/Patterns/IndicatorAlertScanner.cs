@@ -212,7 +212,7 @@ public sealed class IndicatorAlertScanner
         var symbols = watches.Select(w => w.Symbol).Distinct(StringComparer.Ordinal).ToList();
         var sessions = SessionsFor(symbols, nowUtc, settings.AfterCloseGrace);
 
-        var scannable = symbols.Where(s => sessions.TryGetValue(CandlePatternRules.ExchangeOf(s), out var x) && x.InSession).ToList();
+        var scannable = symbols.Where(s => sessions.TryGetValue(CandlePatternRules.SessionKeyOf(s), out var x) && x.InSession).ToList();
         var minutes = await LoadTodayAsync(scannable, sessions, cancellationToken);
 
         var asOf = nowUtc - settings.Settle;
@@ -233,7 +233,7 @@ public sealed class IndicatorAlertScanner
                 .Select(s => new IndicatorRuleState(s.Rule.Key, s.Rule.Label, "skipped", s.Reason))
                 .ToList();
 
-            if (!sessions.TryGetValue(exchange, out var session))
+            if (!sessions.TryGetValue(CandlePatternRules.SessionKeyOf(watch.Symbol), out var session))
             {
                 states.Add(new IndicatorWatchState(watch.Symbol, watch.TimeframeMinutes, exchange, false, 0, 0, null, skipped,
                     $"no session rules for {exchange}"));
@@ -404,17 +404,22 @@ public sealed class IndicatorAlertScanner
             : null;
     }
 
+    /// <summary>
+    /// One session per exchange and segment (<see cref="CandlePatternRules.SessionKeyOf"/>): from 7 Dec 2026 an
+    /// index future's candles run to 15:45 while its index's end at 15:30.
+    /// </summary>
     private Dictionary<string, ExchangeSession> SessionsFor(IEnumerable<string> symbols, DateTime nowUtc, TimeSpan afterCloseGrace)
     {
         var result = new Dictionary<string, ExchangeSession>(StringComparer.Ordinal);
-        foreach (var exchange in symbols.Select(CandlePatternRules.ExchangeOf).Distinct(StringComparer.Ordinal))
+        foreach (var symbol in symbols.DistinctBy(CandlePatternRules.SessionKeyOf, StringComparer.Ordinal))
         {
+            var exchange = CandlePatternRules.ExchangeOf(symbol);
             try
             {
-                var info = _sessions.GetSessionInfo(nowUtc, exchange, Segment(exchange));
+                var info = _sessions.GetSessionInfo(nowUtc, exchange, CandlePatternRules.SegmentOf(symbol));
                 var window = new SessionWindow(info.SessionOpenUtc, info.SessionCloseUtc);
                 bool inSession = info.IsTradingDay && nowUtc >= window.OpenUtc && nowUtc < window.CloseUtc + afterCloseGrace;
-                result[exchange] = new ExchangeSession(window, inSession);
+                result[CandlePatternRules.SessionKeyOf(symbol)] = new ExchangeSession(window, inSession);
             }
             catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
             {
@@ -425,8 +430,6 @@ public sealed class IndicatorAlertScanner
         return result;
     }
 
-    private static string Segment(string exchange) => exchange == "MCX" ? "COM" : "CM";
-
     private async Task<Dictionary<string, List<MinuteBar>>> LoadTodayAsync(
         IReadOnlyList<string> symbols,
         IReadOnlyDictionary<string, ExchangeSession> sessions,
@@ -435,7 +438,7 @@ public sealed class IndicatorAlertScanner
         var result = new Dictionary<string, List<MinuteBar>>(StringComparer.Ordinal);
         if (symbols.Count == 0) return result;
 
-        var windows = symbols.Select(s => sessions[CandlePatternRules.ExchangeOf(s)].Window).ToList();
+        var windows = symbols.Select(s => sessions[CandlePatternRules.SessionKeyOf(s)].Window).ToList();
         var from = windows.Min(w => w.OpenUtc);
         var to = windows.Max(w => w.CloseUtc);
 
@@ -489,7 +492,8 @@ public sealed class IndicatorAlertScanner
                      .GroupBy(m => IstTime.DateOf(m.StartUtc))
                      .OrderBy(g => g.Key))
         {
-            var info = _sessions.GetSessionInfo(IstTime.MiddayUtc(day.Key), exchange, Segment(exchange));
+            // Each past day by its own close: a future's is 15:45 only from 7 Dec 2026.
+            var info = _sessions.GetSessionInfo(IstTime.MiddayUtc(day.Key), exchange, CandlePatternRules.SegmentOf(symbol));
             if (!info.IsTradingDay) continue;
             var window = new SessionWindow(info.SessionOpenUtc, info.SessionCloseUtc);
             candles.AddRange(SessionBarAggregator.Aggregate(day, window, timeframe, window.CloseUtc).Where(b => b.IsClosed));

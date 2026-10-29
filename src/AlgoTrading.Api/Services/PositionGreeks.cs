@@ -421,7 +421,7 @@ public sealed class PositionGreeksBuilder
             if (!references.TryGetValue(leg.PositionId, out var reference)) return null;
             if (!underlyingQuotes.TryGetValue(reference.Symbol, out var u) || u.Ltp is not > 0m) return null;
 
-            var expiryUtc = ExpirySettler.ExpiryCloseUtc(_sessions, ExchangeOf(leg), SegmentOf(leg), leg.Contract.ExpiryDate.Value);
+            var expiryUtc = ExpirySettler.ExpiryCloseUtc(_sessions, ExchangeOf(leg), SegmentOf(leg), leg.Contract.ExpiryDate.Value, leg.Contract.Underlying);
             return PositionGreeks.Compute(
                 isCall: leg.Contract.OptionType == "CE",
                 optionPrice: leg.Ltp.Value,

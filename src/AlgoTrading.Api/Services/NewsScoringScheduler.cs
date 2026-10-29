@@ -79,7 +79,8 @@ public sealed class NewsScoringScheduler : MarketIntelligenceLoop
     private static bool InSessionQuiet(DateTime nowUtc, Func<DateOnly, bool> isTradingDay)
     {
         var time = IstTime.ToIst(nowUtc).TimeOfDay;
-        return time >= QuietFrom && time < MarketIntelligenceSchedule.QuietUntil && isTradingDay(IstTime.DateOf(nowUtc));
+        var day = IstTime.DateOf(nowUtc);
+        return time >= QuietFrom && time < MarketIntelligenceSchedule.QuietUntilOn(day) && isTradingDay(day);
     }
 
     /// <summary>Whether a failure today should go to the System channel: only the first of the IST day.</summary>

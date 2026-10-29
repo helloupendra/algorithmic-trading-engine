@@ -257,7 +257,8 @@ public class ManualOrdersController : ControllerBase
     /// <param name="CarryForward">
     /// Hold the position overnight (a broker's carry-forward product). False,
     /// the default, is intraday: squared off at its exchange's close — NSE and
-    /// BSE at 15:30 IST, MCX at its own close (<see cref="ManualIntradaySquareOff"/>).
+    /// BSE at 15:30 IST (an option or future at 15:45 from 7 Dec 2026, but on its index's expiry day),
+    /// MCX at its own close (<see cref="ManualIntradaySquareOff"/>).
     /// </param>
     public sealed record PlaceManualOrderRequest(
         string Symbol,

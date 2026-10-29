@@ -1,5 +1,6 @@
 using System.Globalization;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Services;
 
 namespace AlgoTrading.Infrastructure.Patterns;
 
@@ -100,6 +101,22 @@ public static class CandlePatternRules
     {
         int colon = symbol.IndexOf(':');
         return colon > 0 ? symbol[..colon].ToUpperInvariant() : string.Empty;
+    }
+
+    /// <summary>
+    /// The segment whose session cuts a symbol's candles: "COM" on MCX; on NSE and BSE "FO" for a future or an
+    /// option, which trade to 15:45 from 7 Dec 2026, and "CM" for an index or a share, which stop at 15:30.
+    /// </summary>
+    public static string SegmentOf(string symbol) => EquityMarketHours.SegmentOf(symbol);
+
+    /// <summary>
+    /// The key the scanners keep one session under: the exchange, and on NSE and BSE the segment too
+    /// ("NSE", "NSE FO", "MCX"), so an index future and its index are cut by their own closes.
+    /// </summary>
+    public static string SessionKeyOf(string symbol)
+    {
+        var exchange = ExchangeOf(symbol);
+        return SegmentOf(symbol) == "FO" ? $"{exchange} FO" : exchange;
     }
 
     /// <summary>Everything wrong with a rule as submitted, in words for the form. Empty when it can be saved.</summary>

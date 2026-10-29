@@ -186,7 +186,7 @@ public class BackfillRequestResponse
 {
     public List<string> Datasets { get; set; } = [];
 
-    /// <summary>False inside market hours on a trading day: the request waits until 15:40 IST.</summary>
+    /// <summary>False inside market hours on a trading day: the request waits until 15:40 IST (15:55 from 7 Dec 2026).</summary>
     public bool StartsNow { get; set; }
 
     public string Message { get; set; } = string.Empty;

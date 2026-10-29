@@ -166,7 +166,7 @@ public class AiTraderController(
 
     /// <summary>
     /// Starts the base rates' backfill over all the stored 1-minute index history, or rebuilds it from <paramref name="from"/>
-    /// on. It runs outside 08:45–15:45 IST on trading days and carries on from where it stopped.
+    /// on. It runs outside 08:45–15:45 IST on trading days (16:00 from 7 Dec 2026) and carries on from where it stopped.
     /// </summary>
     [HttpPost("situations/backfill")]
     public IActionResult StartSituations([FromQuery] string? from, [FromServices] AiTraderSituationsStatus status)
@@ -182,13 +182,13 @@ public class AiTraderController(
         return Accepted(new
         {
             started = start?.ToString("yyyy-MM-dd") ?? "the first stored 1-minute index candle",
-            note = "Taken on the builder's next pass: at once, or 3 minutes after an API start. It builds outside 08:45–15:45 IST on trading days; GET api/AiTrader/situations shows its progress.",
+            note = $"Taken on the builder's next pass: at once, or 3 minutes after an API start. It builds outside 08:45–{AiTraderSituationBuilder.SessionEndsText(DateTime.UtcNow)} IST on trading days; GET api/AiTrader/situations shows its progress.",
         });
     }
 
     public const string SituationsRuleText =
         "Each index's moments every 10 minutes from 09:25 to 15:05 IST, built from the stored 1-minute candles: features from the bars up to " +
-        "the moment only, outcomes to +30 min, +60 min and 15:25. Built outside 08:45–15:45 IST on trading days, a day at a time; each night " +
+        "the moment only, outcomes to +30 min, +60 min and 15:25. Built outside 08:45–15:45 IST on trading days (16:00 from 7 Dec 2026), a day at a time; each night " +
         "the day the candle archive has just finished.";
 
     /// <summary>Decisions newest first: a day's (IST), a replay's (<paramref name="replay"/>), or the latest.</summary>

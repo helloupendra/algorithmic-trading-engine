@@ -94,9 +94,13 @@ public sealed class StrategyStartService(
 
     /// <summary>
     /// Why a live run on <paramref name="underlying"/> cannot start at <paramref name="nowUtc"/>: its exchange is
-    /// closed today, or today's session has ended. Null while today's session is still to come or open.
+    /// closed today, or today's session has ended. Null while today's session is still to come or open. A run
+    /// trades options, so its session is the derivatives segment's; on the day <paramref name="underlying"/>, an
+    /// index, has an expiry (<paramref name="indexExpiresToday"/>) it would trade the expiring contracts, which stop
+    /// at the cash close (15:30) while the rest trade on to 15:45 from 7 Dec 2026 (<see cref="MarketCloseRules"/>).
     /// </summary>
-    public static string? WhyMarketClosed(IMarketSessionService sessions, DateTime nowUtc, string underlying, string? spotSymbol)
+    public static string? WhyMarketClosed(IMarketSessionService sessions, DateTime nowUtc, string underlying, string? spotSymbol,
+        bool indexExpiresToday = false)
     {
         string exchange = MarketCloseRules.ExchangeOf(underlying, spotSymbol);
         var info = sessions.GetSessionInfo(nowUtc, exchange, exchange == MarketCloseRules.Mcx ? "COM" : "FO");
@@ -113,7 +117,32 @@ public sealed class StrategyStartService(
                    "on stale prices. Start it on the next trading day, or as a recap to test it on today's session.";
         }
 
+        if (indexExpiresToday && exchange != MarketCloseRules.Mcx)
+        {
+            var cashClose = sessions.GetSessionInfo(nowUtc, exchange, "CM").SessionCloseUtc;
+            if (nowUtc >= cashClose)
+            {
+                return $"{underlying}'s expiring contracts stopped trading at {IstTime.ToIst(cashClose):HH:mm} IST today, its expiry day, and a " +
+                       "run trades the nearest expiry: started now it would trade on stale prices. Start it on the next trading day, " +
+                       "or as a recap to test it on today's session.";
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="underlying"/> is an index with a listed option expiring today, asked only once an
+    /// expiry can close its contracts before the rest (<see cref="MarketCloseRules.ExpiryCanCloseFirst"/>).
+    /// </summary>
+    private static async Task<bool> IndexExpiresTodayAsync(
+        IDerivativesInstrumentService derivatives, DateTime nowUtc, string underlying, CancellationToken cancellationToken)
+    {
+        if (!MarketCloseRules.ExpiryCanCloseFirst(nowUtc) || !UnderlyingCatalog.IsIndex(underlying)) return false;
+        var today = IstTime.DateOf(nowUtc);
+        var expiries = await derivatives.GetExpiriesAsync(underlying, cancellationToken: cancellationToken);
+        // No list is no expiry known: the sweep still stops such a run at the derivatives close.
+        return expiries?.Any(x => x.ExpiryDate == today) == true;
     }
 
     /// <summary>
@@ -211,10 +240,12 @@ public sealed class StrategyStartService(
         // booked trades timed before they began. A recap replays a past session on
         // purpose and may start any time (RecapRuns).
         string parametersJson = LiveRunParameters.Merge(strategy.DefaultParametersJson, request.Parameters, lots, risk, underlying);
-        if (sessions is not null && !RecapClock.IsRecap(parametersJson)
-            && WhyMarketClosed(sessions, DateTime.UtcNow, underlying, spotSymbol) is string closed)
+        if (sessions is not null && !RecapClock.IsRecap(parametersJson))
         {
-            return StrategyStartOutcome.Refused(StrategyStartKind.Conflict, closed);
+            var startUtc = DateTime.UtcNow;
+            bool expiresToday = await IndexExpiresTodayAsync(derivatives, startUtc, underlying, cancellationToken);
+            if (WhyMarketClosed(sessions, startUtc, underlying, spotSymbol, expiresToday) is string closed)
+                return StrategyStartOutcome.Refused(StrategyStartKind.Conflict, closed);
         }
 
         var command = PrepareRunner(strategy, out var commandError);

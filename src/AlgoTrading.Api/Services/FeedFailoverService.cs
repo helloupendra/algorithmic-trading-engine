@@ -207,6 +207,10 @@ public sealed class FeedFailoverService : BackgroundService
             return;
         }
 
+        // The cash session, also from 7 Dec 2026 when options trade on to 15:45: after 15:30 the indices and the
+        // shares stop ticking, and a recording list that holds no option would read as a silent feed and be
+        // switched for nothing. The feed's last quarter of an hour goes unwatched instead; the runs are squared
+        // off at 15:45 on whatever quotes it carried.
         if (!_session.IsMarketOpen(now, "NSE", "CM"))
         {
             _lastSeenClosedUtc = now;
