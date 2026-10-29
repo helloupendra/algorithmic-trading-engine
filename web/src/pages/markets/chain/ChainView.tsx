@@ -253,6 +253,10 @@ function heldTitle(positions: OptionChainPosition[]): string {
  * Each leg's LTP and P&L move with its pushed price between answers
  * (liveMarks.chainPositionsWithTicks), and the total with them: it is the
  * sum of the rows shown.
+ *
+ * Nothing held draws nothing: an empty box pushed the chain a panel's height
+ * down, off the first screen of a laptop, to say so. The legend under the
+ * chain says what a B / S marker is.
  */
 function PositionsPanel({
   underlying,
@@ -267,68 +271,62 @@ function PositionsPanel({
   runLink: (runId: number) => string
 }) {
   const positions = useRepricedChainPositions(answered, answeredAtMs)
+  if (positions.length === 0) return null
   const total = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0)
   return (
     <Panel
       title={`Positions on ${underlying}`}
-      actions={positions.length > 0 ? <span className={`oc-pos-total ${tone(total)}`}>Open P&amp;L {formatInrSigned(total)}</span> : undefined}
+      actions={<span className={`oc-pos-total ${tone(total)}`}>Open P&amp;L {formatInrSigned(total)}</span>}
     >
-      {positions.length === 0 ? (
-        <p className="muted small-note">
-          Nothing held on {underlying}. Legs from running strategies and manual trades appear here, and are marked
-          B (bought) or S (sold) beside their LTP in the chain.
-        </p>
-      ) : (
-        <div className="tablewrap">
-          <table className="table oc-pos-table">
-            <thead>
-              <tr>
-                <th>Book</th>
-                <th>Contract</th>
-                <th>Side</th>
-                <th className="r">Lots</th>
-                <th className="r">Avg</th>
-                <th className="r">LTP</th>
-                <th className="r">P&amp;L</th>
-                <th className="r">SL / Target</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((p) => {
-                const short = p.direction.toUpperCase() === 'SHORT'
-                const contract = p.strikePrice != null
-                  ? `${p.strikePrice.toLocaleString('en-IN')} ${p.instrumentType}`
-                  : p.instrumentType
-                return (
-                  <tr key={`${p.runId}-${p.symbol}-${p.groupId}`}>
-                    <td>
-                      <Link to={runLink(p.runId)}>{p.isManual ? 'Manual' : p.strategyName}</Link>
-                      <span className="faint"> #{p.runId}{p.userName ? ` · ${p.userName}` : ''}</span>
-                    </td>
-                    <td title={p.symbol}>
-                      {contract}
-                      {p.expiryDate ? <span className="faint"> · {expiryLabel(p.expiryDate, p.expiryDate).split(' (')[0]}</span> : null}
-                    </td>
-                    <td>
-                      <span className={`oc-pos oc-pos--${short ? 'short' : 'long'}`}>{short ? 'SELL' : 'BUY'}</span>
-                    </td>
-                    <td className="r">
-                      {p.quantity}
-                      <span className="faint"> ×{p.lotSize}</span>
-                    </td>
-                    <td className="r">{price(p.averagePrice)}</td>
-                    <td className="r">{price(p.markPrice)}</td>
-                    <td className={`r ${tone(p.unrealizedPnl)}`}>{p.unrealizedPnl != null ? formatInrSigned(p.unrealizedPnl) : '—'}</td>
-                    <td className="r muted">
-                      {p.stopLossPrice != null ? price(p.stopLossPrice) : '—'} / {p.targetPrice != null ? price(p.targetPrice) : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="tablewrap">
+        <table className="table oc-pos-table">
+          <thead>
+            <tr>
+              <th>Book</th>
+              <th>Contract</th>
+              <th>Side</th>
+              <th className="r">Lots</th>
+              <th className="r">Avg</th>
+              <th className="r">LTP</th>
+              <th className="r">P&amp;L</th>
+              <th className="r">SL / Target</th>
+            </tr>
+          </thead>
+          <tbody>
+            {positions.map((p) => {
+              const short = p.direction.toUpperCase() === 'SHORT'
+              const contract = p.strikePrice != null
+                ? `${p.strikePrice.toLocaleString('en-IN')} ${p.instrumentType}`
+                : p.instrumentType
+              return (
+                <tr key={`${p.runId}-${p.symbol}-${p.groupId}`}>
+                  <td>
+                    <Link to={runLink(p.runId)}>{p.isManual ? 'Manual' : p.strategyName}</Link>
+                    <span className="faint"> #{p.runId}{p.userName ? ` · ${p.userName}` : ''}</span>
+                  </td>
+                  <td title={p.symbol}>
+                    {contract}
+                    {p.expiryDate ? <span className="faint"> · {expiryLabel(p.expiryDate, p.expiryDate).split(' (')[0]}</span> : null}
+                  </td>
+                  <td>
+                    <span className={`oc-pos oc-pos--${short ? 'short' : 'long'}`}>{short ? 'SELL' : 'BUY'}</span>
+                  </td>
+                  <td className="r">
+                    {p.quantity}
+                    <span className="faint"> ×{p.lotSize}</span>
+                  </td>
+                  <td className="r">{price(p.averagePrice)}</td>
+                  <td className="r">{price(p.markPrice)}</td>
+                  <td className={`r ${tone(p.unrealizedPnl)}`}>{p.unrealizedPnl != null ? formatInrSigned(p.unrealizedPnl) : '—'}</td>
+                  <td className="r muted">
+                    {p.stopLossPrice != null ? price(p.stopLossPrice) : '—'} / {p.targetPrice != null ? price(p.targetPrice) : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   )
 }
