@@ -4,8 +4,9 @@ When each checkup runs, and what it looks at.
 The times follow the desk's own day (IST): the Dhan sign-in between 08:00 and
 08:40, the morning job at 08:45 (which refreshes the instrument master), forecasts
 at 08:50 — so the morning checkup at 08:55 sees all three. The Dhan data plan is
-in the close checkup as well, so a plan that ends tomorrow is heard of today. The NSE close at 15:30 and the forecast scoring at 15:50
-come before the 16:00 checkup; market-close.sh at 23:58 before the 00:15 one.
+in the close checkup as well, so a plan that ends tomorrow is heard of today. The NSE close at 15:30 (the runs'
+at 15:45 from 7 Dec 2026) and the forecast scoring at 15:50 come before the 16:00 checkup; market-close.sh at
+23:58 before the 00:15 one.
 
 A checkup that could not run at its time (Sentinel was restarting, the box was
 down) still runs later, up to ``until``: a morning report at 10:30 is late, but

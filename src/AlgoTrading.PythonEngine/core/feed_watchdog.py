@@ -106,10 +106,15 @@ def session_market(spot_symbol: Optional[str]) -> tuple[str, str]:
     """
     The (exchange, segment) whose hours decide whether a run's silence is a stall. A crude run is on MCX
     until 23:30 or 23:55, so asking about NSE (closed from 15:30) hid every evening stall of its feed.
+
+    The silence watched is the spot's (an index, a share, a crude future), so the segment is the spot's own:
+    the cash market for an index or a share. From 7 Dec 2026 their options trade to 15:45, but the index
+    stops ticking at 15:30, and its quiet after then is the close, not a stall. Until then the two segments
+    keep the same hours and the answer is what it always was.
     """
-    exchange = (spot_symbol or "").split(":", 1)[0].strip().upper()
+    symbol = (spot_symbol or "").strip().upper()
+    exchange = symbol.split(":", 1)[0]
     if exchange == "MCX":
         return "MCX", "COM"
-    if exchange == "BSE":
-        return "BSE", "FO"
-    return "NSE", "FO"
+    segment = "FO" if symbol.endswith("FUT") else "CM"
+    return ("BSE" if exchange == "BSE" else "NSE"), segment

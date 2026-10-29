@@ -29,9 +29,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
+from core.market_hours import CASH_CLOSE, SESSION_OPEN, derivatives_close
+
 IST = timezone(timedelta(hours=5, minutes=30))
-SESSION_OPEN = time(9, 15)
-SESSION_CLOSE = time(15, 30)
+#: The close the replayed session is measured to: the cash close, 15:30, until 6 Dec 2026. From 7 Dec the
+#: options trade to 15:45 and the live runs with them, so a day from then plays to its derivatives close
+#: (:func:`session_close`).
+SESSION_CLOSE = CASH_CLOSE
 
 #: The day's ticks are those that arrived between these IST times. Bounding by arrival (the hypertable's
 #: time column) keeps the read to the day's chunk, and leaves out any evening TrueData recap that
@@ -41,6 +45,24 @@ RECORDED_UNTIL = time(15, 40)
 
 #: Played until here, a little past the close: the runners take a tick after 15:30 as the close.
 PLAY_UNTIL = time(15, 33)
+
+#: How far past its close a day is played (PLAY_UNTIL) and was recorded (RECORDED_UNTIL).
+PLAY_PAST_CLOSE = timedelta(minutes=3)
+RECORDED_PAST_CLOSE = timedelta(minutes=10)
+
+
+def session_close(day: date) -> time:
+    """The close the replay of `day` plays to: 15:30 until 6 Dec 2026, 15:45 from 7 Dec (core.market_hours)."""
+    return derivatives_close(day)
+
+
+def _after(at: time, by: timedelta) -> time:
+    return (datetime.combine(date.min, at) + by).time()
+
+
+def play_until(day: date) -> time:
+    """PLAY_UNTIL for `day`: 15:33, or 15:48 from 7 Dec 2026."""
+    return _after(session_close(day), PLAY_PAST_CLOSE)
 
 #: A start time is played from this much earlier, so the first quotes are in before the session's.
 LEAD = timedelta(minutes=1)
@@ -127,12 +149,12 @@ class ReplayPlan:
 
     @property
     def play_until_utc(self) -> datetime:
-        return ist(self.day, PLAY_UNTIL)
+        return ist(self.day, play_until(self.day))
 
     def progress(self, clock_utc: Optional[datetime]) -> float:
         if clock_utc is None:
             return 0.0
-        open_, close = ist(self.day, SESSION_OPEN), ist(self.day, SESSION_CLOSE)
+        open_, close = ist(self.day, SESSION_OPEN), ist(self.day, session_close(self.day))
         return max(0.0, min(1.0, (clock_utc - open_).total_seconds() / (close - open_).total_seconds()))
 
 

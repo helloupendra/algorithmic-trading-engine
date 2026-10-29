@@ -371,6 +371,16 @@ class SessionMarketTests(unittest.TestCase):
         from core.feed_watchdog import session_market
 
         self.assertEqual(("MCX", "COM"), session_market("MCX:CRUDEOIL26NOVFUT"))
-        self.assertEqual(("BSE", "FO"), session_market("BSE:SENSEX-INDEX"))
-        self.assertEqual(("NSE", "FO"), session_market("NSE:NIFTY50-INDEX"))
-        self.assertEqual(("NSE", "FO"), session_market(None))
+        self.assertEqual(("BSE", "CM"), session_market("BSE:SENSEX-INDEX"))
+        self.assertEqual(("NSE", "CM"), session_market("NSE:NIFTY50-INDEX"))
+        self.assertEqual(("NSE", "CM"), session_market(None))
+
+    def test_an_index_spot_is_judged_by_the_cash_session_which_ends_before_its_options(self):
+        """
+        From 7 Dec 2026 NIFTY's options trade to 15:45 but NIFTY 50 itself stops at 15:30: the spot a run
+        watches is quiet from then, and asking about the options' session would call that quiet a stall.
+        """
+        from core.feed_watchdog import session_market
+
+        self.assertEqual(("NSE", "CM"), session_market("NSE:RELIANCE-EQ"))
+        self.assertEqual(("NSE", "FO"), session_market("NSE:NIFTY26DECFUT"))

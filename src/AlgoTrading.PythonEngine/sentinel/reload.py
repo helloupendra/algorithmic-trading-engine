@@ -20,11 +20,12 @@ Sentinel that kept the old one would fail every write and every message — the
 silent watchman again. An edit to .env (any change of its modification time)
 ends the process the same way, and the restart reads the new values.
 
-Only its own files and .env, not every commit. Sentinel imports nothing from
-the repository outside its package, so no other change can alter what it
-runs. And a deploy is the moment it is most likely to have something to say
-(the API restarts, a feed reconnects); a watchman that restarted on every pull
-would blink for a minute exactly then.
+Only its own files and .env, not every commit. Sentinel imports one module
+from outside its package, core/market_hours.py (the NSE and BSE closes, the
+standard library only), and that file counts as its own (SHARED_SOURCES); no
+other change can alter what it runs. And a deploy is the moment it is most
+likely to have something to say (the API restarts, a feed reconnects); a
+watchman that restarted on every pull would blink for a minute exactly then.
 """
 from __future__ import annotations
 
@@ -35,12 +36,15 @@ from typing import Callable, Optional
 #: How often the files are looked at: a stat of two dozen files.
 CHECK_EVERY_SECONDS = 60.0
 
+#: The engine's files Sentinel imports, relative to its package's parent (sentinel/clock.py).
+SHARED_SOURCES = ("core/market_hours.py",)
+
 
 def newest_source(package_dir: Path) -> Optional[float]:
-    """The newest modification time among the package's .py files; None when none can be read."""
+    """The newest modification time among the package's .py files and SHARED_SOURCES; None when none can be read."""
     newest: Optional[float] = None
     try:
-        paths = list(package_dir.rglob("*.py"))
+        paths = list(package_dir.rglob("*.py")) + [package_dir.parent / p for p in SHARED_SOURCES]
     except OSError:
         return None
     for path in paths:

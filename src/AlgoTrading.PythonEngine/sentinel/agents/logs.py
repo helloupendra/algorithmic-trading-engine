@@ -82,7 +82,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from sentinel.agents.base import Agent
-from sentinel.clock import MCX_CLOSE, NSE_CLOSE, ist_date, to_ist
+from sentinel.clock import MCX_CLOSE, ist_date, nse_runs_stop, to_ist
 from sentinel.context import SentinelContext
 from sentinel.model import Finding, Severity
 from sentinel.notify import redact
@@ -114,7 +114,7 @@ SEEN_CAP = 2000
 EVIDENCE_LINES = 4
 EVIDENCE_CHARS = 240
 
-#: A hold of this value lasts until the end of the session: 15:30 IST (the
+#: A hold of this value lasts until the end of the session: 15:30 IST, 15:45 from 7 Dec 2026 (the
 #: desk stops the NSE and BSE runs then), or 23:30 IST after it (MCX's
 #: evening), and at least MIN_EVENT_HOLD_SECONDS.
 UNTIL_CLOSE = -1
@@ -1749,9 +1749,12 @@ def _short_category(category: str) -> str:
 
 
 def _until_close(now_ts: float) -> float:
-    """Seconds until 15:30 IST (the desk stops NSE and BSE runs), or 23:30 after it; at least MIN_EVENT_HOLD_SECONDS."""
+    """
+    Seconds until 15:30 IST (the desk stops NSE and BSE runs; 15:45 from 7 Dec 2026), or 23:30 after it; at least
+    MIN_EVENT_HOLD_SECONDS.
+    """
     now = to_ist(datetime.fromtimestamp(now_ts, timezone.utc))
-    for close in (NSE_CLOSE, MCX_CLOSE):
+    for close in (nse_runs_stop(now.date()), MCX_CLOSE):
         end = now.replace(hour=close.hour, minute=close.minute, second=0, microsecond=0)
         if now < end:
             return max(float(MIN_EVENT_HOLD_SECONDS), (end - now).total_seconds())

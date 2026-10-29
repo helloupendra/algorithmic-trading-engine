@@ -443,6 +443,17 @@ class StrategyTests(Base):
         self.assertIs(State.OK, item.state)
         self.assertIn("1 MCX run trades on until the MCX close at 23:30", item.detail)
 
+    def test_the_close_a_run_outlived_is_the_day_s_own_15_30_or_from_7_december_15_45(self):
+        rows = [run_row(1, underlying="NIFTY")]
+        before = self.one(checks.runs_after_close(self.inputs("close", {RUNNING_PATH: rows},
+                                                              now=ist(16, 0, day=4, month=12))))
+        self.assertIn("still running after the 15:30 close", before.detail)
+        self.assertIn("around 15:30", before.action)
+        after = self.one(checks.runs_after_close(self.inputs("close", {RUNNING_PATH: rows},
+                                                             now=ist(16, 0, day=7, month=12))))
+        self.assertIn("still running after the 15:45 close", after.detail)
+        self.assertIn("around 15:45", after.action)
+
     def test_the_manual_book_and_alerters_are_not_strategy_runs(self):
         rows = [run_row(1, strategy="Manual"), run_row(2, strategy="Alerter", role="alerter")]
         item = self.one(checks.runs_overnight(self.inputs("night", {RUNNING_PATH: rows}, now=ist(0, 15, day=29))))
@@ -492,6 +503,18 @@ class PositionTests(Base):
         item = self.one(checks.manual_books(self.inputs("close", reads=reads, now=ist(16, 0))))
         self.assertIs(State.WARN, item.state)
         self.assertIn("ManualIntradaySquareOff", item.action)
+
+    def test_from_7_december_an_unticked_option_is_still_open_at_15_35(self):
+        # Asked by hand between the cash close and the options' 15:45: not yet a leg the close missed.
+        reads = FakeReads(manual_book_legs=[dict(self.LEG, carry=False)])
+        before = self.one(checks.manual_books(self.inputs("on-request", reads=reads, now=ist(15, 35, day=4, month=12))))
+        self.assertIs(State.WARN, before.state)
+        self.assertIn("around 15:30", before.action)
+        after = self.one(checks.manual_books(self.inputs("on-request", reads=reads, now=ist(15, 35, day=7, month=12))))
+        self.assertIs(State.INFO, after.state)
+        late = self.one(checks.manual_books(self.inputs("on-request", reads=reads, now=ist(15, 46, day=7, month=12))))
+        self.assertIs(State.WARN, late.state)
+        self.assertIn("around 15:45", late.action)
 
     def test_stale_runs_point_at_the_cleanup_script(self):
         reads = FakeReads(stale_pending_runs=[{"run": 2, "strategy": "X", "account": "admin",

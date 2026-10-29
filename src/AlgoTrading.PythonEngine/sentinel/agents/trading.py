@@ -19,7 +19,10 @@ Rules, each one of this desk's own days:
     minutes before each close, because the desk stops the NSE and BSE runs at
     15:30 and the MCX ones at the MCX close, and neither stop may read as a
     run gone missing. (Until 27 Sep the desk stopped crude at 15:30 as well,
-    and every line was let go at 15:25.) Not reported when the key's last run
+    and every line was let go at 15:25.) From 7 Dec 2026 the desk stops the
+    NSE and BSE runs at 15:45, the derivatives close; Sentinel's NSE session
+    stays the cash market's, so a line is still let go at 15:30 at the latest
+    and a death after it is not reported. Not reported when the key's last run
     today was ended on purpose (its day target or stop-loss, a person's stop,
     the desk's close): nobody wants to hear that a run they stopped is
     stopped. One run missing is one incident for that run; two or more are one
@@ -114,7 +117,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 
 from sentinel.agents.base import Agent
-from sentinel.clock import IST, MCX_CLOSE, ist_date, to_ist
+from sentinel.clock import IST, MCX_CLOSE, NSE_OPEN, ist_date, nse_runs_stop, to_ist
 from sentinel.context import MorningPlan, SentinelContext
 from sentinel.model import Finding, Severity
 from sentinel.notify import redact
@@ -132,7 +135,11 @@ def history_path(first_day: str, last_day: str) -> str:
     return f"/api/Strategy/runs?fromDate={first_day}&toDate={last_day}&take=500"
 
 
-NSE_HOURS = (time(9, 15), time(15, 30))
+def nse_hours(day: date) -> tuple[time, time]:
+    """The NSE and BSE runs' hours on `day`: 09:15 to the desk's stop of them, 15:30 (15:45 from 7 Dec 2026)."""
+    return NSE_OPEN, nse_runs_stop(day)
+
+
 # To the latest close MCX has (23:55, while the US is on standard time); whether
 # it is still open tonight is the calendar's to say (session.mcx_open).
 MCX_HOURS = (time(9, 0), time(23, 55))
@@ -141,12 +148,22 @@ MCX_HOURS = (time(9, 0), time(23, 55))
 # until five minutes before each market's close: the desk's own stop of that
 # market's runs at the close must not read as missing runs.
 PLAN_START = time(9, 25)
-PLAN_NSE_END = time(15, 25)
 PLAN_CLOSE_MARGIN = timedelta(minutes=5)
 
-# MarketHoursService stops the NSE and BSE runs at 15:30 IST, and the MCX runs
-# at the MCX close. Until 27 Sep it stopped every run at 15:30, crude included.
-DESK_STOPS_NSE_RUNS_AT = time(15, 30)
+
+def plan_nse_end(day: date) -> time:
+    """Five minutes before the desk stops the NSE and BSE runs: 15:25, or 15:40 from 7 Dec 2026."""
+    return (datetime.combine(day, nse_runs_stop(day)) - PLAN_CLOSE_MARGIN).time()
+
+
+# MarketHoursService stops the NSE and BSE runs at the derivatives close, 15:30 IST
+# (15:45 from 7 Dec 2026: sentinel.clock.nse_runs_stop), and the MCX runs at the
+# MCX close. Until 27 Sep it stopped every run at 15:30, crude included. Sentinel's
+# NSE session stays the cash market's (session.nse_open, to 15:30), so from 7 Dec a
+# run that dies between 15:30 and 15:45 is not reported as a death in the session:
+# the desk's own stop closes it at 15:45 either way.
+def desk_stops_nse_runs_at(day: date) -> time:
+    return nse_runs_stop(day)
 
 # An account whose newest run started this recently is still being deployed.
 DEPLOY_QUIET = timedelta(minutes=3)
@@ -413,7 +430,8 @@ def _run_trading(session, now: datetime, run: _Run) -> bool:
     """
     Whether a run's book is still trading: it is live, or it could still be
     started again today — its market is open and the desk has not closed it
-    for the day. NSE and BSE runs are closed at 15:30, MCX runs at the MCX
+    for the day. NSE and BSE runs are closed at 15:30 (15:45 from 7 Dec 2026, past the cash session that
+    session.nse_open follows), MCX runs at the MCX
     close, which is when the calendar stops calling MCX open.
     """
     if run.live:
@@ -422,7 +440,7 @@ def _run_trading(session, now: datetime, run: _Run) -> bool:
         return False
     if run.exchange == "MCX":
         return bool(session.mcx_open)
-    return bool(session.nse_open) and to_ist(now).time() < DESK_STOPS_NSE_RUNS_AT
+    return bool(session.nse_open) and to_ist(now).time() < desk_stops_nse_runs_at(to_ist(now).date())
 
 
 def _mcx_plan_end(session, now: datetime) -> datetime:
@@ -635,20 +653,22 @@ class TradingAgent(Agent):
     def _deaths(session, now: datetime, day: str, today: list[_Run], latest: dict, live_keys: set,
                 done: set[int]) -> dict[int, _Run]:
         """Every run that ended in the session for a reason nobody chose and has not been started again."""
-        after_nse_stop = to_ist(now).time() >= DESK_STOPS_NSE_RUNS_AT
+        nse_stop = desk_stops_nse_runs_at(to_ist(now).date())
+        after_nse_stop = to_ist(now).time() >= nse_stop
         deaths: dict[int, _Run] = {}
         for run in today:
             if run.not_a_strategy or run.run_id in done or not run.ended or ended_on_purpose(run):
                 continue
-            hours, market_open = (MCX_HOURS, session.mcx_open) if run.exchange == "MCX" else (NSE_HOURS, session.nse_open)
+            hours, market_open = ((MCX_HOURS, session.mcx_open) if run.exchange == "MCX"
+                                  else (nse_hours(to_ist(now).date()), session.nse_open))
             if not _within(run.when, hours, day):
                 continue  # ended before the open or after the close: not a death in the session
             if latest.get(run.key) is not run or run.key in live_keys:
                 continue  # someone has started it again
             if not market_open:
                 continue  # nothing left to trade today
-            if run.exchange != "MCX" and after_nse_stop and to_ist(run.when).time() < DESK_STOPS_NSE_RUNS_AT:
-                continue  # the desk stops NSE and BSE runs at 15:30: this one would be stopped by now anyway
+            if run.exchange != "MCX" and after_nse_stop and to_ist(run.when).time() < nse_stop:
+                continue  # the desk stops NSE and BSE runs at their close: this one would be stopped by now anyway
             deaths[run.run_id] = run
         return deaths
 
@@ -848,7 +868,7 @@ class TradingAgent(Agent):
         if plan is None or to_ist(now).weekday() >= 5 or t < PLAN_START:
             return []
         # Each market's lines are held to the plan until five minutes before its own close.
-        judge_nse = t < PLAN_NSE_END
+        judge_nse = t < plan_nse_end(to_ist(now).date())
         judge_mcx = now < _mcx_plan_end(session, now)
         if not (judge_nse or judge_mcx):
             return []

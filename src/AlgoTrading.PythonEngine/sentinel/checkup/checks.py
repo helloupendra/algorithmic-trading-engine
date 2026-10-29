@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 from sentinel.agents.trading import PLAN_START, RUNNING_PATH, _parse_runs, today_path
 from sentinel.checkup.model import Item, State
 from sentinel.checkup.reads import DeskReads
-from sentinel.clock import IST, MCX_CLOSE, NSE_CLOSE, ist_date, to_ist
+from sentinel.clock import IST, MCX_CLOSE, NSE_CLOSE, ist_date, nse_runs_stop, to_ist
 from sentinel.context import SentinelContext
 
 DATA, STRATEGIES, POSITIONS, ANALYSIS, DESK, CALENDAR = (
@@ -135,6 +135,17 @@ def _short(exc: BaseException) -> str:
 
 def _hm(moment: Optional[datetime]) -> str:
     return to_ist(moment).strftime("%H:%M") if moment else "?"
+
+
+def _nse_close(inp: Inputs) -> str:
+    """When the desk stops the day's NSE and BSE runs: "15:30", "15:45" from 7 Dec 2026 (sentinel.clock)."""
+    return nse_runs_stop(inp.ist.date()).strftime("%H:%M")
+
+
+def _derivatives_later(inp: Inputs) -> str:
+    """" (options and futures to 15:45)" on a day the derivatives trade past the cash close; "" before 7 Dec 2026."""
+    close = nse_runs_stop(inp.ist.date())
+    return f" (options and futures to {close:%H:%M})" if close > NSE_CLOSE else ""
 
 
 def _when(moment: Optional[datetime], now: datetime) -> str:
@@ -680,9 +691,10 @@ def runs_after_close(inp: Inputs) -> list[Item]:
     if nse:
         names = [f"{r.user} {r.strategy} {r.underlying} (#{r.run_id})" for r in nse]
         return [Item("runs-after-close", STRATEGIES, "Runs after the close", State.FAIL,
-                     f"{_n(len(nse), 'NSE/BSE run')} still running after the 15:30 close: {_listed(names)}.",
+                     f"{_n(len(nse), 'NSE/BSE run')} still running after the {_nse_close(inp)} close: "
+                     f"{_listed(names)}.",
                      "Stop them from Trade → Runs. The close stop is MarketHoursService: look for it in "
-                     "logs/api.log around 15:30.", LIVE_RUNS)]
+                     f"logs/api.log around {_nse_close(inp)}.", LIVE_RUNS)]
     tail = ""
     if mcx:
         close = inp.ctx.session().mcx_close or inp.at_ist(MCX_CLOSE)
@@ -726,7 +738,9 @@ def manual_books(inp: Inputs) -> list[Item]:
     key, title = "manual-books", "Manual books"
     if not legs:
         return [Item(key, POSITIONS, title, State.OK, "Nothing is held in the manual books.", link=POSITIONS_PAGE)]
-    after_nse_close = inp.slot == "close" or (inp.slot == "on-request" and inp.ist.time() >= NSE_CLOSE)
+    # The options' close, 15:45 from 7 Dec 2026: an unticked option is still open at 15:35, a share is not.
+    after_nse_close = inp.slot == "close" or (inp.slot == "on-request"
+                                              and inp.ist.time() >= nse_runs_stop(inp.ist.date()))
     unticked = [l for l in legs if not l["carry"] and str(l["symbol"]).startswith(("NSE:", "BSE:"))]
     if after_nse_close and unticked:
         return [Item(key, POSITIONS, title, State.WARN,
@@ -734,7 +748,7 @@ def manual_books(inp: Inputs) -> list[Item]:
                      f"squared {'it' if len(unticked) == 1 else 'them'} off: "
                      f"{_listed([l['account'] + ' ' + _leg(l) for l in unticked])}.",
                      "Close them on Positions, or tick Carry if you meant to hold them. The square-off is "
-                     "ManualIntradaySquareOff in logs/api.log around 15:30.", POSITIONS_PAGE)]
+                     f"ManualIntradaySquareOff in logs/api.log around {_nse_close(inp)}.", POSITIONS_PAGE)]
     unrealized = sum(l["unrealized"] for l in legs)
     carried = [l for l in legs if l["carry"]]
     naked = [l for l in carried if l["stop"] is None and l["target"] is None]
@@ -766,7 +780,7 @@ def strategy_legs_after_close(inp: Inputs) -> list[Item]:
     return [Item("legs-after-close", POSITIONS, "Strategy legs after the close", State.FAIL,
                  f"{_n(len(rows), 'NSE/BSE leg')} still open in strategy runs: {_listed(names)}.",
                  "Close them from the run's card on Trade → Runs. A square-off that failed at the close "
-                 "is in logs/api.log around 15:30.", LIVE_RUNS)]
+                 f"is in logs/api.log around {_nse_close(inp)}.", LIVE_RUNS)]
 
 
 def stale_runs(inp: Inputs) -> list[Item]:
@@ -1158,7 +1172,8 @@ def calendar_today(inp: Inputs) -> list[Item]:
                      "Fix the calendar on System → Market calendar.", MARKET_CALENDAR)]
     close = session.mcx_close or inp.at_ist(MCX_CLOSE)
     return [Item("calendar-today", CALENDAR, "Today's session", State.INFO,
-                 f"NSE and BSE trade 09:15–15:30; MCX until {_hm(close)}.", link=MARKET_CALENDAR)]
+                 f"NSE and BSE trade 09:15–15:30{_derivatives_later(inp)}; MCX until {_hm(close)}.",
+                 link=MARKET_CALENDAR)]
 
 
 def calendar_week(inp: Inputs) -> list[Item]:

@@ -23,7 +23,8 @@ blocks the entry and says which one.
 
 There is no exit here, as in CrudeMomentum: the run's risk rules close the leg
 (a leg target and stop-loss in premium points or percent), and the platform
-squares off at 15:30.
+squares off at the close (15:30 IST; 15:45 from 7 Dec 2026, but 15:30 on the
+index's expiry day).
 """
 
 from __future__ import annotations
@@ -224,7 +225,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
         "`entry_start` and `entry_end` IST (earlier cut-off on expiry day), at most `max_trades_per_session` a day, "
         "and not again until the trend candle condition resets. Every candle logs a DATA line (chain age, spot "
         "gap, ATM IV, OI flow) and a failed data check blocks the entry. No built-in exit: set a leg target and "
-        "stop-loss when you start it; the platform squares off at 15:30."
+        "stop-loss when you start it; the platform squares off at the close (15:30 IST; 15:45 from 7 Dec 2026)."
     )
     category = "Directional"
     supported_underlyings: List[str] = ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]

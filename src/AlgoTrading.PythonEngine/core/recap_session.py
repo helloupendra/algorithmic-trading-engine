@@ -11,8 +11,9 @@ close before it trades the open is not a test of anything:
   * warm-up, which asks for fifteen days of bars up to today;
   * the recent-bars read on every tick, which returns the newest bars stored,
     and this morning's real bars are newer than a replay at 10:00;
-  * the end of the session, which live runs reach at the 15:30 wall-clock stop,
-    long past by the time a recap is playing.
+  * the end of the session, which live runs reach at the desk's close of their
+    options (15:30 IST; 15:45 from 7 Dec 2026, but 15:30 on the expiry day of
+    the index they trade), long past by the time a recap is playing.
 
 This class answers all three from the replay's own clock — the timestamps on
 its ticks — and nothing else. It never guesses a clock: a tick stamped outside
@@ -21,8 +22,10 @@ the session it is replaying is refused, loudly, rather than fed through.
 
 from datetime import date, datetime, time, timedelta, timezone
 
+from core.market_hours import SESSION_OPEN, derivatives_close
+
 IST = timezone(timedelta(hours=5, minutes=30))
-SESSION_OPEN = time(9, 15)
+#: The close of a replayed day before 7 Dec 2026; a later day's is its derivatives close (core.market_hours).
 SESSION_CLOSE = time(15, 30)
 
 
@@ -58,8 +61,26 @@ class RecapSession:
         self.day = day
         self.last_in_session_utc: datetime | None = None
         self.open_utc = datetime.combine(day, SESSION_OPEN, IST).astimezone(timezone.utc)
-        self.close_utc = datetime.combine(day, SESSION_CLOSE, IST).astimezone(timezone.utc)
+        self.close_utc = datetime.combine(day, derivatives_close(day), IST).astimezone(timezone.utc)
         self.start_of_day_utc = datetime.combine(day, time(0, 0), IST).astimezone(timezone.utc)
+
+    @property
+    def close_ist(self) -> time:
+        """The replayed close as an IST clock time, for the run's log: "15:30"."""
+        return self.close_utc.astimezone(IST).time()
+
+    def end_at(self, close: time) -> bool:
+        """
+        Brings the replayed close forward, never past the day's derivatives
+        close: a run that trades an index's expiring contracts ends with them,
+        at 15:30 (core.market_hours.contract_close), as the live run did that
+        day. True when it moved.
+        """
+        at = datetime.combine(self.day, close, IST).astimezone(timezone.utc)
+        if at >= self.close_utc:
+            return False
+        self.close_utc = at
+        return True
 
     @classmethod
     def from_params(cls, run_params) -> "RecapSession | None":

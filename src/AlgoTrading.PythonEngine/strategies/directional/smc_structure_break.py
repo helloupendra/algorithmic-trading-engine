@@ -62,7 +62,8 @@ class SmcStructureBreakStrategy(BaseStrategy):
         "has to take, breaks of structure and changes of character — and buys the ATM call on a bullish break "
         "or the ATM put on a bearish one. A break only counts once the leg's inducement has been taken. The "
         "position is closed when the structure turns against it, so unlike the other directional strategies "
-        "this one has an exit of its own; the run's stop-loss, target and 15:30 square-off still apply. Needs "
+        "this one has an exit of its own; the run's stop-loss, target and close square-off (15:30; 15:45 from "
+        "7 Dec 2026) still apply. Needs "
         "index candles at the run's resolution (5-minute by default) and, live, the spot ticks that build them."
     )
     category = "Directional"

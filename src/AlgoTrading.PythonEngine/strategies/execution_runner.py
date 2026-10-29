@@ -107,6 +107,7 @@ from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
 from core.recap_session import RecapSession
+from core.market_hours import contract_close
 
 try:
     # pyrefly: ignore [missing-import]
@@ -675,7 +676,8 @@ if __name__ == "__main__":
     # A recap run trades a replay of a day the platform already holds (the
     # Market Replay player's ticks, marked isReplay). The clock is
     # RecapSession's: warm-up stops the day before, bars later than the
-    # replay's clock are never shown, and the run ends at the replayed 15:30.
+    # replay's clock are never shown, and the run ends at the replayed close
+    # (15:30; from 7 Dec 2026 15:45, or 15:30 on its index's expiry day).
     # Everything dated is read as of the replayed day too: the expiry, the
     # contracts (expired ones included) and the quotes, which come from the
     # replay. It takes only replayed ticks and leaves the live watchlist alone.
@@ -689,7 +691,7 @@ if __name__ == "__main__":
         # the replay's prices and the live desk's must not mix in either direction.
         use_recap_quotes(api, recap_date)
         print(f"[{args.underlying}] RECAP RUN — replaying {recap_date}; the strategy sees only "
-              f"prices up to the replay's clock and stops at its 15:30. Quotes come from the replay, "
+              f"prices up to the replay's clock and stops at its {recap.close_ist:%H:%M}. Quotes come from the replay, "
               f"contracts and the expiry as of {recap_date}, and the live watchlist is left alone.", flush=True)
 
     strategy = strategies_map[args.strategy](run_params)
@@ -747,6 +749,14 @@ if __name__ == "__main__":
         sys.exit(2)
 
     print(f"Using expiry: {expiry_date}" + (f" (as of the replayed day {recap_date})" if recap is not None else ""))
+
+    if recap is not None and expiry_date == recap_date and str(args.spot_symbol or "").upper().endswith("-INDEX"):
+        # The replayed day is the index's expiry day and the run trades the expiring contracts, which stop at the
+        # cash close (15:30) while the rest trade to 15:45 from 7 Dec 2026. The live run that day was stopped
+        # then (MarketCloseRules), and the recap ends there too. Before 7 Dec this changes nothing.
+        if recap.end_at(contract_close(recap.day, True)):
+            print(f"[{args.underlying}] RECAP: {recap_date} is the {args.underlying} expiry; the run ends with the "
+                  f"expiring contracts at {recap.close_ist:%H:%M}.", flush=True)
 
     strike_step = resolve_strike_step(api, args.underlying, expiry_date, listed_fallback=recap is not None)
     lot_size = resolve_lot_size(api, args.underlying)
@@ -1248,7 +1258,7 @@ if __name__ == "__main__":
 
     # Ticks a recap run refused because they fell outside the replayed session.
     recap_refused = [0]
-    # Set once the replay has played to 15:30; the strategy is fed nothing after.
+    # Set once the replay has played to its close; the strategy is fed nothing after.
     recap_closed = [False]
     # Ticks of the other kind passed over: replayed ones on a live run, live
     # ones on a recap run (tick_is_for_this_run).
@@ -1308,7 +1318,7 @@ if __name__ == "__main__":
                         # and says what to do. The latest quotes are the replay's
                         # closing prices and stay so until Monday's feed.
                         recap_closed[0] = True
-                        print(f"[{args.underlying}] RECAP reached the replayed 15:30 — the strategy takes no "
+                        print(f"[{args.underlying}] RECAP reached the replayed {recap.close_ist:%H:%M} — the strategy takes no "
                               f"further entries or exits. Stop run {args.run_id} from the console to square "
                               f"off at the replay's closing prices (a Market Replay stops its runs itself "
                               f"when it ends).", flush=True)

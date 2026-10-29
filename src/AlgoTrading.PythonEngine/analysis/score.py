@@ -30,16 +30,19 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable, Dict, List, Optional, Sequence
 
 from analysis import scoring
 from analysis.api import Answer
 from analysis.data import MarketData, SessionBar
+from core.market_hours import CASH_CLOSE
 
 log = logging.getLogger("analysis.score")
 
-SESSION_CLOSE_IST = time(15, 30)
+#: A forecast is about the index, which is computed from cash prices: its session ends at the cash close, 15:30, on
+#: every day, also from 7 Dec 2026 when the index options trade to 15:45 (core.market_hours).
+SESSION_CLOSE_IST = CASH_CLOSE
 
 #: A closed session still without complete bars after this many days is an error, not a wait ...
 GIVE_UP_DAYS = 4

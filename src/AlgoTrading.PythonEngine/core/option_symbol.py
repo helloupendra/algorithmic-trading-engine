@@ -54,7 +54,10 @@ _MONTHS = {
 _MONTH_CODES = {**{str(i): i for i in range(1, 10)}, "O": 10, "N": 11, "D": 12}
 
 #: Trading closes at 15:30 IST, which is 10:00 UTC. An option expiring today is
-#: worth its remaining hours, not a whole day.
+#: worth its remaining hours, not a whole day. An expiring index option stops at
+#: 15:30 on its expiry day also from 7 Dec 2026, when the rest trade to 15:45
+#: (core.market_hours); a stock option then trades to 15:45 on its expiry day
+#: too, and is counted 15 minutes short here.
 _EXPIRY_UTC_HOUR = 10
 
 #: SEBI's one-expiry-day-per-exchange rule, for contracts expiring from 1 Sep

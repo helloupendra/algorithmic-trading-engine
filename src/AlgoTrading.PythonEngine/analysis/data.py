@@ -37,12 +37,14 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from backtest.timeutil import IST, ist_day_start_utc
+from core import market_hours
 from core.option_symbol import SEED_DIR, ExpiryReference, load_reference, monthly_expiry
 
 log = logging.getLogger("analysis.data")
 
-SESSION_OPEN = time(9, 15)
-SESSION_CLOSE = time(15, 30)
+#: The indices' session, the cash market's: 09:15-15:30 on every day, also from 7 Dec 2026 (core.market_hours).
+SESSION_OPEN = market_hours.SESSION_OPEN
+SESSION_CLOSE = market_hours.CASH_CLOSE
 
 
 @dataclass(frozen=True)

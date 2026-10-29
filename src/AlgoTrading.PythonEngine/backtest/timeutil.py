@@ -11,10 +11,15 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional, Tuple
 
+from core.market_hours import CASH_CLOSE, SESSION_OPEN
+
 IST = timezone(timedelta(hours=5, minutes=30), name="IST")
 
-SESSION_OPEN_IST = time(9, 15)
-SESSION_CLOSE_IST = time(15, 30)
+#: The session a backtest is driven by: the index's candles, which end at the cash close, 15:30, on every day.
+#: From 7 Dec 2026 the index options trade on to 15:45, but there is no index candle after 15:30 to drive a
+#: strategy, so a backtest still ends its day by then; a live run may hold its legs to the 15:45 close.
+SESSION_OPEN_IST = SESSION_OPEN
+SESSION_CLOSE_IST = CASH_CLOSE
 
 
 def parse_utc(value) -> datetime:

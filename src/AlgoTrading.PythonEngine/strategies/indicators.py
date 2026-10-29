@@ -65,8 +65,9 @@ def session_date(bar: Any) -> Optional[str]:
     """
     The IST calendar date of a bar, which identifies its session.
 
-    True for NSE/BSE (09:15-15:30) and for MCX (09:00-23:30/23:55): both run
-    within one IST day, so the date is a complete session key.
+    True for NSE/BSE (09:15-15:30, options and futures to 15:45 from 7 Dec 2026)
+    and for MCX (09:00-23:30/23:55): all run within one IST day, so the date is
+    a complete session key.
     """
     moment = ist_of(bar)
     return moment.strftime("%Y-%m-%d") if moment else None

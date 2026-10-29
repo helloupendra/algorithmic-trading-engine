@@ -10,15 +10,30 @@ below keeps the agents from treating a Saturday as a silent market.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Optional
+
+# The one module Sentinel imports from outside its package: the engine's NSE and BSE hours (standard library
+# only), so the watchman and the desk cannot disagree about a close. reload.py watches it as Sentinel's own.
+from core.market_hours import CASH_CLOSE, SESSION_OPEN, derivatives_close
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-NSE_OPEN = time(9, 15)
-NSE_CLOSE = time(15, 30)
+#: The NSE cash session, which the indices keep: what ``Session.nse_open`` means.
+NSE_OPEN = SESSION_OPEN
+NSE_CLOSE = CASH_CLOSE
 MCX_OPEN = time(9, 0)
 MCX_CLOSE = time(23, 30)
+
+
+def nse_runs_stop(day: date) -> time:
+    """
+    When the desk stops the NSE and BSE runs on the IST day `day`: at the
+    derivatives close, 15:30 until 6 Dec 2026 and 15:45 from 7 Dec (an index's
+    run on its expiry day still goes at 15:30, with its expiring contracts).
+    The cash session, NSE_CLOSE, stays 15:30.
+    """
+    return derivatives_close(day)
 
 
 def now_utc() -> datetime:
@@ -64,7 +79,10 @@ def session_by_weekday(moment_utc: datetime) -> Session:
 
 
 # The markets the API's calendar is asked about: the NSE cash market (BSE and
-# the F&O segments keep its hours) and MCX commodities.
+# the F&O segments keep its holidays, and its hours until 6 Dec 2026; from 7 Dec
+# the F&O segments close at 15:45, nse_runs_stop) and MCX commodities. The cash
+# session on purpose: after 15:30 the indices and the shares go quiet, and the
+# feed rule must not read a list with no option on it as a silent feed.
 CALENDAR_MARKETS = (("NSE", "CM"), ("MCX", "COM"))
 
 
