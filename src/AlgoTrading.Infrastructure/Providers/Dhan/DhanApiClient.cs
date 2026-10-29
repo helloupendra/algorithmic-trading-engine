@@ -27,7 +27,7 @@ public enum DhanRateClass
 /// </summary>
 public sealed class DhanRateGate
 {
-    private static readonly IReadOnlyDictionary<DhanRateClass, TimeSpan> Spacing = new Dictionary<DhanRateClass, TimeSpan>
+    private static readonly IReadOnlyDictionary<DhanRateClass, TimeSpan> Published = new Dictionary<DhanRateClass, TimeSpan>
     {
         // A little slower than the published limit, so clock jitter on either
         // side never turns a paced call into a refused one.
@@ -35,6 +35,19 @@ public sealed class DhanRateGate
         [DhanRateClass.Quote] = TimeSpan.FromMilliseconds(1100),
         [DhanRateClass.OptionChain] = TimeSpan.FromMilliseconds(3100),
     };
+
+    private readonly IReadOnlyDictionary<DhanRateClass, TimeSpan> _spacing;
+
+    public DhanRateGate() : this(Published) { }
+
+    /// <summary>
+    /// The same gate at another pace, for tests that prove calls share it
+    /// without waiting three real seconds a chain.
+    /// </summary>
+    internal DhanRateGate(IReadOnlyDictionary<DhanRateClass, TimeSpan> spacing)
+    {
+        _spacing = spacing;
+    }
 
     private readonly Dictionary<DhanRateClass, SemaphoreSlim> _gates =
         Enum.GetValues<DhanRateClass>().ToDictionary(c => c, _ => new SemaphoreSlim(1, 1));
@@ -48,7 +61,7 @@ public sealed class DhanRateGate
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var wait = _lastUtc[rateClass] + Spacing[rateClass] - DateTime.UtcNow;
+            var wait = _lastUtc[rateClass] + _spacing[rateClass] - DateTime.UtcNow;
             if (wait > TimeSpan.Zero) await Task.Delay(wait, cancellationToken);
             _lastUtc[rateClass] = DateTime.UtcNow;
         }

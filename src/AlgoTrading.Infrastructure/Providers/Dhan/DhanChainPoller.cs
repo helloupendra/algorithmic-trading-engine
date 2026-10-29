@@ -108,6 +108,74 @@ public static class DhanChainRows
     /// </summary>
     public static DateOnly? NearestExpiry(IEnumerable<DateOnly> expiries, DateOnly today) =>
         expiries.Where(d => d >= today).Order().Select(d => (DateOnly?)d).FirstOrDefault();
+
+    /// <summary>
+    /// The expiries recorded at the slower cadence besides the nearest: the one
+    /// after it, and the nearest monthly when that is neither. Nearest first.
+    /// </summary>
+    /// <remarks>
+    /// A monthly is the last expiry Dhan lists in its calendar month, the rule
+    /// <c>IndexOptionHistory</c> names monthly symbols by. It needs no weekday
+    /// rule, so it holds for NSE's Tuesdays and BSE's Thursdays alike, and for a
+    /// monthly moved earlier by a holiday (NIFTY's November 2026 monthly is on
+    /// the 23rd, not the 24th). BANKNIFTY lists only monthlies, so its nearest is
+    /// a monthly and its one later expiry is next month's. On a monthly's own
+    /// expiry day the nearest is that monthly, and only the next weekly is added.
+    /// </remarks>
+    public static IReadOnlyList<DateOnly> LaterExpiries(IEnumerable<DateOnly> expiries, DateOnly today)
+    {
+        var upcoming = expiries.Where(d => d >= today).Distinct().Order().ToList();
+        if (upcoming.Count < 2) return [];
+
+        var later = new List<DateOnly> { upcoming[1] };
+        var monthly = upcoming.First(d => !upcoming.Any(x => x > d && x.Year == d.Year && x.Month == d.Month));
+        if (monthly > upcoming[1]) later.Add(monthly);
+        return later;
+    }
+}
+
+/// <summary>
+/// When a later expiry is due, and whether there is still time in a round to
+/// ask for one. Pure, so the cadence and the budget are pinned by tests.
+/// </summary>
+public static class DhanLaterExpirySchedule
+{
+    /// <summary>
+    /// The least time left before the deadline for a capture to start: up to
+    /// three seconds waiting for the chain slot, Dhan's answer and the store,
+    /// with room to spare. A capture started with less could still be passing
+    /// the rate gate when the next round's first chain wants it.
+    /// </summary>
+    public static readonly TimeSpan Reserve = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How far short of the next round the deadline is. The loop waits at least
+    /// a second before a round, so later work that ran right up to the round's
+    /// start would push it a second late.
+    /// </summary>
+    public static readonly TimeSpan DeadlineMargin = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Rounds start a whole interval apart, give or take the timer's
+    /// milliseconds: without this a five-minute cadence would slip to six
+    /// whenever the fifth round began a hair before the fifth minute.
+    /// </summary>
+    private static readonly TimeSpan Slack = TimeSpan.FromSeconds(5);
+
+    /// <summary>The configured cadence, never shorter than a round.</summary>
+    public static TimeSpan Every(DhanChainPollerSettings settings, TimeSpan roundInterval) =>
+        TimeSpan.FromSeconds(Math.Max(settings.LaterExpiryIntervalSeconds, roundInterval.TotalSeconds));
+
+    /// <summary>Asked for in no round yet, or in one at least <paramref name="every"/> before this one.</summary>
+    public static bool IsDue(DateTime? askedInRoundUtc, DateTime roundStartedUtc, TimeSpan every) =>
+        askedInRoundUtc is null || roundStartedUtc - askedInRoundUtc.Value >= every - Slack;
+
+    /// <summary>Whether at least <paramref name="reserve"/> (<see cref="Reserve"/> outside tests) is left before the deadline.</summary>
+    public static bool CanStart(DateTime nowUtc, DateTime deadlineUtc, TimeSpan reserve) => deadlineUtc - nowUtc >= reserve;
+
+    /// <summary>The time later expiries may run until in a round that started at <paramref name="roundStartedUtc"/>.</summary>
+    public static DateTime Deadline(DateTime roundStartedUtc, TimeSpan roundInterval) =>
+        roundStartedUtc + roundInterval - DeadlineMargin;
 }
 
 /// <summary>
@@ -148,6 +216,8 @@ public sealed record DhanChainSwitch(bool On, DateOnly Day)
 public sealed class DhanChainPollerState
 {
     private readonly ConcurrentDictionary<string, DhanChainOutcome> _outcomes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(string Underlying, DateOnly Expiry), DhanChainOutcome> _laterOutcomes = new();
+    private readonly ConcurrentDictionary<(string Underlying, DateOnly Expiry), DateTime> _laterAskedInRound = new();
     private readonly ConcurrentDictionary<(string Underlying, DateOnly Day), IReadOnlyList<DateOnly>> _expiries = new();
     private readonly bool _configured;
     private readonly IServiceScopeFactory _scopes;
@@ -264,6 +334,33 @@ public sealed class DhanChainPollerState
 
     public void Record(DhanChainOutcome outcome) => _outcomes[outcome.Underlying] = outcome;
 
+    /// <summary>
+    /// What each later expiry's last attempt did, today's only: kept apart from
+    /// <see cref="Outcomes"/>, which is one line per underlying for its nearest
+    /// expiry, the capture the strategies read.
+    /// </summary>
+    public IReadOnlyList<DhanChainOutcome> LaterOutcomes => _laterOutcomes.Values
+        .Where(o => IstTime.DateOf(o.AttemptUtc) == Today)
+        .OrderBy(o => o.Underlying, StringComparer.Ordinal).ThenBy(o => o.Expiry)
+        .ToList();
+
+    public void RecordLater(DhanChainOutcome outcome)
+    {
+        if (outcome.Expiry is { } expiry) _laterOutcomes[(outcome.Underlying, expiry)] = outcome;
+    }
+
+    /// <summary>The start of the round a later expiry was last asked for in; null when it has not been.</summary>
+    public DateTime? LaterAskedInRound(string underlying, DateOnly expiry) =>
+        _laterAskedInRound.TryGetValue((underlying, expiry), out var round) ? round : null;
+
+    /// <summary>
+    /// Marked before the call is made, so an answer that fails or is cut short
+    /// still waits its full interval: the extra load stays at one call per
+    /// expiry per interval whatever Dhan does.
+    /// </summary>
+    public void MarkLaterAsked(string underlying, DateOnly expiry, DateTime roundStartedUtc) =>
+        _laterAskedInRound[(underlying, expiry)] = roundStartedUtc;
+
     /// <summary>Expiries change once a day at most, so Dhan is asked once a day per underlying.</summary>
     public bool TryGetExpiries(string underlying, DateOnly day, out IReadOnlyList<DateOnly> expiries) =>
         _expiries.TryGetValue((underlying, day), out expiries!);
@@ -275,8 +372,9 @@ public sealed class DhanChainPollerState
 /// <summary>
 /// One round of recording: for each underlying whose market is open, Dhan's chain
 /// for the nearest expiry, written through the option chain module with source
-/// "dhan". Everything the chain page, OI history and replay read comes out of that
-/// one table, so nothing downstream learns Dhan exists.
+/// "dhan"; then, for a few underlyings and less often, their later expiries.
+/// Everything the chain page, OI history and replay read comes out of that one
+/// table, so nothing downstream learns Dhan exists.
 /// </summary>
 public sealed class DhanChainRecorder
 {
@@ -305,6 +403,12 @@ public sealed class DhanChainRecorder
         _state = state;
         _logger = logger;
     }
+
+    /// <summary>
+    /// <see cref="DhanLaterExpirySchedule.Reserve"/>; shorter only in tests, which
+    /// prove a capture is cut at the deadline without waiting ten real seconds.
+    /// </summary>
+    internal TimeSpan LaterReserve { get; init; } = DhanLaterExpirySchedule.Reserve;
 
     /// <param name="onlyOpenMarkets">
     /// False only for a capture an admin asked for by hand: a closed market's chain
@@ -365,42 +469,161 @@ public sealed class DhanChainRecorder
             if (expiry is null)
                 return new DhanChainOutcome(underlying.Name, now, "failed", "Dhan listed no current expiry");
 
-            var chain = await _chain.GetChainAsync(underlying.Instrument, underlying.Name, expiry.Value, cancellationToken);
-            if (underlying.PriceSymbol is not null)
-            {
-                // Dhan's MCX chain reports a price that is not the future's: on
-                // 2026-09-14 CRUDEOIL's said 9,577 while the future traded 9,971
-                // and put-call parity on the same chain gave about 9,985. The
-                // future's own recent quote is the spot its options are priced on.
-                var quoted = await _db.LiveQuotesLatest.AsNoTracking()
-                    .Where(q => q.Symbol == underlying.PriceSymbol && q.LastTradedPrice > 0 && q.UpdatedUtc >= now.AddMinutes(-5))
-                    .Select(q => q.LastTradedPrice)
-                    .FirstOrDefaultAsync(cancellationToken);
-                chain = chain with { UnderlyingPrice = quoted ?? await FutureLastPriceAsync(underlying, cancellationToken) ?? chain.UnderlyingPrice };
-            }
-            var contracts = await ContractsAsync(underlying, expiry.Value, cancellationToken);
-            var (rows, unmatched) = DhanChainRows.Build(chain, contracts);
-
-            if (rows.Count == 0)
-            {
-                return new DhanChainOutcome(underlying.Name, now, "failed",
-                    contracts.Count == 0
-                        ? "the platform has no contracts for this expiry; refresh the instrument master"
-                        : $"none of Dhan's {chain.Rows.Count} strikes matched a platform contract",
-                    expiry, 0, unmatched, chain.UnderlyingPrice);
-            }
-
-            int stored = await _store.StoreAsync(rows, cancellationToken);
-            return new DhanChainOutcome(underlying.Name, DateTime.UtcNow, "recorded",
-                $"{stored} rows", expiry, stored, unmatched, chain.UnderlyingPrice);
+            return await CaptureAsync(underlying, expiry.Value, now, contracts: null, cancellationToken);
         }
         catch (DhanApiException ex)
         {
             _logger.LogWarning("Dhan chain {Underlying}: {Message}", underlying.Name, ex.Message);
-            string state = ex.IsNotSubscribed ? "not-subscribed" : ex.IsAuthFailure ? "auth-failed" : "failed";
-            return new DhanChainOutcome(underlying.Name, now, state, ex.Message);
+            return new DhanChainOutcome(underlying.Name, now, Refused(ex), ex.Message);
         }
     }
+
+    /// <summary>
+    /// The later expiries due this round (<see cref="DhanChainRows.LaterExpiries"/>),
+    /// in the time left before <paramref name="deadlineUtc"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Run after the round's nearest expiries, never before or between them: the
+    /// strategies read the nearest expiry's minute capture, and nothing here may
+    /// make it late. Every call goes through the same <see cref="DhanRateGate"/>
+    /// slot as the nearest ones, one chain every three seconds for the process.
+    /// A capture is started only with <see cref="DhanLaterExpirySchedule.Reserve"/>
+    /// left, and one still running at the deadline is cancelled; whatever did not
+    /// fit is still due next round, longest-waiting first.
+    /// </para>
+    /// <para>
+    /// Only for an underlying whose nearest expiry <paramref name="nearest"/>
+    /// recorded. A reader that names no expiry gets the nearest one recorded that
+    /// day (<see cref="OptionChainService.DefaultExpiryAsync"/>), so a later
+    /// expiry must never be the only chain of an underlying's day: a strategy
+    /// would read next week's chain as this week's.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<DhanChainOutcome>> RecordLaterExpiriesAsync(
+        IEnumerable<string> underlyings,
+        IReadOnlyList<DhanChainOutcome> nearest,
+        DateTime roundStartedUtc,
+        DateTime deadlineUtc,
+        TimeSpan every,
+        CancellationToken cancellationToken)
+    {
+        var today = IstTime.DateOf(roundStartedUtc);
+        var recordedNearest = nearest.Where(o => o.State == "recorded")
+            .Select(o => o.Underlying)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var due = new List<(string Name, DateOnly Expiry, DateTime? AskedInRound)>();
+        foreach (var name in underlyings.Select(u => u.Trim().ToUpperInvariant()).Distinct())
+        {
+            if (!recordedNearest.Contains(name) || !_state.TryGetExpiries(name, today, out var expiries)) continue;
+            foreach (var expiry in DhanChainRows.LaterExpiries(expiries, today))
+            {
+                var asked = _state.LaterAskedInRound(name, expiry);
+                if (DhanLaterExpirySchedule.IsDue(asked, roundStartedUtc, every)) due.Add((name, expiry, asked));
+            }
+        }
+
+        var outcomes = new List<DhanChainOutcome>();
+        foreach (var (name, expiry, _) in due.OrderBy(d => d.AskedInRound ?? DateTime.MinValue))
+        {
+            if (!DhanLaterExpirySchedule.CanStart(DateTime.UtcNow, deadlineUtc, LaterReserve)) break;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _state.MarkLaterAsked(name, expiry, roundStartedUtc);
+            var outcome = await RecordLaterOneAsync(name, expiry, deadlineUtc, cancellationToken);
+            _state.RecordLater(outcome);
+            outcomes.Add(outcome);
+
+            if (outcome.State is "auth-failed" or "not-subscribed" or "cut-short") break;
+        }
+
+        return outcomes;
+    }
+
+    private async Task<DhanChainOutcome> RecordLaterOneAsync(string name, DateOnly expiry, DateTime deadlineUtc, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        using var cut = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cut.CancelAfter(deadlineUtc - now);
+
+        try
+        {
+            var underlying = await ResolveAsync(name, IstTime.DateOf(now), cut.Token);
+            if (underlying is null)
+                return new DhanChainOutcome(name, now, "failed", "no Dhan id for this underlying; run the Dhan instrument import", expiry);
+
+            // The nearest was recorded moments ago, but a round can straddle the close.
+            if (!_sessions.IsMarketOpen(now, underlying.Exchange, underlying.SessionSegment))
+                return new DhanChainOutcome(underlying.Name, now, "idle", $"{underlying.Exchange} is closed", expiry);
+
+            // Looked up before Dhan is asked, unlike the nearest: an expiry the
+            // instrument master does not list yet would otherwise spend a chain
+            // slot every interval on rows that cannot be stored.
+            var contracts = await ContractsAsync(underlying, expiry, cut.Token);
+            if (contracts.Count == 0)
+                return new DhanChainOutcome(underlying.Name, now, "failed",
+                    "the platform has no contracts for this expiry; refresh the instrument master", expiry);
+
+            return await CaptureAsync(underlying, expiry, now, contracts, cut.Token);
+        }
+        catch (OperationCanceledException) when (cut.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Nothing half-saved is left for the next save in this scope to retry.
+            _db.ChangeTracker.Clear();
+            return new DhanChainOutcome(name, now, "cut-short",
+                "still waiting on Dhan when the next round was due; asked again after the interval", expiry);
+        }
+        catch (DhanApiException ex)
+        {
+            return new DhanChainOutcome(name, now, Refused(ex), ex.Message, expiry);
+        }
+    }
+
+    /// <summary>
+    /// One expiry's chain from Dhan, matched to the platform's contracts and
+    /// stored. <paramref name="contracts"/> is looked up after Dhan answers when
+    /// the caller has not already.
+    /// </summary>
+    private async Task<DhanChainOutcome> CaptureAsync(
+        DhanChainUnderlying underlying,
+        DateOnly expiry,
+        DateTime now,
+        Dictionary<(decimal Strike, string Type), string>? contracts,
+        CancellationToken cancellationToken)
+    {
+        var chain = await _chain.GetChainAsync(underlying.Instrument, underlying.Name, expiry, cancellationToken);
+        if (underlying.PriceSymbol is not null)
+        {
+            // Dhan's MCX chain reports a price that is not the future's: on
+            // 2026-09-14 CRUDEOIL's said 9,577 while the future traded 9,971
+            // and put-call parity on the same chain gave about 9,985. The
+            // future's own recent quote is the spot its options are priced on.
+            var quoted = await _db.LiveQuotesLatest.AsNoTracking()
+                .Where(q => q.Symbol == underlying.PriceSymbol && q.LastTradedPrice > 0 && q.UpdatedUtc >= now.AddMinutes(-5))
+                .Select(q => q.LastTradedPrice)
+                .FirstOrDefaultAsync(cancellationToken);
+            chain = chain with { UnderlyingPrice = quoted ?? await FutureLastPriceAsync(underlying, cancellationToken) ?? chain.UnderlyingPrice };
+        }
+        contracts ??= await ContractsAsync(underlying, expiry, cancellationToken);
+        var (rows, unmatched) = DhanChainRows.Build(chain, contracts);
+
+        if (rows.Count == 0)
+        {
+            return new DhanChainOutcome(underlying.Name, now, "failed",
+                contracts.Count == 0
+                    ? "the platform has no contracts for this expiry; refresh the instrument master"
+                    : $"none of Dhan's {chain.Rows.Count} strikes matched a platform contract",
+                expiry, 0, unmatched, chain.UnderlyingPrice);
+        }
+
+        int stored = await _store.StoreAsync(rows, cancellationToken);
+        return new DhanChainOutcome(underlying.Name, DateTime.UtcNow, "recorded",
+            $"{stored} rows", expiry, stored, unmatched, chain.UnderlyingPrice);
+    }
+
+    private static string Refused(DhanApiException ex) =>
+        ex.IsNotSubscribed ? "not-subscribed" : ex.IsAuthFailure ? "auth-failed" : "failed";
 
     /// <summary>
     /// Indices from the fixed table; an MCX commodity by its nearest future,
@@ -511,9 +734,12 @@ public sealed class DhanChainPoller : BackgroundService
         await _state.RestoreAsync(stoppingToken);
 
         var interval = TimeSpan.FromSeconds(Math.Max(15, _settings.ChainPoller.IntervalSeconds));
+        var laterEvery = DhanLaterExpirySchedule.Every(_settings.ChainPoller, interval);
         _logger.LogInformation(
-            "Dhan chain poller {State}: {Underlyings} every {Seconds}s.",
-            _state.Enabled ? "enabled" : "disabled", string.Join(", ", _settings.ChainPoller.UnderlyingList), interval.TotalSeconds);
+            "Dhan chain poller {State}: {Underlyings} every {Seconds}s; the later expiries of {Later} every {LaterSeconds}s.",
+            _state.Enabled ? "enabled" : "disabled", string.Join(", ", _settings.ChainPoller.UnderlyingList), interval.TotalSeconds,
+            _settings.ChainPoller.LaterExpiryUnderlyingList.Count == 0 ? "none" : string.Join(", ", _settings.ChainPoller.LaterExpiryUnderlyingList),
+            laterEvery.TotalSeconds);
 
         var offCheckedUtc = DateTime.MinValue;
         while (!stoppingToken.IsCancellationRequested)
@@ -545,6 +771,8 @@ public sealed class DhanChainPoller : BackgroundService
                     {
                         _logger.LogWarning("Dhan chain {Underlying}: {Detail}", failure.Underlying, failure.Detail);
                     }
+
+                    await RecordLaterExpiriesAsync(outcomes, started, interval, laterEvery, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -568,6 +796,45 @@ public sealed class DhanChainPoller : BackgroundService
             {
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// The round's later expiries, in what is left of it after the nearest ones.
+    /// </summary>
+    /// <remarks>
+    /// A scope of its own, and a failure of its own: whatever goes wrong here is
+    /// a missing reference chain on the chain page, never a missed minute, so it
+    /// is logged as information and the loop goes on to the next round on time.
+    /// </remarks>
+    private async Task RecordLaterExpiriesAsync(
+        IReadOnlyList<DhanChainOutcome> nearest, DateTime started, TimeSpan interval, TimeSpan every, CancellationToken stoppingToken)
+    {
+        var underlyings = _settings.ChainPoller.LaterExpiryUnderlyingList;
+        if (underlyings.Count == 0 || !nearest.Any(o => o.State == "recorded")) return;
+
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            var recorder = scope.ServiceProvider.GetRequiredService<DhanChainRecorder>();
+            var outcomes = await recorder.RecordLaterExpiriesAsync(
+                underlyings, nearest, started, DhanLaterExpirySchedule.Deadline(started, interval), every, stoppingToken);
+
+            if (outcomes.Count > 0)
+            {
+                _logger.LogInformation("Dhan chain later expiries: {Summary}.",
+                    string.Join(", ", outcomes.Select(o => o.State == "recorded"
+                        ? $"{o.Underlying} {o.Expiry:dd MMM} {o.Rows}"
+                        : $"{o.Underlying} {o.Expiry:dd MMM} {o.State} ({o.Detail})")));
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "Dhan chain: the later expiries were not recorded this round; the nearest ones were.");
         }
     }
 

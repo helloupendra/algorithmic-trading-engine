@@ -361,9 +361,12 @@ public class DhanController : ControllerBase
             configuredEnabled = s.ChainPoller.Enabled,
             intervalSeconds = s.ChainPoller.IntervalSeconds,
             underlyings = s.ChainPoller.UnderlyingList,
+            laterExpiryUnderlyings = s.ChainPoller.LaterExpiryUnderlyingList,
+            laterExpiryIntervalSeconds = s.ChainPoller.LaterExpiryIntervalSeconds,
             lastRoundStartedUtc = _pollerState.LastRoundStartedUtc,
             lastRoundFinishedUtc = _pollerState.LastRoundFinishedUtc,
             outcomes = _pollerState.Outcomes,
+            laterOutcomes = _pollerState.LaterOutcomes,
         });
     }
 
@@ -511,9 +514,14 @@ public class DhanController : ControllerBase
         configuredEnabled = settings.ChainPoller.Enabled,
         intervalSeconds = settings.ChainPoller.IntervalSeconds,
         underlyings = settings.ChainPoller.UnderlyingList,
+        // The expiry after the nearest, and the nearest monthly, of these, less
+        // often; their outcomes apart from the nearest ones the strategies read.
+        laterExpiryUnderlyings = settings.ChainPoller.LaterExpiryUnderlyingList,
+        laterExpiryIntervalSeconds = settings.ChainPoller.LaterExpiryIntervalSeconds,
         lastRoundStartedUtc = _pollerState.LastRoundStartedUtc,
         lastRoundFinishedUtc = _pollerState.LastRoundFinishedUtc,
         outcomes = _pollerState.Outcomes,
+        laterOutcomes = _pollerState.LaterOutcomes,
     };
 
     private IActionResult Failure(Exception ex) => ex switch
