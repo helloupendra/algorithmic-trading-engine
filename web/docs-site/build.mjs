@@ -56,6 +56,7 @@ export const NAV = [
       { slug: 'modules/analysis', src: 'docs/modules/analysis.md', title: 'Forecasts & analysis' },
       { slug: 'modules/market-intelligence', src: 'docs/modules/market_intelligence.md', title: 'Market intelligence' },
       { slug: 'modules/option-chain', src: 'docs/modules/option_chain.md', title: 'Option chain' },
+      { slug: 'modules/chart', src: 'docs/modules/chart.md', title: 'Chart & indicators' },
       { slug: 'modules/pattern-alerts', src: 'docs/modules/pattern_alerts.md', title: 'Candle pattern alerts' },
       { slug: 'modules/connectors', src: 'docs/modules/connectors_module.md', title: 'Connectors' },
       { slug: 'modules/dhan', src: 'docs/modules/dhan_connector.md', title: 'Dhan connector' },
