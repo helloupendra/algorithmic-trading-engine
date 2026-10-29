@@ -98,6 +98,8 @@ A day whose archive fails (its `live_bars` query timing out on the small server,
 
 Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (admin; add `&broker=false` to skip the broker calls). The response lists what was inserted, updated, or left to the broker.
 
+**Backfilling one symbol** (`POST /api/Backfill/history`, admin; the backfill panel on Data → Historical) asks the history router's first vendor, FYERS, for the trading days the symbol's stored candles miss, and only those. FYERS needs a sign-in every morning: its token ends at 06:00 IST and its refresh is switched off under SEBI's rules. With no FYERS session the endpoint answers **409** with `{ message, provider: "fyers" }`, the message "No valid FYERS session: FYERS serves history only after today's sign-in. Sign in on Connectors → FYERS, then try again.", and the panel shows that line with a link to the connector (`VendorNotConnectedException`). Until 29 Oct 2026 it was a 500, "An unexpected error occurred".
+
 #### India VIX
 
 **The nightly India VIX check** runs right after the archive, in the same tick, when at least one day the archive has just done was an NSE trading day in the exchange calendar (`market_holidays`; a weekday holiday such as Gandhi Jayanti does not count). So it runs right after a trading day's archive (23:50 IST, or 00:15 in the US winter), and after the catch-up of a missed one. The forecasts need it: `range.har-vix` and the logits read India VIX's previous close, and on 1 Oct 2026 VIX was found missing for 22, 23 and 24 Sep (incident #204). VIX came only from the live feed, it was off the watchlist, and unlike the index symbols no broker backfill covered it. It is on the watchlist now; this check is the net under it.

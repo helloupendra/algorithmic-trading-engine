@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using AlgoTrading.Application.Exceptions;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Services;
@@ -42,6 +43,13 @@ public class FyersMarketDataProvider : IMarketDataProvider
 
     public ProviderDescriptor Descriptor => FyersProvider.Descriptor;
 
+    /// <summary>
+    /// What a history request is told with no FYERS session. The console shows
+    /// it as it is (the backfill panel), so it names the page to sign in on.
+    /// </summary>
+    public const string NotSignedInMessage =
+        "No valid FYERS session: FYERS serves history only after today's sign-in. Sign in on Connectors → FYERS, then try again.";
+
     public async Task<IReadOnlyList<ProviderHistoryBar>> GetHistoryAsync(
         string canonicalSymbol,
         string resolution,
@@ -55,7 +63,9 @@ public class FyersMarketDataProvider : IMarketDataProvider
 
         if (session is null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
         {
-            throw new InvalidOperationException("No valid FYERS session found. Please authenticate first.");
+            // The token dies at 06:00 IST and FYERS has switched its refresh
+            // off, so this is the state of every morning before the sign-in.
+            throw new VendorNotConnectedException(FyersProvider.Key, NotSignedInMessage);
         }
 
         // Identity for this connector, but the call is made anyway: the seam is

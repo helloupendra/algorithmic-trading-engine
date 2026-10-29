@@ -11,8 +11,10 @@ import {
   limitHint,
   maxDaysFor,
   rejectionFor,
+  signInPageFor,
   spanDays,
 } from './fyersLimits'
+import { ApiError } from './api'
 
 /**
  * FYERS refuses an over-long window rather than truncating it, so anything the
@@ -131,5 +133,25 @@ describe('limitHint', () => {
 
   it('leaves a reachable window alone', () => {
     expect(earliestFor('1', '2026-09-04')).toBe('2026-05-28')
+  })
+})
+
+describe('signInPageFor', () => {
+  // POST /api/Backfill/history before the morning's FYERS sign-in, as BackfillController answers it.
+  const notSignedIn = {
+    message: 'No valid FYERS session: FYERS serves history only after today\'s sign-in. Sign in on Connectors → FYERS, then try again.',
+    provider: 'fyers',
+  }
+
+  it('links a backfill refused for want of a session to that connector', () => {
+    expect(signInPageFor(new ApiError(409, notSignedIn.message, notSignedIn))).toBe('/system/connectors/fyers')
+  })
+
+  it('links nothing for any other failure', () => {
+    expect(signInPageFor(new ApiError(500, 'An unexpected error occurred.', { error: 'An unexpected error occurred.' }))).toBeNull()
+    expect(signInPageFor(new ApiError(409, 'conflict', { message: 'conflict' }))).toBeNull()
+    expect(signInPageFor(new ApiError(409, 'odd', { provider: '../users' }))).toBeNull()
+    expect(signInPageFor(new Error(notSignedIn.message))).toBeNull()
+    expect(signInPageFor(null)).toBeNull()
   })
 })

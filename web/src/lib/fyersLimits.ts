@@ -8,6 +8,7 @@
  * form can grey out what cannot be fetched instead of finding out afterwards.
  */
 
+import { ApiError } from './api'
 import { isoToDmy } from './dates'
 
 /** A resolution the backfill form offers. */
@@ -104,4 +105,20 @@ export function earliestFor(resolution: string, to: string): string {
  */
 export function limitHint(resolution: string, to: string): string {
   return `up to ${maxDaysFor(resolution)} days per request — from ${isoToDmy(earliestFor(resolution, to))}`
+}
+
+/**
+ * The connector page to sign in on when a backfill was refused because its
+ * vendor has no session today: the API answers 409 and names the provider
+ * (`BackfillController`). FYERS's token ends at 06:00 IST every day and its
+ * refresh is switched off, so before the morning sign-in this is the answer to
+ * every backfill. Null for any other failure.
+ */
+export function signInPageFor(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null
+  const body = error.body
+  const provider = body && typeof body === 'object' ? (body as Record<string, unknown>).provider : undefined
+  return typeof provider === 'string' && /^[a-z0-9-]+$/i.test(provider)
+    ? `/system/connectors/${provider.toLowerCase()}`
+    : null
 }

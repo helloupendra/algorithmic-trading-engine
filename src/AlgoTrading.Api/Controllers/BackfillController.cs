@@ -1,4 +1,5 @@
 using System.Globalization;
+using AlgoTrading.Application.Exceptions;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.MarketData;
 using AlgoTrading.Infrastructure.Services;
@@ -112,6 +113,13 @@ public class BackfillController : ControllerBase
         return (last, null);
     }
 
+    /// <summary>
+    /// Fill the gaps in one symbol's stored history from the history vendors.
+    /// A vendor with no session today is 409 with its own words (which page to
+    /// sign in on), shown as they are by the console's backfill panel: until
+    /// 29 Oct 2026 FYERS's missing sign-in was a 500, "An unexpected error
+    /// occurred".
+    /// </summary>
     [HttpPost("history")]
     public async Task<IActionResult> BackfillHistory(
         [FromBody] BackfillHistoryRequest request,
@@ -128,8 +136,15 @@ public class BackfillController : ControllerBase
             return BadRequest(new { message = "FromDate cannot be greater than ToDate." });
         }
 
-        var result = await _ensureHistoryCoverageUseCase.ExecuteAsync(request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            var result = await _ensureHistoryCoverageUseCase.ExecuteAsync(request, cancellationToken);
+            return Ok(result);
+        }
+        catch (VendorNotConnectedException ex)
+        {
+            return Conflict(new { message = ex.Message, provider = ex.ProviderKey });
+        }
     }
 }
 

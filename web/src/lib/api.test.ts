@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { freshAccessToken, tokenExpiresAtMs } from './api'
+import { ApiError, api, freshAccessToken, tokenExpiresAtMs } from './api'
 
 const NOW = Date.parse('2026-09-28T09:00:00Z')
 
@@ -58,5 +58,29 @@ describe('freshAccessToken', () => {
     expect(await freshAccessToken(storeWith(null), refresh, () => NOW)).toBeNull()
     expect(await freshAccessToken(storeWith('opaque-token'), refresh, () => NOW)).toBe('opaque-token')
     expect(refresh).not.toHaveBeenCalled()
+  })
+})
+
+describe('apiFetch', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("hands a refusal's own message and body to the screen", async () => {
+    // POST /api/Backfill/history before the morning's FYERS sign-in. Until 29 Oct it was a 500,
+    // "An unexpected error occurred", and the backfill panel had nothing better to show.
+    const body = {
+      message: "No valid FYERS session: FYERS serves history only after today's sign-in. Sign in on Connectors → FYERS, then try again.",
+      provider: 'fyers',
+    }
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 409, headers: { 'Content-Type': 'application/json' } })))
+
+    const error = await api
+      .post('/api/Backfill/history', { symbol: 'NSE:NIFTY50-INDEX', resolution: '5', fromDate: '2026-10-01', toDate: '2026-10-28' })
+      .catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(409)
+    expect((error as ApiError).message).toBe(body.message)
+    expect((error as ApiError).body).toEqual(body)
   })
 })
