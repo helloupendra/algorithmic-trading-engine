@@ -317,6 +317,40 @@ public class OptionChainTrendResponse
     public List<OptionChainTrendPointResponse> Points { get; set; } = new();
 }
 
+/// <summary>
+/// The expiries recorded for an underlying on one IST day, and how often each:
+/// the nearest every minute, a few later ones every five (GET /api/OptionChain/expiries/recorded).
+/// </summary>
+public class OptionChainRecordedExpiriesResponse
+{
+    public string Underlying { get; set; } = string.Empty;
+
+    /// <summary>The IST day asked about, or the newest capture's; null when nothing is recorded.</summary>
+    public DateOnly? SessionDate { get; set; }
+
+    /// <summary>The expiry every read gets when it names none: the nearest one recorded that day.</summary>
+    public DateOnly? DefaultExpiry { get; set; }
+
+    /// <summary>Nearest first.</summary>
+    public List<OptionChainRecordedExpiryResponse> Expiries { get; set; } = new();
+}
+
+public class OptionChainRecordedExpiryResponse
+{
+    public DateOnly ExpiryDate { get; set; }
+
+    /// <summary>Captures of this expiry on the day.</summary>
+    public int Captures { get; set; }
+
+    public DateTime FirstCapturedUtc { get; set; }
+    public DateTime LastCapturedUtc { get; set; }
+
+    /// <summary>The median gap between two captures: about 60 for the nearest, 300 for a later expiry. Null with one capture.</summary>
+    public int? TypicalIntervalSeconds { get; set; }
+
+    public bool IsDefault { get; set; }
+}
+
 /// <summary>One strike's intraday history — the OI-change curves.</summary>
 public class OptionChainSeriesPointResponse
 {

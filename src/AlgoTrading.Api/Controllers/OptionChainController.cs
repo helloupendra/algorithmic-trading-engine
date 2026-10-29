@@ -238,6 +238,24 @@ public class OptionChainController : ControllerBase
     }
 
     /// <summary>
+    /// The expiries recorded for an underlying on one IST day, with how many
+    /// captures each has and their usual spacing (the nearest every minute,
+    /// later ones every few), and the one every read gets when it names none.
+    /// </summary>
+    /// <param name="day">The IST day; the day of the newest capture when omitted.</param>
+    [HttpGet("expiries/recorded")]
+    public async Task<ActionResult<OptionChainRecordedExpiriesResponse>> GetRecordedExpiries(
+        [FromQuery] string underlying,
+        [FromQuery] DateOnly? day,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = "underlying is required." });
+
+        return Ok(await _chain.GetRecordedExpiriesAsync(underlying, day, cancellationToken));
+    }
+
+    /// <summary>
     /// Records one poll of the chain. Posted by the ingestor's chain poller.
     /// </summary>
     /// <remarks>

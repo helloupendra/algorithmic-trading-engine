@@ -144,8 +144,13 @@ public class OptionChainService
     {
         string key = (underlying ?? string.Empty).Trim().ToUpperInvariant();
 
+        // One expiry, always: the one asked for, or else the nearest. Never
+        // "whatever was captured last", which since later expiries are recorded
+        // too is next week's chain one read in five.
+        var expiryToRead = expiry ?? await DefaultExpiryAsync(key, asOfUtc, cancellationToken);
+
         var query = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
-        if (expiry is not null) query = query.Where(x => x.ExpiryDate == expiry);
+        if (expiryToRead is not null) query = query.Where(x => x.ExpiryDate == expiryToRead);
         if (asOfUtc is not null) query = query.Where(x => x.CapturedUtc <= asOfUtc);
 
         // The moment to describe: the most recent capture at or before the clock.
@@ -200,9 +205,11 @@ public class OptionChainService
         if (rows.Any(x => x.PriceChange is null))
         {
             var sessionOpenUtc = momentUtc.Value.Date;
+            var capturedExpiry = rows[0].ExpiryDate;
             openingPrice = await _dbContext.OptionChainSnapshots
                 .AsNoTracking()
                 .Where(x => x.Underlying == key
+                            && x.ExpiryDate == capturedExpiry
                             && x.CapturedUtc >= sessionOpenUtc
                             && x.CapturedUtc <= momentUtc)
                 .GroupBy(x => x.Symbol)
@@ -486,20 +493,20 @@ public class OptionChainService
         string key = (underlying ?? string.Empty).Trim().ToUpperInvariant();
         var response = new OptionChainTrendResponse { Underlying = key };
 
-        var query = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
-        if (expiry is not null) query = query.Where(x => x.ExpiryDate == expiry);
+        var expiryToRead = expiry ?? await DefaultExpiryAsync(key, toUtc, cancellationToken);
+        if (expiryToRead is not { } expiryDate) return response;
+
+        var query = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key && x.ExpiryDate == expiryDate);
         if (toUtc is not null) query = query.Where(x => x.CapturedUtc <= toUtc);
 
         var newest = await query
             .OrderByDescending(x => x.CapturedUtc)
-            .Select(x => new { x.CapturedUtc, x.ExpiryDate })
+            .Select(x => (DateTime?)x.CapturedUtc)
             .FirstOrDefaultAsync(cancellationToken);
-        if (newest is null) return response;
+        if (newest is not { } untilUtc) return response;
 
-        var day = IstTime.DateOf(newest.CapturedUtc);
+        var day = IstTime.DateOf(untilUtc);
         var fromUtc = IstTime.StartOfDayUtc(day);
-        var untilUtc = newest.CapturedUtc;
-        var expiryDate = expiry ?? newest.ExpiryDate;
 
         response.ExpiryDate = expiryDate;
         response.SessionDate = day;
@@ -637,6 +644,24 @@ public class OptionChainService
 
         var rows = await query.OrderBy(x => x.CapturedUtc).ToListAsync(cancellationToken);
 
+        if (expiry is null && rows.Count > 0)
+        {
+            // No expiry named: each day's points are that day's nearest expiry,
+            // the one recorded every minute, which is what every point was before
+            // later expiries were recorded too. Asked of the underlying's whole
+            // chain, not of this strike's rows: a far strike may be listed only
+            // in a later expiry, and its points would then switch contract.
+            var nearestByDay = new Dictionary<DateOnly, DateOnly>();
+            foreach (var day in rows.Select(x => IstTime.DateOf(x.CapturedUtc)).Distinct())
+            {
+                var dayEndUtc = IstTime.EndOfDayUtc(day);
+                var untilUtc = toUtc is not null && toUtc < dayEndUtc ? toUtc.Value : dayEndUtc;
+                nearestByDay[day] = await NearestRecordedExpiryAsync(key, day, untilUtc, cancellationToken)
+                                    ?? rows.Where(x => IstTime.DateOf(x.CapturedUtc) == day).Min(x => x.ExpiryDate);
+            }
+            rows = rows.Where(x => x.ExpiryDate == nearestByDay[IstTime.DateOf(x.CapturedUtc)]).ToList();
+        }
+
         var response = new OptionChainSeriesResponse
         {
             Underlying = key,
@@ -706,6 +731,162 @@ public class OptionChainService
             .Distinct()
             .OrderBy(x => x)
             .ToListAsync(cancellationToken);
+    }
+
+    // ------------------------------------------------------------------
+    // Which expiry
+    // ------------------------------------------------------------------
+
+    /// <summary>Candidate expiries a lookup steps through before it gives up; a handful is plenty.</summary>
+    private const int MaxExpiryProbes = 8;
+
+    /// <summary>How far past the day an expiry is looked for: beyond the next month's monthly, nothing is recorded.</summary>
+    private const int RecordedExpiryDaysAhead = 120;
+
+    /// <summary>
+    /// The expiry a read that names none is about: the nearest one recorded on
+    /// the IST day of the newest capture at or before <paramref name="asOfUtc"/>
+    /// (now when null). Null when nothing is recorded by then.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until 30 Oct 2026 the recorder captured the nearest expiry only, so "the
+    /// newest capture" and "the nearest expiry" were the same rows. Since then
+    /// it also captures some underlyings' later expiries every few minutes, and
+    /// every reader that names no expiry (ChainFlowBuy, the AI desk, the chain
+    /// page before an expiry is picked) would otherwise read next week's chain
+    /// whenever it happened to be the newest, and its OI flow would jump between
+    /// the two.
+    /// </para>
+    /// <para>
+    /// The nearest is the expiry the recorder follows every minute: the
+    /// smallest one not before the day among that day's captures. Later
+    /// expiries are only ever captured after it in the same round, so they never
+    /// stand in for it. Each step is a probe of the (underlying, expiry, time)
+    /// index, cheap however many expiries the table holds.
+    /// </para>
+    /// </remarks>
+    public async Task<DateOnly?> DefaultExpiryAsync(string underlying, DateTime? asOfUtc, CancellationToken cancellationToken = default)
+    {
+        string key = (underlying ?? string.Empty).Trim().ToUpperInvariant();
+
+        var captures = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
+        if (asOfUtc is not null) captures = captures.Where(x => x.CapturedUtc <= asOfUtc);
+        var newest = await captures
+            .OrderByDescending(x => x.CapturedUtc)
+            .Select(x => new { x.CapturedUtc, x.ExpiryDate })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (newest is null) return null;
+
+        // The newest capture's own expiry only when the day's captures name no
+        // expiry from that day on: FYERS rows stored before 27 Sep 2026 date
+        // some monthlies two days early, before the day they were captured on.
+        return await NearestRecordedExpiryAsync(key, IstTime.DateOf(newest.CapturedUtc), newest.CapturedUtc, cancellationToken)
+               ?? newest.ExpiryDate;
+    }
+
+    /// <summary>
+    /// The smallest expiry not before <paramref name="day"/> with a capture on
+    /// that IST day at or before <paramref name="untilUtc"/>.
+    /// </summary>
+    private async Task<DateOnly?> NearestRecordedExpiryAsync(string key, DateOnly day, DateTime untilUtc, CancellationToken cancellationToken)
+    {
+        var dayStartUtc = IstTime.StartOfDayUtc(day);
+        var rows = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
+
+        var from = day;
+        for (int probe = 0; probe < MaxExpiryProbes; probe++)
+        {
+            var candidate = await rows.Where(x => x.ExpiryDate >= from).MinAsync(x => (DateOnly?)x.ExpiryDate, cancellationToken);
+            if (candidate is not { } expiry) return null;
+
+            // An expiry recorded on other days but not this one (a later expiry
+            // of last week, a capture made by hand) is stepped over.
+            if (await rows.AnyAsync(x => x.ExpiryDate == expiry && x.CapturedUtc >= dayStartUtc && x.CapturedUtc <= untilUtc, cancellationToken))
+                return expiry;
+            from = expiry.AddDays(1);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The expiries recorded for an underlying on one IST day, each with how
+    /// many captures it has and how far apart they usually are, and which one a
+    /// read that names no expiry gets. The day of the newest capture when
+    /// <paramref name="day"/> is null.
+    /// </summary>
+    public async Task<OptionChainRecordedExpiriesResponse> GetRecordedExpiriesAsync(
+        string underlying,
+        DateOnly? day,
+        CancellationToken cancellationToken = default)
+    {
+        string key = (underlying ?? string.Empty).Trim().ToUpperInvariant();
+        var response = new OptionChainRecordedExpiriesResponse { Underlying = key };
+        var rows = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
+
+        if (day is not { } session)
+        {
+            var newest = await rows
+                .OrderByDescending(x => x.CapturedUtc)
+                .Select(x => (DateTime?)x.CapturedUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (newest is null) return response;
+            session = IstTime.DateOf(newest.Value);
+        }
+
+        response.SessionDate = session;
+        var fromUtc = IstTime.StartOfDayUtc(session);
+        var untilUtc = IstTime.StartOfDayUtc(session.AddDays(1));
+
+        // One expiry at a time, each an index probe, rather than a DISTINCT over
+        // the underlying's rows, which would read every one of them.
+        var from = session;
+        var last = session.AddDays(RecordedExpiryDaysAhead);
+        while (true)
+        {
+            var candidate = await rows.Where(x => x.ExpiryDate >= from && x.ExpiryDate <= last)
+                .MinAsync(x => (DateOnly?)x.ExpiryDate, cancellationToken);
+            if (candidate is not { } expiry) break;
+            from = expiry.AddDays(1);
+
+            var stamps = await rows
+                .Where(x => x.ExpiryDate == expiry && x.CapturedUtc >= fromUtc && x.CapturedUtc < untilUtc)
+                .Select(x => x.CapturedUtc)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToListAsync(cancellationToken);
+            if (stamps.Count == 0) continue;
+
+            response.Expiries.Add(new OptionChainRecordedExpiryResponse
+            {
+                ExpiryDate = expiry,
+                Captures = stamps.Count,
+                FirstCapturedUtc = DateTime.SpecifyKind(stamps[0], DateTimeKind.Utc),
+                LastCapturedUtc = DateTime.SpecifyKind(stamps[^1], DateTimeKind.Utc),
+                TypicalIntervalSeconds = TypicalIntervalSeconds(stamps),
+            });
+        }
+
+        response.DefaultExpiry = await NearestRecordedExpiryAsync(key, session, IstTime.EndOfDayUtc(session), cancellationToken)
+                                 ?? response.Expiries.FirstOrDefault()?.ExpiryDate;
+        foreach (var recorded in response.Expiries) recorded.IsDefault = recorded.ExpiryDate == response.DefaultExpiry;
+        return response;
+    }
+
+    /// <summary>
+    /// The median gap between consecutive captures, in whole seconds; null with
+    /// fewer than two. The median, so an outage of an hour does not make a
+    /// minute's cadence read as ten.
+    /// </summary>
+    public static int? TypicalIntervalSeconds(IReadOnlyList<DateTime> sortedStamps)
+    {
+        if (sortedStamps.Count < 2) return null;
+        var gaps = new List<double>(sortedStamps.Count - 1);
+        for (int i = 1; i < sortedStamps.Count; i++) gaps.Add((sortedStamps[i] - sortedStamps[i - 1]).TotalSeconds);
+        gaps.Sort();
+        double median = gaps.Count % 2 == 1 ? gaps[gaps.Count / 2] : (gaps[gaps.Count / 2 - 1] + gaps[gaps.Count / 2]) / 2;
+        return (int)Math.Round(median, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>Snapshots are stamped to the second; a chain is not a tick.</summary>
