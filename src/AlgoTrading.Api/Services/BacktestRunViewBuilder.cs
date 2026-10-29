@@ -379,10 +379,13 @@ public sealed class BacktestRunViewBuilder
 
     /// <summary>
     /// Every point when the curve is short; otherwise a fixed stride plus the
-    /// last point and the peak/trough pair of the maximum drawdown, so the
-    /// chart still shows the worst excursion the metrics report.
+    /// last point and the three points of the maximum drawdown — the last
+    /// point at its peak, its trough and the first point back at the peak —
+    /// so the chart still shows the worst excursion the metrics report and
+    /// the console dates it from stored points (web/src/lib/drawdown.ts reads
+    /// the same three), not from whichever neighbours the stride kept.
     /// </summary>
-    private static List<BacktestEquityPoint> ThinCurve(List<BacktestEquityPoint> curve, int maxPoints)
+    internal static List<BacktestEquityPoint> ThinCurve(List<BacktestEquityPoint> curve, int maxPoints)
     {
         if (curve.Count <= maxPoints) return curve;
 
@@ -396,7 +399,9 @@ public sealed class BacktestRunViewBuilder
         decimal maxDd = 0m;
         for (int i = 0; i < curve.Count; i++)
         {
-            if (curve[i].Equity > peak)
+            // ">=": a later equal high restarts the fall, so the peak kept is
+            // the last point at it; every depth is the same as with ">".
+            if (curve[i].Equity >= peak)
             {
                 peak = curve[i].Equity;
                 peakIdx = i;
@@ -409,8 +414,18 @@ public sealed class BacktestRunViewBuilder
                 ddTroughIdx = i;
             }
         }
-        if (ddPeakIdx >= 0) keep.Add(ddPeakIdx);
-        if (ddTroughIdx >= 0) keep.Add(ddTroughIdx);
+        if (ddPeakIdx >= 0)
+        {
+            keep.Add(ddPeakIdx);
+            keep.Add(ddTroughIdx);
+            decimal ddPeak = curve[ddPeakIdx].Equity;
+            for (int i = ddTroughIdx + 1; i < curve.Count; i++)
+            {
+                if (curve[i].Equity < ddPeak) continue;
+                keep.Add(i);
+                break;
+            }
+        }
 
         return keep.Select(i => curve[i]).ToList();
     }
