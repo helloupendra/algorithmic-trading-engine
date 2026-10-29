@@ -393,8 +393,9 @@ public class DhanChainPollerTests
         var outcomes = await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round, deadline, TimeSpan.FromMinutes(5), CancellationToken.None);
 
         // Back at the deadline, give or take a busy test runner's timers (unanswered, it would wait
-        // out HttpClient's 100 s), with nothing stored for it and nothing more asked.
-        Assert.True(DateTime.UtcNow < deadline.AddSeconds(2), $"returned {(DateTime.UtcNow - deadline).TotalMilliseconds:0} ms after the deadline");
+        // out HttpClient's 100 s), with nothing stored for it and nothing more asked. Ten seconds of
+        // slack: a loaded macOS runner took 2.0 s past it on 29 Oct, still nowhere near 100 s.
+        Assert.True(DateTime.UtcNow < deadline.AddSeconds(10), $"returned {(DateTime.UtcNow - deadline).TotalMilliseconds:0} ms after the deadline");
         var cut = Assert.Single(outcomes);
         Assert.Equal("cut-short", cut.State);
         Assert.Equal(held, cut.Expiry);
