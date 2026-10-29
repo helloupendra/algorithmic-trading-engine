@@ -22,7 +22,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView, useRepricedChainPositions } from '../../../lib/queries'
+import { useOptionChainPositions, useOptionChainRecordedExpiries, useOptionChainTrend, useOptionChainView, useRepricedChainPositions } from '../../../lib/queries'
 import { useLivePrices } from '../../../lib/live'
 import { answerAsOf } from '../../../lib/asOf'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
@@ -46,6 +46,7 @@ import {
   istStamp,
   istTime,
   price,
+  recordedCadence,
   sidePeak,
   signedPercent,
   sourceLabel,
@@ -706,7 +707,9 @@ export function ChainView({ underlying }: { underlying: string }) {
 
   const asOfUtc = replayTime && sessionDate ? asOfFor(sessionDate, replayTime) : undefined
 
-  const expiries = useOptionChainExpiries(underlying)
+  // The expiries recorded on the session shown: the nearest every minute, a few later ones every five.
+  const recorded = useOptionChainRecordedExpiries(underlying, sessionDate || undefined)
+  const recordedData = recorded.data && recorded.data.underlying === underlying ? recorded.data : undefined
   const view = useOptionChainView(underlying, expiry, asOfUtc)
   // keepPreviousData must never show one underlying's chain under another's tab.
   const data = view.data && view.data.underlying === underlying ? view.data : undefined
@@ -764,11 +767,18 @@ export function ChainView({ underlying }: { underlying: string }) {
   }
 
   const todayIso = istDate(Date.now())
+  // Each recorded expiry with its cadence mark; the one on screen and the one
+  // a link named are kept even when that day's list does not have them.
   const expiryOptions = useMemo(() => {
-    const list = (expiries.data ?? []).filter((d) => capturedExpiry(d) != null && d >= todayIso)
-    if (chainExpiry && !list.includes(chainExpiry)) list.unshift(chainExpiry)
-    return list.sort()
-  }, [expiries.data, todayIso, chainExpiry])
+    const list = (recordedData?.expiries ?? []).map((e) => ({ date: e.expiryDate, cadence: recordedCadence(e) }))
+    for (const extra of [chainExpiry, capturedExpiry(expiry)]) {
+      if (extra && !list.some((o) => o.date === extra)) list.push({ date: extra, cadence: null })
+    }
+    return list.sort((a, b) => a.date.localeCompare(b.date))
+  }, [recordedData, chainExpiry, expiry])
+  // The nearest is what every read gets without an expiry, so picking it
+  // clears the choice: the page then follows the nearest into the next week.
+  const pickExpiry = (d: string) => setParam('expiry', d && d === recordedData?.defaultExpiry ? undefined : d)
 
   const firstCapture = trendData?.points[0]?.capturedUtc
   const lastCapture = trendData?.points[trendData.points.length - 1]?.capturedUtc
@@ -781,13 +791,16 @@ export function ChainView({ underlying }: { underlying: string }) {
           <select
             className="field__input field__input--sm"
             value={chainExpiry ?? expiry ?? ''}
-            onChange={(e) => setParam('expiry', e.target.value)}
+            onChange={(e) => pickExpiry(e.target.value)}
             aria-label="Expiry"
+            title="The nearest expiry is recorded every minute; the later ones marked here less often"
             disabled={expiryOptions.length === 0}
           >
             {expiryOptions.length === 0 && <option value="">no expiry captured</option>}
-            {expiryOptions.map((d) => (
-              <option key={d} value={d}>{expiryLabel(d, todayIso)}</option>
+            {expiryOptions.map((o) => (
+              <option key={o.date} value={o.date}>
+                {expiryLabel(o.date, todayIso)}{o.cadence ? ` · ${o.cadence}` : ''}
+              </option>
             ))}
           </select>
         </label>

@@ -292,9 +292,11 @@ computes it:
   capture. Live, near-money strikes' LTP, volume and OI are overlaid from
   live quotes, which Dhan streams about once a second for ATM ±5; a backtest
   or recap has no overlay.
-- **Nearest expiry only.** The recorder captures only the nearest expiry, so
-  on an expiry day the strategy buys that day's contract, with the earlier
-  cut-off.
+- **Nearest expiry only.** The strategy names no expiry, so it reads the
+  nearest one, recorded every minute; on an expiry day that is the day's
+  contract, with the earlier cut-off. The later expiries recorded every 5
+  minutes since 30 Oct 2026 are never mixed into what it reads (see
+  [Option chain](../../modules/option-chain/), "Which expiry a read gets").
 - **IV low is the run's.** $\sigma_{\min}$ is the lowest IV the run itself
   read, on candles that passed the data checks. A run started at 13:00 knows
   nothing of the morning.

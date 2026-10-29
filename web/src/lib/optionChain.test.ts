@@ -16,6 +16,7 @@ import {
   pointsVsSpot,
   positionMarker,
   positionsBySymbol,
+  recordedCadence,
   signedPercent,
   spotMarkerIndex,
   strikeWindow,
@@ -157,6 +158,17 @@ describe('expiryLabel', () => {
     expect(expiryLabel('2026-09-15', '2026-09-14')).toBe('15 Sep 2026 (+1 day)')
     expect(expiryLabel('2026-09-14', '2026-09-14')).toBe('14 Sep 2026 (today)')
     expect(expiryLabel('2026-09-08', '2026-09-14')).toBe('8 Sep 2026 (expired)')
+  })
+})
+
+describe('recordedCadence', () => {
+  it('marks only the expiries recorded less often than every minute', () => {
+    expect(recordedCadence({ typicalIntervalSeconds: 60, isDefault: true })).toBeNull()
+    expect(recordedCadence({ typicalIntervalSeconds: 61, isDefault: false })).toBeNull()
+    expect(recordedCadence({ typicalIntervalSeconds: 300, isDefault: false })).toBe('every 5 min')
+    expect(recordedCadence({ typicalIntervalSeconds: 290, isDefault: false })).toBe('every 5 min')
+    expect(recordedCadence({ typicalIntervalSeconds: null, isDefault: false })).toBe('one capture so far')
+    expect(recordedCadence({ typicalIntervalSeconds: null, isDefault: true })).toBeNull()
   })
 })
 

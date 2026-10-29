@@ -40,7 +40,7 @@ backup. The Dhan connector page shows each of these as on or off, live.
 | Data | How | Where it lands |
 | --- | --- | --- |
 | Ticks: last price, best bid and ask with sizes, 5-level depth, volume, OI, day OHLC | Live feed, Full mode for F&O and MCX, Quote mode for indices and equities | `live_ticks`, `live_quotes_latest`, 1-minute bars, the Redis tick stream |
-| Option chain: every strike's OI, previous OI, volume, IV, delta, gamma, theta, vega, bid and ask | Chain recorder, once a minute, nearest expiry | `option_chain_snapshots` with source `dhan`: the chain page, OI history and replay read it |
+| Option chain: every strike's OI, previous OI, volume, IV, delta, gamma, theta, vega, bid and ask | Chain recorder, once a minute, nearest expiry; for NIFTY, BANKNIFTY and SENSEX also the next expiry and the nearest monthly, every 5 minutes | `option_chain_snapshots` with source `dhan`: the chain page, OI history and replay read it (the nearest unless an expiry is named) |
 | History with OI | History router (fallback behind FYERS and TrueData) | `candles` |
 
 ## Setting it up
@@ -200,7 +200,7 @@ works clears the saved stop. To take the automatic sign-in off for longer, set
 | `POST /api/Dhan/instruments/import` | Downloads Dhan's instrument master and maps every live instrument. About a minute. |
 | `POST /api/Dhan/instruments/resolve` | Dhan ids for canonical symbols; the live feed subscribes with this. |
 | `GET /api/Dhan/universe` | What the live feed streams beyond the recording list, with the prices the strikes were centred on and any warnings. |
-| `GET /api/Dhan/chain-poller` | Is the chain recorder on, and what each underlying's last round did (recorded, idle because its market is closed, or failed and why). |
+| `GET /api/Dhan/chain-poller` | Is the chain recorder on, and what each underlying's last round did (recorded, idle because its market is closed, or failed and why). `laterOutcomes` is today's last attempt at each later expiry, kept apart from the nearest's `outcomes`. |
 | `POST /api/Dhan/chain-poller/start` and `/stop` | Turns the recorder on or off until the end of the IST day, surviving API restarts. The next day starts from `Dhan:ChainPoller:Enabled` again. |
 | `POST /api/Dhan/chain-poller/capture?underlyings=CRUDEOIL` | One round now. Closed markets are skipped unless `evenIfClosed=true`. |
 
@@ -528,11 +528,24 @@ Dhan allows one chain call every three seconds, so a round of eight takes about
 `dhan`, under the platform's own contract symbols, matched by strike and CE/PE
 (never built from a string).
 
+After the nearest expiries, in the time left before the next round, the recorder
+takes the later expiries that are due: the expiry after the nearest and the
+nearest monthly, for the underlyings in `LaterExpiryUnderlyings`, each once every
+`LaterExpiryIntervalSeconds`. They use the same three-second chain slot, start
+only with 10 seconds left before the next round, are cut short when Dhan is still
+answering as it begins, and are skipped for an underlying whose nearest failed in
+that round. Their failures log as information: they are reference chains for the
+page, and the nearest's warnings already say when Dhan itself is refusing. See
+[Option chain](../option-chain/) for which expiries these are and which one a
+read gets.
+
 | Setting (`Dhan:ChainPoller`) | Default | |
 | --- | --- | --- |
 | `Enabled` | false | On only on the host that records. Dhan's chain limit is per account, so two hosts polling would starve each other. |
 | `IntervalSeconds` | 60 | Between the starts of two rounds. |
 | `Underlyings` | NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, CRUDEOIL, NATURALGAS | An MCX commodity is chained on its nearest future. |
+| `LaterExpiryUnderlyings` | NIFTY, BANKNIFTY, SENSEX | Also record the next expiry and the nearest monthly. Meant for indices; empty records the nearest only. |
+| `LaterExpiryIntervalSeconds` | 300 | Between two captures of the same later expiry; never less than `IntervalSeconds`. |
 
 **On and off across restarts.** `Enabled` is false on the server; the morning
 job switches the recorder on with `POST /api/Dhan/chain-poller/start`. A start

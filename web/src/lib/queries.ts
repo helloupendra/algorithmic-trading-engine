@@ -2146,11 +2146,24 @@ export function useOptionChainSeries(
   })
 }
 
-export function useOptionChainExpiries(underlying: string) {
+/**
+ * The expiries recorded for the underlying on one IST day (the newest
+ * capture's day when none is given), with how often each was captured. The set
+ * is fixed from the session's first round, so it is asked for again only every
+ * five minutes, in case a recorder started late.
+ */
+export function useOptionChainRecordedExpiries(underlying: string, day?: string) {
   return useQuery({
-    queryKey: ['optionChainExpiries', underlying],
-    queryFn: () => api.get<string[]>(`/api/OptionChain/expiries?underlying=${encodeURIComponent(underlying)}`),
+    queryKey: ['optionChainRecordedExpiries', underlying, day ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying })
+      if (day) params.set('day', day)
+      return api.get<import('./types').OptionChainRecordedExpiries>(`/api/OptionChain/expiries/recorded?${params}`)
+    },
     enabled: Boolean(underlying),
+    staleTime: 60_000,
+    refetchInterval: 300_000,
+    placeholderData: keepPreviousData,
   })
 }
 

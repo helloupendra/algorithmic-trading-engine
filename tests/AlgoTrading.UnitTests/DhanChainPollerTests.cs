@@ -197,6 +197,231 @@ public class DhanChainPollerTests
         Assert.Equal(new[] { "NIFTY", "CRUDEOIL" }, settings.UnderlyingList);
     }
 
+    // ------------------------------------------------------------ later expiries
+
+    // NIFTY from Friday 30 Oct 2026: weeklies on Tuesdays, and the November
+    // monthly on Monday the 23rd because the 24th is Guru Nanak Jayanti.
+    private static readonly DateOnly[] NiftyExpiries =
+    [
+        new(2026, 10, 27), new(2026, 11, 3), new(2026, 11, 10), new(2026, 11, 17), new(2026, 11, 23),
+        new(2026, 12, 1), new(2026, 12, 8), new(2026, 12, 15), new(2026, 12, 22), new(2026, 12, 29),
+        new(2027, 1, 5), new(2027, 1, 12), new(2027, 3, 30),
+    ];
+
+    [Fact]
+    public void Later_expiries_are_the_next_one_and_the_nearest_monthly()
+    {
+        // Moved a day early by the holiday, the monthly is still the month's last listed expiry.
+        Assert.Equal(new[] { new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 23) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 10, 30)));
+
+        // On a weekly's own expiry day the nearest is that day's, and both later ones follow it.
+        Assert.Equal(new[] { new DateOnly(2026, 11, 17), new DateOnly(2026, 11, 23) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 11, 10)));
+    }
+
+    [Fact]
+    public void A_monthly_already_recorded_as_nearest_or_next_is_not_added_twice()
+    {
+        // The next expiry is the monthly.
+        Assert.Equal(new[] { new DateOnly(2026, 11, 23) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 11, 12)));
+
+        // The nearest is the monthly, on its own expiry day too: only the next weekly is added.
+        Assert.Equal(new[] { new DateOnly(2026, 12, 1) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 11, 19)));
+        Assert.Equal(new[] { new DateOnly(2026, 12, 1) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 11, 23)));
+
+        // December's monthly is the nearest at the turn of the year; January's is not reached for.
+        Assert.Equal(new[] { new DateOnly(2027, 1, 5) },
+            DhanChainRows.LaterExpiries(NiftyExpiries, new DateOnly(2026, 12, 28)));
+    }
+
+    [Fact]
+    public void BANKNIFTY_lists_only_monthlies_so_its_later_expiry_is_next_months()
+    {
+        var banknifty = new[] { new DateOnly(2026, 10, 27), new DateOnly(2026, 11, 23), new DateOnly(2026, 12, 29), new DateOnly(2027, 1, 26) };
+
+        Assert.Equal(new[] { new DateOnly(2026, 12, 29) }, DhanChainRows.LaterExpiries(banknifty, new DateOnly(2026, 10, 30)));
+        Assert.Equal(new[] { new DateOnly(2026, 12, 29) }, DhanChainRows.LaterExpiries(banknifty, new DateOnly(2026, 11, 23)));
+    }
+
+    [Fact]
+    public void SENSEX_expires_on_BSE_Thursdays_and_the_same_rule_holds()
+    {
+        var sensex = new[] { new DateOnly(2026, 11, 5), new DateOnly(2026, 11, 12), new DateOnly(2026, 11, 19), new DateOnly(2026, 11, 26), new DateOnly(2026, 12, 3) };
+
+        Assert.Equal(new[] { new DateOnly(2026, 11, 12), new DateOnly(2026, 11, 26) },
+            DhanChainRows.LaterExpiries(sensex, new DateOnly(2026, 10, 30)));
+    }
+
+    [Fact]
+    public void An_underlying_with_one_expiry_left_has_no_later_one()
+    {
+        Assert.Empty(DhanChainRows.LaterExpiries(new[] { new DateOnly(2026, 11, 3) }, new DateOnly(2026, 10, 30)));
+        Assert.Empty(DhanChainRows.LaterExpiries(new[] { new DateOnly(2026, 10, 27), new DateOnly(2026, 11, 3) }, new DateOnly(2026, 10, 30)));
+        Assert.Empty(DhanChainRows.LaterExpiries(Array.Empty<DateOnly>(), new DateOnly(2026, 10, 30)));
+
+        // Unsorted, with a repeat: the same answer as the clean list.
+        Assert.Equal(new[] { new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 23) },
+            DhanChainRows.LaterExpiries(NiftyExpiries.Reverse().Append(new DateOnly(2026, 11, 3)), new DateOnly(2026, 10, 30)));
+    }
+
+    [Fact]
+    public void A_later_expiry_is_due_once_an_interval_counted_in_rounds()
+    {
+        var every = TimeSpan.FromMinutes(5);
+        var round = new DateTime(2026, 10, 30, 3, 45, 0, DateTimeKind.Utc); // 09:15 IST
+
+        Assert.True(DhanLaterExpirySchedule.IsDue(null, round, every));
+        Assert.False(DhanLaterExpirySchedule.IsDue(round, round.AddMinutes(1), every));
+        Assert.False(DhanLaterExpirySchedule.IsDue(round, round.AddMinutes(4), every));
+        // The fifth round started a hair before the fifth minute: still that round, not the sixth.
+        Assert.True(DhanLaterExpirySchedule.IsDue(round, round.AddMinutes(5).AddMilliseconds(-40), every));
+        Assert.True(DhanLaterExpirySchedule.IsDue(round, round.AddMinutes(5), every));
+    }
+
+    [Fact]
+    public void The_cadence_is_never_quicker_than_a_round_and_the_deadline_leaves_the_next_round_on_time()
+    {
+        var minute = TimeSpan.FromSeconds(60);
+        Assert.Equal(TimeSpan.FromSeconds(300), DhanLaterExpirySchedule.Every(new DhanChainPollerSettings(), minute));
+        Assert.Equal(minute, DhanLaterExpirySchedule.Every(new DhanChainPollerSettings { LaterExpiryIntervalSeconds = 10 }, minute));
+
+        var round = new DateTime(2026, 10, 30, 3, 45, 0, DateTimeKind.Utc);
+        var deadline = DhanLaterExpirySchedule.Deadline(round, minute);
+        Assert.Equal(round.AddSeconds(58), deadline);
+        Assert.True(DhanLaterExpirySchedule.CanStart(round.AddSeconds(30), deadline, DhanLaterExpirySchedule.Reserve));
+        Assert.True(DhanLaterExpirySchedule.CanStart(round.AddSeconds(48), deadline, DhanLaterExpirySchedule.Reserve));
+        Assert.False(DhanLaterExpirySchedule.CanStart(round.AddSeconds(49), deadline, DhanLaterExpirySchedule.Reserve));
+    }
+
+    [Fact]
+    public void The_default_later_expiry_settings_need_no_server_change()
+    {
+        var settings = new DhanChainPollerSettings();
+        Assert.Equal(new[] { "NIFTY", "BANKNIFTY", "SENSEX" }, settings.LaterExpiryUnderlyingList);
+        Assert.Equal(300, settings.LaterExpiryIntervalSeconds);
+        Assert.Empty(new DhanChainPollerSettings { LaterExpiryUnderlyings = "" }.LaterExpiryUnderlyingList);
+    }
+
+    [Fact]
+    public async Task Later_expiries_are_recorded_after_the_nearest_and_then_wait_their_interval()
+    {
+        var (db, handler, today, expiries) = await NiftyWeekliesAsync();
+        await using var _ = db;
+        var state = State();
+        var recorder = Recorder(db, handler, state, marketOpen: true, QuickGate());
+        var every = TimeSpan.FromMinutes(5);
+        var round = DateTime.UtcNow;
+
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        var later = await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round, round.AddMinutes(1), every, CancellationToken.None);
+
+        var expected = DhanChainRows.LaterExpiries(expiries, today);
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, later.Select(o => o.Expiry!.Value));
+        Assert.All(later, o => Assert.Equal("recorded", o.State));
+        Assert.Equal(expected.Prepend(expiries[0]).Order(),
+            (await db.OptionChainSnapshots.Select(x => x.ExpiryDate).Distinct().ToListAsync()).Order());
+        // Kept apart from the nearest's line, which stays one per underlying.
+        Assert.Equal(expiries[0], Assert.Single(state.Outcomes).Expiry);
+        Assert.Equal(expected, state.LaterOutcomes.Select(o => o.Expiry!.Value));
+
+        // A round later the nearest is asked again; the later ones are not.
+        int chainsSoFar = handler.Chains.Count;
+        var nextRound = await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round.AddMinutes(1), round.AddMinutes(2), every, CancellationToken.None);
+        Assert.Empty(nextRound);
+        Assert.Equal(chainsSoFar, handler.Chains.Count);
+
+        // Five rounds on, they are due again.
+        var fifth = await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round.AddMinutes(5), round.AddMinutes(6), every, CancellationToken.None);
+        Assert.Equal(expected, fifth.Select(o => o.Expiry!.Value));
+    }
+
+    [Fact]
+    public async Task No_later_expiry_is_asked_for_when_the_nearest_was_not_recorded_or_the_underlying_is_not_listed()
+    {
+        var (db, handler, _, _) = await NiftyWeekliesAsync();
+        await using var _db = db;
+        var recorder = Recorder(db, handler, State(), marketOpen: true, QuickGate());
+        var round = DateTime.UtcNow;
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        int chains = handler.Chains.Count;
+
+        // The nearest failed: a later expiry alone would be read as the nearest.
+        var failed = new[] { nearest[0] with { State = "failed" } };
+        Assert.Empty(await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, failed, round, round.AddMinutes(1), TimeSpan.FromMinutes(5), CancellationToken.None));
+        // Recorded, but its underlying is not one of those configured for later expiries.
+        Assert.Empty(await recorder.RecordLaterExpiriesAsync(new[] { "SENSEX" }, nearest, round, round.AddMinutes(1), TimeSpan.FromMinutes(5), CancellationToken.None));
+        Assert.Equal(chains, handler.Chains.Count);
+    }
+
+    [Fact]
+    public async Task No_later_capture_starts_without_its_reserve_before_the_next_round_and_it_stays_due()
+    {
+        var (db, handler, today, expiries) = await NiftyWeekliesAsync();
+        await using var _ = db;
+        var state = State();
+        var recorder = Recorder(db, handler, state, marketOpen: true, QuickGate());
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        int chains = handler.Chains.Count;
+        var round = DateTime.UtcNow;
+
+        var outcomes = await recorder.RecordLaterExpiriesAsync(
+            new[] { "NIFTY" }, nearest, round, DateTime.UtcNow.AddSeconds(9), TimeSpan.FromMinutes(5), CancellationToken.None);
+
+        Assert.Empty(outcomes);
+        Assert.Equal(chains, handler.Chains.Count);
+        Assert.All(DhanChainRows.LaterExpiries(expiries, today), e => Assert.Null(state.LaterAskedInRound("NIFTY", e)));
+    }
+
+    [Fact]
+    public async Task A_later_capture_still_waiting_on_Dhan_at_the_deadline_is_cut_short()
+    {
+        var (db, handler, today, expiries) = await NiftyWeekliesAsync();
+        await using var _ = db;
+        var state = State();
+        var recorder = Recorder(db, handler, state, marketOpen: true, QuickGate(), laterReserve: TimeSpan.FromMilliseconds(100));
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        var held = DhanChainRows.LaterExpiries(expiries, today)[0];
+        handler.HoldExpiry = held.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var round = DateTime.UtcNow;
+        var deadline = round.AddMilliseconds(1500);
+
+        var outcomes = await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round, deadline, TimeSpan.FromMinutes(5), CancellationToken.None);
+
+        // Back at the deadline, give or take a busy test runner's timers (unanswered, it would wait
+        // out HttpClient's 100 s), with nothing stored for it and nothing more asked.
+        Assert.True(DateTime.UtcNow < deadline.AddSeconds(2), $"returned {(DateTime.UtcNow - deadline).TotalMilliseconds:0} ms after the deadline");
+        var cut = Assert.Single(outcomes);
+        Assert.Equal("cut-short", cut.State);
+        Assert.Equal(held, cut.Expiry);
+        Assert.False(await db.OptionChainSnapshots.AnyAsync(x => x.ExpiryDate == held));
+        // It counts as asked: a Dhan that keeps hanging costs one call an interval, no more.
+        Assert.Equal(round, state.LaterAskedInRound("NIFTY", held));
+    }
+
+    [Fact]
+    public async Task Later_expiries_take_the_same_chain_slot_as_the_nearest_ones()
+    {
+        var (db, handler, _, _) = await NiftyWeekliesAsync();
+        await using var _ = db;
+        var recorder = Recorder(db, handler, State(), marketOpen: true, QuickGate(chainMilliseconds: 300));
+        var round = DateTime.UtcNow;
+
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round, round.AddMinutes(1), TimeSpan.FromMinutes(5), CancellationToken.None);
+
+        // The nearest's chain, then each later one: never two inside one 300 ms slot (less a
+        // Windows timer tick of slack). Without the shared gate they would be a millisecond apart.
+        Assert.True(handler.Chains.Count >= 2);
+        var sent = handler.Chains.Select(c => c.SentUtc).Order().ToList();
+        for (int i = 1; i < sent.Count; i++)
+            Assert.True(sent[i] - sent[i - 1] >= TimeSpan.FromMilliseconds(250), $"chains {i - 1} and {i} were {(sent[i] - sent[i - 1]).TotalMilliseconds:0} ms apart");
+    }
+
     // ---------------------------------------------------------------- the switch
 
     // 11:28 IST on Thursday 2026-09-24: the restart that ended that day's chain.
@@ -431,17 +656,60 @@ public class DhanChainPollerTests
             NullLogger<DhanChainPoller>.Instance, clock);
     }
 
-    private static DhanChainRecorder Recorder(TradingDbContext db, Routes handler, DhanChainPollerState state, bool marketOpen)
+    private static DhanChainRecorder Recorder(
+        TradingDbContext db, Routes handler, DhanChainPollerState state, bool marketOpen, DhanRateGate? gate = null, TimeSpan? laterReserve = null)
     {
         var api = new DhanApiClient(
             Options.Create(new DhanSettings { AccessToken = "token" }),
             new Credentials(),
             new NoSessions(),
             new Factory(handler),
-            new DhanRateGate(),
+            gate ?? new DhanRateGate(),
             NullLogger<DhanApiClient>.Instance);
         var chain = new DhanOptionChainClient(api, NullLogger<DhanOptionChainClient>.Instance);
-        return new DhanChainRecorder(chain, api, new OptionChainService(db), db, new Sessions(marketOpen), state, NullLogger<DhanChainRecorder>.Instance);
+        return new DhanChainRecorder(chain, api, new OptionChainService(db), db, new Sessions(marketOpen), state, NullLogger<DhanChainRecorder>.Instance)
+        {
+            LaterReserve = laterReserve ?? DhanLaterExpirySchedule.Reserve,
+        };
+    }
+
+    /// <summary>A chain gate quicker than Dhan's, so a test of several chains takes a second, not ten.</summary>
+    private static DhanRateGate QuickGate(int chainMilliseconds = 150) => new(new Dictionary<DhanRateClass, TimeSpan>
+    {
+        [DhanRateClass.Data] = TimeSpan.Zero,
+        [DhanRateClass.Quote] = TimeSpan.Zero,
+        [DhanRateClass.OptionChain] = TimeSpan.FromMilliseconds(chainMilliseconds),
+    });
+
+    /// <summary>
+    /// NIFTY listed weekly from tomorrow for ten weeks, a 24,000 CE and PE for
+    /// each expiry in the platform's master, and a Dhan that answers every chain
+    /// with that one strike.
+    /// </summary>
+    private static async Task<(TradingDbContext Db, Routes Handler, DateOnly Today, IReadOnlyList<DateOnly> Expiries)> NiftyWeekliesAsync()
+    {
+        var today = IstTime.DateOf(DateTime.UtcNow);
+        var expiries = Enumerable.Range(0, 10).Select(w => today.AddDays(1 + 7 * w)).ToList();
+        var db = Db();
+        foreach (var expiry in expiries)
+        {
+            db.Instruments.AddRange(
+                Option($"NSE:NIFTYTEST{expiry:yyMMdd}24000CE", "NIFTY", expiry, 24000m, "CE"),
+                Option($"NSE:NIFTYTEST{expiry:yyMMdd}24000PE", "NIFTY", expiry, 24000m, "PE"));
+        }
+        await db.SaveChangesAsync();
+
+        string listed = string.Join(",", expiries.Select(e => $"\"{e:yyyy-MM-dd}\""));
+        var handler = new Routes
+        {
+            ["/optionchain/expirylist"] = $$"""{"data":[{{listed}}],"status":"success"}""",
+            ["/optionchain"] = """
+                {"data":{"last_price":24010.5,"oc":{"24000.000000":{
+                  "ce":{"last_price":120,"previous_close_price":100,"oi":5000,"previous_oi":4000,"volume":900,"implied_volatility":14.2,"security_id":1},
+                  "pe":{"last_price":95,"previous_close_price":110,"oi":7000,"previous_oi":6500,"volume":800,"implied_volatility":13.1,"security_id":2}}}},"status":"success"}
+                """,
+        };
+        return (db, handler, today, expiries);
     }
 
     /// <summary>Answers by path, longest match first, so "/optionchain" never shadows its expiry list.</summary>
@@ -450,19 +718,33 @@ public class DhanChainPollerTests
         private readonly Dictionary<string, string> _bodies = new();
         public List<string> Called { get; } = new();
 
+        /// <summary>Every chain request as (when it was sent, the expiry it asked for).</summary>
+        public List<(DateTime SentUtc, string Expiry)> Chains { get; } = new();
+
+        /// <summary>A chain request for this expiry ("yyyy-MM-dd") is never answered: it waits until cancelled.</summary>
+        public string? HoldExpiry { get; set; }
+
         public string this[string path] { set => _bodies[path] = value; }
 
         public IEnumerator<KeyValuePair<string, string>> GetEnumerator() => _bodies.GetEnumerator();
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             string path = request.RequestUri!.AbsolutePath;
             Called.Add(path);
+            if (path.EndsWith("/optionchain", StringComparison.Ordinal) && request.Content is not null)
+            {
+                using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
+                string expiry = body.RootElement.GetProperty("Expiry").GetString()!;
+                lock (Chains) Chains.Add((DateTime.UtcNow, expiry));
+                if (expiry == HoldExpiry) await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
             var match = _bodies.Keys.Where(k => path.EndsWith(k, StringComparison.Ordinal)).OrderByDescending(k => k.Length).FirstOrDefault();
-            return Task.FromResult(match is null
+            return match is null
                 ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
-                : new HttpResponseMessage(status) { Content = new StringContent(_bodies[match], Encoding.UTF8, "application/json") });
+                : new HttpResponseMessage(status) { Content = new StringContent(_bodies[match], Encoding.UTF8, "application/json") };
         }
     }
 

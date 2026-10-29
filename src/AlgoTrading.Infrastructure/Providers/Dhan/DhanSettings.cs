@@ -97,6 +97,28 @@ public class DhanChainPollerSettings
     public string Underlyings { get; set; } = "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX,BANKEX,CRUDEOIL,NATURALGAS";
 
     public IReadOnlyList<string> UnderlyingList => DhanSettingsLists.Split(Underlyings);
+
+    /// <summary>
+    /// Underlyings whose later expiries are recorded too: the expiry after the
+    /// nearest, and the nearest monthly when it is neither of those. Empty
+    /// records the nearest expiry only, as before 30 Oct 2026.
+    /// </summary>
+    /// <remarks>
+    /// Each one is only ever asked for after its nearest expiry was recorded in
+    /// the same round, in the time left before the next round, so it can never
+    /// delay or crowd out the minute capture the strategies read.
+    /// </remarks>
+    public string LaterExpiryUnderlyings { get; set; } = "NIFTY,BANKNIFTY,SENSEX";
+
+    public IReadOnlyList<string> LaterExpiryUnderlyingList => DhanSettingsLists.Split(LaterExpiryUnderlyings);
+
+    /// <summary>
+    /// Seconds between two captures of the same later expiry. Never more often
+    /// than <see cref="IntervalSeconds"/>: a later expiry is a reference for
+    /// the page, not something a strategy trades on, and every extra chain is a
+    /// three-second slot of Dhan's budget and a few hundred rows.
+    /// </summary>
+    public int LaterExpiryIntervalSeconds { get; set; } = 300;
 }
 
 /// <summary>"Dhan:AutoSignIn" in configuration.</summary>

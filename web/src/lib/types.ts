@@ -1881,6 +1881,26 @@ export interface OptionChainTrend {
   points: OptionChainTrendPoint[]
 }
 
+/** One expiry recorded on a day: the nearest every minute, a later one every few minutes. */
+export interface OptionChainRecordedExpiry {
+  expiryDate: string
+  captures: number
+  firstCapturedUtc: string
+  lastCapturedUtc: string
+  /** The median gap between two captures; null with only one. */
+  typicalIntervalSeconds: number | null
+  /** What a read that names no expiry gets: the nearest recorded that day. */
+  isDefault: boolean
+}
+
+/** GET /api/OptionChain/expiries/recorded: the expiries recorded for an underlying on one IST day. */
+export interface OptionChainRecordedExpiries {
+  underlying: string
+  sessionDate: string | null
+  defaultExpiry: string | null
+  expiries: OptionChainRecordedExpiry[]
+}
+
 export interface OptionChainSeriesPoint {
   capturedUtc: string
   spotPrice: number
