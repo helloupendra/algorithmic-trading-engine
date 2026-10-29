@@ -73,6 +73,17 @@ function isTailUpdate(prev: readonly PriceCandle[], next: readonly PriceCandle[]
 }
 
 /**
+ * The candles as the chart takes them. The API can hand back candles sharing
+ * a timestamp after a re-backfill; lightweight-charts requires strictly
+ * ascending unique times, so the later of two wins.
+ */
+function drawable(candles: readonly PriceCandle[]): [UTCTimestamp, PriceCandle][] {
+  const byTime = new Map<UTCTimestamp, PriceCandle>()
+  for (const c of [...candles].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))) byTime.set(istTime(c.timeUtc), c)
+  return [...byTime.entries()]
+}
+
+/**
  * Full-height price chart: candlesticks with a volume histogram tucked into the
  * bottom fifth of the same pane. Crosshair/tooltip come from lightweight-charts.
  *
@@ -114,9 +125,13 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
     priceSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.22 } })
     priceRef.current = priceSeries
 
+    // No label or line for the last bar's volume: they stood on the price
+    // axis as a stray "0" for every index.
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
+      lastValueVisible: false,
+      priceLineVisible: false,
     })
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, visible: false })
     volumeRef.current = volumeSeries
@@ -154,15 +169,11 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
       return
     }
 
-    // The API can hand back candles sharing a timestamp after a re-backfill;
-    // lightweight-charts requires strictly ascending unique times.
-    const byTime = new Map<UTCTimestamp, PriceCandle>()
-    for (const c of [...candles].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))) {
-      byTime.set(istTime(c.timeUtc), c)
-    }
-    const rows = [...byTime.entries()]
+    const rows = drawable(candles)
     priceSeries.setData(rows.map(([time, c]) => bar(time, c)))
     volumeSeries.setData(rows.map(([time, c]) => volume(time, c)))
+    // An index trades no volume, and a row of empty bars reads as a dotted line under the candles.
+    volumeSeries.applyOptions({ visible: rows.some(([, c]) => (c.volume ?? 0) > 0) })
     if (fittedRef.current !== fitKey && rows.length > 0) {
       fittedRef.current = fitKey
       chart.timeScale().fitContent()

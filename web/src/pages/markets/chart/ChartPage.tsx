@@ -7,7 +7,9 @@
  * reader never lands on an empty chart without knowing why. Intraday
  * resolutions are stitched from the stored candles (the nightly archive and
  * backfills) and today's live 1-minute bars, rolled up in the browser with
- * the server's bucket rule; daily comes from the stored candles alone.
+ * the server's bucket rule; 30m and 1h are then folded from the session's
+ * open, and the week from the days (lib/chart.ts, storedResolution). Daily
+ * and weekly come from the stored candles alone.
  *
  * Between polls of the bars the forming candle moves with the symbol's pushed
  * price (lib/live.ts): its close, and its high and low when the price passes
@@ -30,8 +32,11 @@ import {
   chartLayer,
   coverageByResolution,
   hasResolution,
+  hasStructure,
+  isIntraday,
   rangeFromDate,
   stitch,
+  storedResolution,
   structureTimeframes,
   withLiveTick,
 } from '../../../lib/chart'
@@ -64,11 +69,14 @@ export function ChartPage() {
 
   const symbol = params.get('symbol') ?? DEFAULT_SYMBOL
   const layer = chartLayer(params.get('layer'))
-  const structureOn = layer === 'smc'
   const [search, setSearch] = useState('')
   const [resolution, setResolution] = useState<Resolution>('5')
   const [range, setRange] = useState<RangeKey>('1D')
   const [structure, setStructure] = useState<StructureSettings>(STRUCTURE_DEFAULTS)
+  // SMC reads stored candles on the server, and none are stored at 30m, 1h or
+  // a week; the toolbar keeps the two apart, and this holds if a link does not.
+  const structureResolution = hasStructure(resolution) ? resolution : null
+  const structureOn = layer === 'smc' && structureResolution != null
 
   // The address carries the symbol and the layer, and nothing else is lost when either changes.
   const setQuery = (key: 'symbol' | 'layer', value: string | null) => {
@@ -92,7 +100,9 @@ export function ChartPage() {
     if (!RANGES_FOR[resolution].includes(range)) setRange(RANGES_FOR[resolution][0])
   }, [resolution, range])
 
-  const intraday = resolution !== 'D'
+  const intraday = isIntraday(resolution)
+  // What is fetched for the resolution: 30m and 1h are built from 15m (or finer), the week from days.
+  const source = storedResolution(by, resolution)
   const fromDate = useMemo(() => rangeFromDate(by, resolution, range, new Date().toISOString()), [by, resolution, range])
   const rangeDef = RANGES.find((r) => r.key === range) ?? RANGES[0]
 
@@ -101,11 +111,11 @@ export function ChartPage() {
   const ready = coverage.data !== undefined || coverage.isError
   // Price layer: stored candles plus today's live bars. The structure layer
   // brings its own candles, read with the marks, so these wait while it is on.
-  const stored = useStoredCandles(ready && !structureOn ? symbol : null, resolution, fromDate, undefined)
+  const stored = useStoredCandles(ready && !structureOn ? symbol : null, source, fromDate, undefined)
   const live = useLiveBars(ready && !structureOn && intraday && hasLive ? symbol : null, 3_000)
   const smc = useSmcLadder({
     symbol: ready && structureOn ? symbol : null,
-    timeframes: structureTimeframes(resolution),
+    timeframes: structureTimeframes(structureResolution ?? 'D'),
     fromDate,
     method: 'validPullback',
     breakOn: structure.breakOn,
@@ -122,8 +132,8 @@ export function ChartPage() {
     }
     const storedCandles = (stored.data ?? []).map((c) => ({ timeUtc: c.timestampUtc, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }))
     const liveCandles = (live.data ?? []).map((b) => ({ timeUtc: b.barStartUtc, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volumeDelta }))
-    return stitch(storedCandles, liveCandles, { symbol, resolution, range, fromDate })
-  }, [structureOn, smcData, stored.data, live.data, symbol, resolution, range, fromDate])
+    return stitch(storedCandles, liveCandles, { symbol, resolution, range, fromDate, source })
+  }, [structureOn, smcData, stored.data, live.data, symbol, resolution, range, fromDate, source])
 
   // The forming candle between polls. Each push after the bars' answer is
   // folded into the candles as they stand, so a high reached and left between
@@ -185,6 +195,10 @@ export function ChartPage() {
   }, [pulse.data, watchlist.data])
 
   const loading = structureOn ? smc.isPending : stored.isPending || (intraday && hasLive && live.isPending)
+  // The chart is fitted once per key. The live bars are cached across ranges
+  // and arrive first, so a key without the loading state fitted every new
+  // range to today's bars alone and kept that zoom when the history came.
+  const fitKey = `${symbol}|${resolution}|${range}|${loading ? 'loading' : 'loaded'}`
   const error = structureOn ? (smc.isError ? smc.error : null) : stored.isError ? stored.error : live.isError ? live.error : null
   const nothingHere = coverage.data && !RESOLUTIONS.some((r) => available(r.key))
 
@@ -206,19 +220,29 @@ export function ChartPage() {
         {/* One row of switches; on a phone it scrolls sideways rather than wrapping to three rows. */}
         <div className="charts__segs scroll-x">
         <div className="seg" role="group" aria-label="Resolution">
-          {RESOLUTIONS.map((r) => (
-            <button
-              key={r.key}
-              type="button"
-              className={`seg__btn${resolution === r.key ? ' is-active' : ''}`}
-              aria-pressed={resolution === r.key}
-              disabled={coverage.data ? !available(r.key) : false}
-              title={coverage.data && !available(r.key) ? `No ${r.label} data for this symbol` : undefined}
-              onClick={() => setResolution(r.key)}
-            >
-              {r.label}
-            </button>
-          ))}
+          {RESOLUTIONS.map((r) => {
+            const missing = !!coverage.data && !available(r.key)
+            const notForSmc = structureOn && !hasStructure(r.key)
+            return (
+              <button
+                key={r.key}
+                type="button"
+                className={`seg__btn${resolution === r.key ? ' is-active' : ''}`}
+                aria-pressed={resolution === r.key}
+                disabled={missing || notForSmc}
+                title={
+                  missing
+                    ? `No ${r.label} data for this symbol`
+                    : notForSmc
+                      ? 'SMC reads the stored 1m, 5m, 15m and daily candles; turn it off for this one'
+                      : undefined
+                }
+                onClick={() => setResolution(r.key)}
+              >
+                {r.label}
+              </button>
+            )
+          })}
         </div>
         <div className="seg" role="group" aria-label="Range">
           {RANGES.filter((r) => RANGES_FOR[resolution].includes(r.key)).map((r) => (
@@ -238,7 +262,12 @@ export function ChartPage() {
             type="button"
             className={`seg__btn${structureOn ? ' is-active' : ''}`}
             aria-pressed={structureOn}
-            title="Smart Money Concepts (SMC): swings, breaks of structure, inducements and zones"
+            disabled={!structureResolution}
+            title={
+              structureResolution
+                ? 'Smart Money Concepts (SMC): swings, breaks of structure, inducements and zones'
+                : 'SMC reads the stored 1m, 5m, 15m and daily candles, and none are stored at this resolution'
+            }
             onClick={() => setQuery('layer', structureOn ? null : 'smc')}
           >
             SMC
@@ -315,7 +344,7 @@ export function ChartPage() {
         ) : structureOn ? (
           <SmcChart data={smcData} higher={higher} layers={structure.layers} fitKey={`${symbol}|${resolution}|${range}`} />
         ) : (
-          <PriceChart candles={shown} fitKey={`${symbol}|${resolution}|${range}`} />
+          <PriceChart candles={shown} fitKey={fitKey} />
         )}
       </div>
 

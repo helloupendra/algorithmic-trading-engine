@@ -1,22 +1,35 @@
 /**
  * Markets → Chart as data: which resolutions and ranges a symbol offers, how
  * a range becomes a window of candles, how live 1-minute bars fold into the
- * stored series, and which timeframes the structure layer reads. The page
- * only renders these, so each rule is pinned by chart.test.ts rather than by
- * a screenshot of an empty chart.
+ * stored series, how 30m, 1h and weekly candles are built from the stored
+ * ones, and which timeframes the structure layer reads. The page only
+ * renders these, so each rule is pinned by chart.test.ts rather than by a
+ * screenshot of an empty chart.
  */
 
 import type { CoverageRow } from './queries'
 import type { SmcLayers } from '../components/SmcChart'
 
-export type Resolution = '1' | '5' | '15' | 'D'
+export type Resolution = '1' | '5' | '15' | '30' | '60' | 'D' | 'W'
 
 export const RESOLUTIONS: ReadonlyArray<{ key: Resolution; label: string; minutes: number | null }> = [
   { key: '1', label: '1m', minutes: 1 },
   { key: '5', label: '5m', minutes: 5 },
   { key: '15', label: '15m', minutes: 15 },
+  { key: '30', label: '30m', minutes: 30 },
+  { key: '60', label: '1h', minutes: 60 },
   { key: 'D', label: 'Day', minutes: null },
+  { key: 'W', label: 'Week', minutes: null },
 ]
+
+/** Minutes in one candle; null for the day and the week. */
+export function minutesOf(resolution: Resolution): number | null {
+  return RESOLUTIONS.find((r) => r.key === resolution)?.minutes ?? null
+}
+
+export function isIntraday(resolution: Resolution): boolean {
+  return minutesOf(resolution) != null
+}
 
 export type RangeKey = '1D' | '5D' | '1M' | '3M' | '1Y' | 'ALL'
 
@@ -39,7 +52,11 @@ export const RANGES_FOR: Record<Resolution, readonly RangeKey[]> = {
   '1': ['1D', '5D'],
   '5': ['1D', '5D', '1M'],
   '15': ['1D', '5D', '1M', '3M'],
+  '30': ['1D', '5D', '1M', '3M'],
+  // Seven candles is not a day worth charting by the hour.
+  '60': ['5D', '1M', '3M', '1Y'],
   D: ['1M', '3M', '1Y', 'ALL'],
+  W: ['1Y', 'ALL'],
 }
 
 /** One candle as the chart draws it. */
@@ -80,15 +97,32 @@ export function coverageByResolution(rows: readonly CoverageRow[] | undefined, s
   return by
 }
 
+/** What 30m and 1h candles are built from, coarsest first: each divides both, from either open. */
+const BUILT_FROM: readonly Resolution[] = ['15', '5', '1']
+
 /**
  * Whether a resolution has anything to draw. Intraday resolutions are built
  * from the live 1-minute bars too, so a symbol recording live has every one
- * of them; a day chart needs stored daily candles.
+ * of them; 30m and 1h are built from any stored intraday candles; the day and
+ * the week need stored daily candles.
  */
 export function hasResolution(by: Partial<Record<Resolution, CoverageRow[]>>, key: Resolution): boolean {
-  if (key === 'D') return (by.D?.length ?? 0) > 0
+  if (key === 'D' || key === 'W') return (by.D?.length ?? 0) > 0
   const live = (by['1'] ?? []).some((r) => r.source === 'live')
+  if (key === '30' || key === '60') return live || BUILT_FROM.some((k) => (by[k]?.length ?? 0) > 0)
   return (by[key]?.length ?? 0) > 0 || live
+}
+
+/**
+ * The stored candles a resolution is drawn from. Nothing stores 30m, 1h or
+ * weekly candles (the nightly archive writes 1, 5 and 15 minutes), so those
+ * are built in the browser: 30m and 1h from the coarsest stored intraday
+ * series the symbol has (15m, else 5m, else 1m), the week from the days.
+ */
+export function storedResolution(by: Partial<Record<Resolution, CoverageRow[]>>, resolution: Resolution): Resolution {
+  if (resolution === 'W') return 'D'
+  if (resolution !== '30' && resolution !== '60') return resolution
+  return BUILT_FROM.find((k) => (by[k] ?? []).some((r) => r.source !== 'live')) ?? '15'
 }
 
 /**
@@ -100,7 +134,8 @@ export function hasResolution(by: Partial<Record<Resolution, CoverageRow[]>>, ke
 export function rangeFromDate(by: Partial<Record<Resolution, CoverageRow[]>>, resolution: Resolution, range: RangeKey, nowIso: string): string | undefined {
   const fetchDays = RANGES.find((r) => r.key === range)?.fetchDays
   if (fetchDays == null) return undefined
-  const rows = [...(by[resolution] ?? []), ...(resolution !== 'D' ? by['1'] ?? [] : [])]
+  const stored = storedResolution(by, resolution)
+  const rows = [...(by[stored] ?? []), ...(isIntraday(resolution) ? by['1'] ?? [] : [])]
   const anchor = rows.reduce((latest, r) => (r.toUtc > latest ? r.toUtc : latest), '') || nowIso
   const d = new Date(anchor)
   d.setUTCDate(d.getUTCDate() - (fetchDays - 1))
@@ -196,39 +231,141 @@ export function rollUp(bars: readonly Candle[], minutes: number): Candle[] {
   return [...out.values()]
 }
 
+/** A symbol's session open in minutes after 00:00 UTC: MCX's 09:00 IST, and 09:15 for NSE, BSE and the rest. */
+function sessionOpenUtcMinutes(symbol: string): number {
+  return symbol.toUpperCase().startsWith('MCX:') ? 210 : 225
+}
+
+/**
+ * The start of the candle a moment falls in, counted from the session's open
+ * rather than from the UTC clock. rollUp floors to the clock, which is the
+ * server's rule for live bars and lands on the open for 1, 5 and 15 minutes
+ * (09:15 IST is 225 minutes past midnight UTC, 09:00 is 210, and 15 divides
+ * both). 30 and 60 do not: an NSE hour floored to the clock would run
+ * 09:30-10:30. So candles count from the open, as the alerts'
+ * SessionBarAggregator does: NSE's hours start 09:15, 10:15, ... 15:15 (that
+ * one cut short by the 15:30 close), its half hours 09:15, 09:45, ...; MCX's
+ * hours 09:00, 10:00, ...
+ */
+export function bucketStart(symbol: string, timeMs: number, minutes: number): number {
+  const span = minutes * 60_000
+  const open = timeMs - (timeMs % 86_400_000) + sessionOpenUtcMinutes(symbol) * 60_000
+  return open + Math.floor((timeMs - open) / span) * span
+}
+
+/** Volume summed; null only when neither side reports any (an index). */
+function addVolume(a: number | null, b: number | null): number | null {
+  return a == null && b == null ? null : (a ?? 0) + (b ?? 0)
+}
+
+/** Candles folded into one: the first open, the last close, the extremes and the summed volume. */
+function fold(candles: readonly Candle[], key: (c: Candle) => string, timeOf: (first: Candle) => string): Candle[] {
+  const out: Candle[] = []
+  let current = ''
+  for (const c of [...candles].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))) {
+    const k = key(c)
+    const last = out[out.length - 1]
+    if (!last || k !== current) {
+      out.push({ ...c, timeUtc: timeOf(c) })
+      current = k
+    } else {
+      last.high = Math.max(last.high, c.high)
+      last.low = Math.min(last.low, c.low)
+      last.close = c.close
+      last.volume = addVolume(last.volume, c.volume)
+    }
+  }
+  return out
+}
+
+/**
+ * Intraday candles folded into coarser ones that start at the session's
+ * open (bucketStart). A candle with missing minutes is built from the ones it
+ * has, and one with none is not drawn, so a feed outage shows as the gap it
+ * was rather than as a flat candle.
+ */
+export function aggregate(candles: readonly Candle[], symbol: string, minutes: number): Candle[] {
+  const start = (c: Candle) => new Date(bucketStart(symbol, Date.parse(c.timeUtc), minutes)).toISOString()
+  return fold(candles, start, start)
+}
+
+/**
+ * The IST date a candle belongs to, which names its session: NSE and BSE
+ * (09:15-15:30) and MCX (09:00 to its evening close) each run inside one IST
+ * day, the rule the strategies' session_date uses. A daily candle stamped at
+ * 00:00 IST (18:30Z the day before) is that IST day.
+ */
+export function istDate(timeUtc: string): string {
+  return new Date(Date.parse(timeUtc) + 19_800_000).toISOString().slice(0, 10)
+}
+
+/** The Monday of a candle's IST week, YYYY-MM-DD. */
+export function istWeek(timeUtc: string): string {
+  const d = new Date(`${istDate(timeUtc)}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7))
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Daily candles folded into weeks: the days an IST week traded, Monday to
+ * Friday with a holiday simply missing, the first day's open and the last
+ * day's close. A week is drawn at its first trading day. A weekend session
+ * (Muhurat trading has fallen on a Sunday) joins the week it closes.
+ */
+export function weekly(days: readonly Candle[]): Candle[] {
+  return fold(days, (c) => istWeek(c.timeUtc), (c) => c.timeUtc)
+}
+
 /**
  * The stored series with today's live bars laid after its last candle, cut to
  * the range. Stored candles end where the last archive ran; live bars beyond
- * that fill in the rest, rolled up to the chart's resolution.
+ * that fill in the rest, rolled up to the stored series' own resolution
+ * (`source`, see storedResolution) and then, for 30m and 1h, the whole series
+ * folded into candles from the session's open. Live bars reach the last
+ * candle that way, so today's hour keeps forming as the minutes arrive.
+ *
+ * The day and the week come from stored daily candles alone, as the day chart
+ * always has. A daily candle is a date, not a minute (stamped 00:00 IST, or
+ * 00:00 UTC by the option history), so the pre-open rule is not put to it:
+ * it used to be, and threw away every daily candle stamped at 00:00 UTC.
  */
 export function stitch(
   stored: readonly Candle[],
   live: readonly Candle[],
-  opts: { symbol: string; resolution: Resolution; range: RangeKey; fromDate?: string },
+  opts: { symbol: string; resolution: Resolution; range: RangeKey; fromDate?: string; source?: Resolution },
 ): Candle[] {
-  const clean = stored.filter((c) => !isPreOpen(opts.symbol, c.timeUtc))
   const sessions = RANGES.find((r) => r.key === opts.range)?.sessions ?? null
-  if (opts.resolution === 'D') {
-    const sorted = [...clean].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))
-    return sessions == null ? sorted : sorted.slice(-sessions)
+  const minutes = minutesOf(opts.resolution)
+  if (minutes == null) {
+    const days = [...stored].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))
+    if (opts.resolution === 'D') return sessions == null ? days : days.slice(-sessions)
+    // The window starts at fromDate, so a week that began before it is missing
+    // days. Strictly after: a Monday stamped 00:00 IST is 18:30Z on the
+    // Sunday, which is before the window too.
+    const from = opts.fromDate
+    const weeks = weekly(days)
+    return from ? weeks.filter((w) => istWeek(w.timeUtc) > from) : weeks
   }
-  const minutes = RESOLUTIONS.find((r) => r.key === opts.resolution)?.minutes ?? 1
-  const rolled = rollUp(live.filter((c) => !isPreOpen(opts.symbol, c.timeUtc)), minutes)
+  const clean = stored.filter((c) => !isPreOpen(opts.symbol, c.timeUtc))
+  const grain = minutesOf(opts.source ?? storedResolution({}, opts.resolution)) ?? minutes
+  const rolled = rollUp(live.filter((c) => !isPreOpen(opts.symbol, c.timeUtc)), grain)
   const storedMax = clean.reduce((m, c) => (c.timeUtc > m ? c.timeUtc : m), '')
   const from = opts.fromDate ? `${opts.fromDate}T00:00:00Z` : ''
   const merged = [...clean, ...rolled.filter((c) => c.timeUtc > storedMax)]
     .filter((c) => !from || c.timeUtc >= from)
     .sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))
-  return sessions == null ? merged : lastSessions(merged, sessions)
+  const candles = grain === minutes ? merged : aggregate(merged, opts.symbol, minutes)
+  return sessions == null ? candles : lastSessions(candles, sessions)
 }
 
 /**
  * The forming candle moved by a pushed price between two polls of the bars:
  * its close becomes the price and its high and low stretch to take it in.
  * A price past the forming candle's bucket opens the next candle (open, high,
- * low and close all at that price), by the same bucket rule as rollUp, but
- * only on the same session: a new day's first candle waits for the bars,
- * which bring its real open. Nothing changes for a day chart, a price outside
+ * low and close all at that price), counted from the session's open
+ * (bucketStart, which is rollUp's rule for 1, 5 and 15 minutes), but only on
+ * the same session: a new day's first candle waits for the bars, which bring
+ * its real open. Nothing changes for a day or week chart, a price outside
  * the regular session (outsideSession: the pre-open, the quotes after the
  * close, BSE's midnight replay), or a price older than the forming candle.
  *
@@ -242,7 +379,7 @@ export function withLiveTick(
   opts: { symbol: string; resolution: Resolution; mcxCloseUtc?: string | null },
 ): readonly Candle[] {
   const price = tick?.lastTradedPrice
-  const minutes = RESOLUTIONS.find((r) => r.key === opts.resolution)?.minutes ?? null
+  const minutes = minutesOf(opts.resolution)
   const last = candles[candles.length - 1]
   if (!tick || price == null || price <= 0 || minutes == null || !last) return candles
   const stamped = tick.exchangeTimestampUtc ? Date.parse(tick.exchangeTimestampUtc) : NaN
@@ -257,8 +394,7 @@ export function withLiveTick(
     if (price === last.close && price <= last.high && price >= last.low) return candles
     return [...candles.slice(0, -1), { ...last, close: price, high: Math.max(last.high, price), low: Math.min(last.low, price) }]
   }
-  const bucket = t - (t % span)
-  const next = new Date(bucket).toISOString()
+  const next = new Date(bucketStart(opts.symbol, t, minutes)).toISOString()
   if (next.slice(0, 10) !== last.timeUtc.slice(0, 10)) return candles
   return [...candles, { timeUtc: next, open: price, high: price, low: price, close: price, volume: null }]
 }
@@ -296,11 +432,23 @@ export const STRUCTURE_DEFAULTS: StructureSettings = {
 }
 
 /**
+ * The resolutions the structure layer reads. It reads stored candles on the
+ * server (GET /api/Smc/ladder), and nothing stores 30m, 1h or weekly ones,
+ * so on those the layer is not offered rather than drawn on nothing.
+ */
+export type StructureResolution = '1' | '5' | '15' | 'D'
+
+export function hasStructure(resolution: Resolution): resolution is StructureResolution {
+  return resolution === '1' || resolution === '5' || resolution === '15' || resolution === 'D'
+}
+
+/**
  * The timeframes the structure layer reads, highest first and the chart's
  * own last: a day's pullback is an hour's whole trend, so a minute chart
  * carries the 15m and the day above it, each read from its own closed candles.
  */
-export function structureTimeframes(resolution: Resolution): string {
-  const above: Record<Resolution, Resolution[]> = { '1': ['D', '15'], '5': ['D', '15'], '15': ['D'], D: [] }
+export function structureTimeframes(resolution: StructureResolution): string {
+  const above: Record<StructureResolution, StructureResolution[]> = { '1': ['D', '15'], '5': ['D', '15'], '15': ['D'], D: [] }
   return [...above[resolution], resolution].map((r) => (r === 'D' ? '1D' : `${r}m`)).join(',')
 }
+
