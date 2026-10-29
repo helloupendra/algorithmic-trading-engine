@@ -58,15 +58,22 @@ export function indexLabel(symbol: string): string {
 /* --- display names --------------------------------------------------------- */
 
 /**
- * The indices whose symbol spells them otherwise than people say them, by
- * the exchange's own name. Any other index is named by its symbol
- * (indexLabel): FINNIFTY, BANKEX and SENSEX are what traders call those.
+ * The indices whose symbol the rule in indexName cannot read, by the
+ * exchange's own name.
  */
 const INDEX_NAMES: Readonly<Record<string, string>> = {
-  'NSE:NIFTY50-INDEX': 'NIFTY 50',
-  'NSE:NIFTYBANK-INDEX': 'NIFTY BANK',
   'NSE:NIFTYNXT50-INDEX': 'NIFTY NEXT 50',
   'NSE:INDIAVIX-INDEX': 'INDIA VIX',
+}
+
+/**
+ * An index by the exchange's name for it: NSE writes its NIFTY family as
+ * "NIFTY 50", "NIFTY BANK", "NIFTY IT", which the symbols run together
+ * (NIFTY50, NIFTYBANK, NIFTYIT). Any other index is its symbol: FINNIFTY,
+ * MIDCPNIFTY, SENSEX and BANKEX are what traders call those.
+ */
+function indexName(symbol: string): string {
+  return INDEX_NAMES[symbol.toUpperCase()] ?? indexLabel(symbol).replace(/^NIFTY(?=[A-Z0-9])/i, 'NIFTY ')
 }
 
 const codeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '')
@@ -80,13 +87,11 @@ const codeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '')
  */
 export function instrumentName(instrument: { symbol: string; description?: string | null }): string {
   const symbol = instrument.symbol.trim()
-  const known = INDEX_NAMES[symbol.toUpperCase()]
-  if (known) return known
   if (parseOptionSymbol(symbol)) return formatContract(symbol)
   const body = symbol.includes(':') ? symbol.slice(symbol.indexOf(':') + 1) : symbol
   const description = instrument.description?.trim() ?? ''
   if (description && codeKey(description) !== codeKey(symbol) && codeKey(description) !== codeKey(body)) return description
-  if (classifySymbol(symbol) === 'Index') return indexLabel(symbol)
+  if (classifySymbol(symbol) === 'Index') return indexName(symbol)
   return body.replace(/-(EQ|BE|SM)$/i, '')
 }
 

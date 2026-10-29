@@ -57,17 +57,26 @@ describe('formatBars', () => {
 })
 
 describe('instrumentName', () => {
-  it('names the indices whose symbol spells them otherwise as the exchange does', () => {
+  it("names NSE's NIFTY family as the exchange writes it, where the symbol runs the words together", () => {
     expect(instrumentName({ symbol: 'NSE:NIFTY50-INDEX', description: 'NIFTY50-INDEX' })).toBe('NIFTY 50')
     expect(instrumentName({ symbol: 'NSE:NIFTYBANK-INDEX', description: '' })).toBe('NIFTY BANK')
+    expect(instrumentName({ symbol: 'NSE:NIFTYIT-INDEX', description: 'NIFTYIT-INDEX' })).toBe('NIFTY IT')
+    expect(instrumentName({ symbol: 'NSE:NIFTY100-INDEX' })).toBe('NIFTY 100')
+    expect(instrumentName({ symbol: 'NSE:NIFTYNXT50-INDEX' })).toBe('NIFTY NEXT 50')
     expect(instrumentName({ symbol: 'nse:indiavix-index' })).toBe('INDIA VIX')
+  })
+
+  it('names any other index by its symbol, as traders do', () => {
+    expect(instrumentName({ symbol: 'NSE:FINNIFTY-INDEX', description: 'FINNIFTY-INDEX' })).toBe('FINNIFTY')
+    expect(instrumentName({ symbol: 'NSE:MIDCPNIFTY-INDEX' })).toBe('MIDCPNIFTY')
+    expect(instrumentName({ symbol: 'BSE:SENSEX-INDEX' })).toBe('SENSEX')
   })
 
   it("takes the master's description when it is a name, and not when it is the code again", () => {
     expect(instrumentName({ symbol: 'NSE:SBIN-EQ', description: 'STATE BANK OF INDIA' })).toBe('STATE BANK OF INDIA')
     expect(instrumentName({ symbol: 'NSE:SBIN-EQ', description: 'SBIN-EQ' })).toBe('SBIN')
     expect(instrumentName({ symbol: 'BSE:BANKEX-INDEX', description: 'bse:bankex-index' })).toBe('BANKEX')
-    expect(instrumentName({ symbol: 'NSE:FINNIFTY-INDEX', description: null })).toBe('FINNIFTY')
+    expect(instrumentName({ symbol: 'NSE:NIFTYIT-INDEX', description: 'Nifty IT' })).toBe('Nifty IT')
   })
 
   it('reads an option off its symbol, as contracts are labelled elsewhere', () => {
