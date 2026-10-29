@@ -5,7 +5,7 @@
  * a test rather than by looking at a screenshot at 09:15.
  */
 
-import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainStrike } from './types'
+import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainRecordedExpiry, OptionChainStrike } from './types'
 
 /**
  * The underlyings the chain recorder captures: the picker's row. The API has
@@ -276,6 +276,19 @@ export function expiryLabel(expiryIso: string, todayIso: string): string {
   if (days < 0) return `${name} (expired)`
   if (days === 0) return `${name} (today)`
   return `${name} (+${days} ${days === 1 ? 'day' : 'days'})`
+}
+
+/**
+ * What the expiry picker adds after a slower expiry's name: "every 5 min" for
+ * one the recorder captures every few minutes, "one capture so far" for a
+ * later expiry whose second capture has not come yet. Null for the per-minute
+ * capture, which needs no mark.
+ */
+export function recordedCadence(expiry: Pick<OptionChainRecordedExpiry, 'typicalIntervalSeconds' | 'isDefault'>): string | null {
+  const seconds = expiry.typicalIntervalSeconds
+  if (seconds == null) return expiry.isDefault ? null : 'one capture so far'
+  if (seconds < 90) return null
+  return `every ${Math.round(seconds / 60)} min`
 }
 
 /** "2 s", "4 min", "3 h", "2 d". */
