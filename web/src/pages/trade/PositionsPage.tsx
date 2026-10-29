@@ -29,7 +29,7 @@ import { dayMonth, legLabel, plainNumber, strategyLabel } from '../../lib/desk'
 import type { Scope } from '../../lib/desk'
 import { formatDelta, formatIv, formatThetaPerDay, greeksTitle, thetaTone } from '../../lib/greeks'
 import { formatInrSigned, formatPrice } from '../../lib/format'
-import { ageText, groupPositions, markState, positionAccounts, totalSums } from '../../lib/openPositions'
+import { ageText, groupPositions, markState, positionAccounts, positionsCsv, positionsCsvName, totalSums } from '../../lib/openPositions'
 import type { PositionAccount, PositionRun } from '../../lib/openPositions'
 import { useClosePositions, useMarketSession, useOpenPositions, useSetCarryForward } from '../../lib/queries'
 import { livePoll, useLiveConnection, useLivePrices } from '../../lib/live'
@@ -37,6 +37,7 @@ import { answerAsOf } from '../../lib/asOf'
 import { withLiveMarks } from '../../lib/liveMarks'
 import type { OpenPosition } from '../../lib/types'
 import { InlineError } from '../../components/ui'
+import { ExportCsvButton } from '../../components/ExportCsvButton'
 import { Chip, Money, Swatch, Waiting } from '../desk/parts'
 import { useNow } from '../desk/data'
 import '../desk/desk.css'
@@ -316,6 +317,14 @@ export function PositionsPage() {
             {connection === 'connected' ? 'marks live · legs as of ' : 'marks as of '}
             {new Date(open.data.asOfUtc).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
           </span>
+        )}
+        {open.data && (
+          <ExportCsvButton
+            fileName={positionsCsvName(shown === 'all' ? null : (accounts.find((a) => a.id === shown)?.name ?? null), open.data.asOfUtc)}
+            csv={() => positionsCsv(groups)}
+            disabled={totals.legs === 0}
+            title="Every open leg listed here as a CSV file, at the marks on screen"
+          />
         )}
       </div>
 

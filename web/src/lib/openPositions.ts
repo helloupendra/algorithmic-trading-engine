@@ -12,6 +12,7 @@
  *   closed market's last quote is still yesterday's price.
  */
 
+import { csvFileName, fileStamp, istIsoTime, toCsv } from './csv'
 import { runUserLabel } from './runHistory'
 import type { OpenPosition } from './types'
 
@@ -127,4 +128,45 @@ export function positionAccounts(positions: readonly OpenPosition[]): Array<{ id
   const seen = new Map<number, string>()
   for (const p of positions) if (!seen.has(p.userId)) seen.set(p.userId, runUserLabel(p.userName, p.userId))
   return [...seen.entries()].sort(([a], [b]) => a - b).map(([id, name]) => ({ id, name }))
+}
+
+/**
+ * The legs as a CSV, in the page's order (account, then book, then leg), a
+ * line per leg with every figure its row carries: the mark and its time, the
+ * open P&L before exit charges, the leg's own stop and target, its greeks
+ * and its carry tick. A leg with no mark has an empty P&L, never 0.
+ */
+export function positionsCsv(accounts: readonly PositionAccount[]): string {
+  const legs = accounts.flatMap((a) => a.runs.flatMap((run) => run.positions.map((p) => ({ account: a.name, p }))))
+  return toCsv(legs, [
+    { header: 'Account', value: (l) => l.account },
+    { header: 'Book', value: (l) => (l.p.isManualBook ? 'Manual book' : l.p.strategyName) },
+    { header: 'Run', value: (l) => l.p.runId },
+    { header: 'Underlying', value: (l) => l.p.underlying },
+    { header: 'Contract', value: (l) => l.p.label },
+    { header: 'Symbol', value: (l) => l.p.symbol },
+    { header: 'Expiry', value: (l) => l.p.expiryDate },
+    { header: 'Side', value: (l) => (l.p.direction === 'SHORT' ? 'Short' : 'Long') },
+    { header: 'Lots', value: (l) => l.p.lots },
+    { header: 'Lot size', value: (l) => l.p.lotSize },
+    { header: 'Quantity', value: (l) => l.p.quantity },
+    { header: 'Entry', value: (l) => l.p.entryPrice },
+    { header: 'Mark', value: (l) => l.p.markPrice },
+    { header: 'Mark time (IST)', value: (l) => istIsoTime(l.p.markUtc) },
+    { header: 'Open P&L (₹)', value: (l) => l.p.unrealizedPnl },
+    { header: 'Stop loss', value: (l) => l.p.stopLossPrice },
+    { header: 'Target', value: (l) => l.p.targetPrice },
+    { header: 'Delta', value: (l) => l.p.greeks?.delta },
+    { header: 'IV %', value: (l) => l.p.greeks?.ivPercent },
+    { header: 'Theta (₹/day)', value: (l) => l.p.greeks?.thetaRupeesPerDay },
+    { header: 'Vega (₹ per IV point)', value: (l) => l.p.greeks?.vegaRupeesPerIvPoint },
+    { header: 'Carry forward', value: (l) => l.p.carryForward },
+    { header: 'Carried from run', value: (l) => l.p.carriedFromRunId },
+    { header: 'Opened (IST)', value: (l) => istIsoTime(l.p.openedUtc) },
+  ])
+}
+
+/** "positions-coderforchange-2026-10-29-1432.csv": the account when one is picked, and when the legs were read. */
+export function positionsCsvName(account: string | null, asOfUtc: string | null | undefined): string {
+  return csvFileName('positions', account, fileStamp(asOfUtc))
 }

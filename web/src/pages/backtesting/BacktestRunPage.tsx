@@ -25,9 +25,10 @@ import {
   formatPrice,
 } from '../../lib/format'
 import { formatContract, resolutionLabel } from '../../lib/symbols'
-import { positionRowClass, positionValues } from '../../lib/positions'
+import { backtestPositionsCsv, backtestPositionsCsvName, positionRowClass, positionValues } from '../../lib/positions'
 import { describeRiskRules, effectiveRisk, isRiskEmpty } from '../../lib/risk'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
+import { ExportCsvButton } from '../../components/ExportCsvButton'
 import { IconActivity, IconFlask, IconLayers, IconPlay, IconStop, IconTrash } from '../../components/icons'
 import type { BacktestPosition, BacktestRunView } from '../../lib/types'
 import {
@@ -404,11 +405,19 @@ export function BacktestRunPage() {
               </>
             }
             actions={
-              <span className="muted" style={{ fontSize: 12 }}>
-                {formatNumber(view.positions.length)} rows · {openCount} open · lot size {view.lotSize}
-                {view.lotSizeSource !== 'master' ? ` (${view.lotSizeSource})` : ''}
-                {view.eodSquareOffIst ? ` · EOD square-off ${view.eodSquareOffIst} IST` : ' · no EOD square-off'}
-              </span>
+              <>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {formatNumber(view.positions.length)} rows · {openCount} open · lot size {view.lotSize}
+                  {view.lotSizeSource !== 'master' ? ` (${view.lotSizeSource})` : ''}
+                  {view.eodSquareOffIst ? ` · EOD square-off ${view.eodSquareOffIst} IST` : ' · no EOD square-off'}
+                </span>
+                <ExportCsvButton
+                  fileName={backtestPositionsCsvName(view)}
+                  csv={() => backtestPositionsCsv(view.positions)}
+                  disabled={view.positions.length === 0}
+                  title="Every position of this run as a CSV file"
+                />
+              </>
             }
           >
             {view.positions.length > 0 ? (

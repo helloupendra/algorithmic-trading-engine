@@ -27,10 +27,13 @@ import { useLivePrices } from '../../../lib/live'
 import { answerAsOf } from '../../../lib/asOf'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
 import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
+import { ExportCsvButton } from '../../../components/ExportCsvButton'
 import {
   BUILD_UP,
   arrowPercent,
   capturedExpiry,
+  chainCsv,
+  chainCsvName,
   columnPeak,
   compactIndian,
   compactSigned,
@@ -802,6 +805,12 @@ export function ChainView({ underlying }: { underlying: string }) {
         >
           Per lot{header?.lotSize ? <span className="faint"> ×{header.lotSize}</span> : null}
         </Toggle>
+        <ExportCsvButton
+          fileName={data ? chainCsvName(data) : 'chain.csv'}
+          csv={() => (data ? chainCsv(data) : '')}
+          disabled={!data || data.strikes.length === 0}
+          title="Every strike of this chain as a CSV file, not only the ones shown, at the prices on screen"
+        />
 
         <span className="oc-toolbar__spacer" />
 

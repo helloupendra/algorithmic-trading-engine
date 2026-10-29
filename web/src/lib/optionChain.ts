@@ -6,6 +6,8 @@
  */
 
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainStrike } from './types'
+import { csvFileName, fileStamp, istIsoTime, toCsv } from './csv'
+import type { CsvColumn } from './csv'
 
 /**
  * The underlyings the chain recorder captures: the picker's row. The API has
@@ -545,3 +547,60 @@ export function applyTicksToChain(chain: OptionChain, ticks: readonly PushedTick
   }
 }
 
+// --- export ---------------------------------------------------------------------
+
+/** One side's columns in the CSV, the call's and the put's in the same order. */
+function legColumns(side: 'Call' | 'Put', legOf: (s: OptionChainStrike) => OptionChainLeg | null): CsvColumn<OptionChainStrike>[] {
+  // A field of the side's leg, empty where the strike has no such leg.
+  const of = <K extends keyof OptionChainLeg>(key: K) => (s: OptionChainStrike) => legOf(s)?.[key]
+  const buildUp = (s: OptionChainStrike) => {
+    const key = legOf(s)?.buildUp
+    return key ? (BUILD_UP[key]?.label ?? key) : undefined
+  }
+  return [
+    { header: `${side} symbol`, value: of('symbol') },
+    { header: `${side} LTP`, value: of('lastTradedPrice') },
+    { header: `${side} change %`, value: of('priceChangePercent') },
+    { header: `${side} bid`, value: of('bidPrice') },
+    { header: `${side} ask`, value: of('askPrice') },
+    { header: `${side} volume`, value: of('volume') },
+    { header: `${side} OI`, value: of('openInterest') },
+    { header: `${side} OI change`, value: of('openInterestChange') },
+    { header: `${side} OI change %`, value: of('openInterestChangePercent') },
+    { header: `${side} IV %`, value: of('impliedVolatility') },
+    { header: `${side} delta`, value: of('delta') },
+    { header: `${side} gamma`, value: of('gamma') },
+    { header: `${side} theta`, value: of('theta') },
+    { header: `${side} vega`, value: of('vega') },
+    { header: `${side} build-up`, value: buildUp },
+    { header: `${side} quote time (IST)`, value: (s) => istIsoTime(legOf(s)?.quoteUpdatedUtc) },
+  ]
+}
+
+/**
+ * The chain as a CSV: a line per strike, every strike the answer holds (the
+ * table shows a window of them around the money), the strike and its PCR
+ * first, then the call's columns and the put's in the same order. Prices per
+ * unit whatever the table's per-lot toggle, OI and volume in contracts, and
+ * the moment the chain describes (now, or the replay clock) on every line, so
+ * two exports pasted together still say which is which.
+ */
+export function chainCsv(chain: OptionChain): string {
+  const expiry = capturedExpiry(chain.expiryDate) ?? ''
+  const asOf = istIsoTime(chain.asOfUtc)
+  return toCsv(chain.strikes, [
+    { header: 'Underlying', value: () => chain.underlying },
+    { header: 'Expiry', value: () => expiry },
+    { header: 'As of (IST)', value: () => asOf },
+    { header: 'Strike', value: (s) => s.strikePrice },
+    { header: 'ATM', value: (s) => (s.isAtTheMoney ? 'ATM' : '') },
+    { header: 'PCR', value: (s) => s.putCallRatio },
+    ...legColumns('Call', (s) => s.call),
+    ...legColumns('Put', (s) => s.put),
+  ])
+}
+
+/** "NIFTY-chain-2026-11-04-2026-10-29-1100.csv": the underlying, the expiry and the moment. */
+export function chainCsvName(chain: Pick<OptionChain, 'underlying' | 'expiryDate' | 'asOfUtc'>): string {
+  return csvFileName(chain.underlying, 'chain', capturedExpiry(chain.expiryDate), fileStamp(chain.asOfUtc))
+}
