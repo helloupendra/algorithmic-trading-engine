@@ -14,6 +14,7 @@
  */
 
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   useAddToMyWatchlist,
   useMyWatchlistLive,
@@ -25,6 +26,7 @@ import { formatAge, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
 import { MarketPulse } from '../../components/MarketPulse'
+import { alertLink } from '../../lib/levelAlerts'
 
 function change(item: MyWatchlistItem): { text: string; cls: string } {
   if (item.lastTradedPrice == null || item.close == null || item.close === 0) {
@@ -157,14 +159,23 @@ export function WatchlistPage() {
                             )}
                           </td>
                           <td>
-                            <button
-                              type="button"
-                              className="btn btn--ghost btn--sm"
-                              disabled={remove.isPending}
-                              onClick={() => remove.mutate(item.symbol)}
-                            >
-                              Remove
-                            </button>
+                            <span className="chip-row">
+                              <Link
+                                className="btn btn--ghost btn--sm"
+                                to={alertLink('price', item.symbol, item.lastTradedPrice)}
+                                title={`Be told when ${item.symbol} crosses a level (Markets → Alerts)`}
+                              >
+                                Alert
+                              </Link>
+                              <button
+                                type="button"
+                                className="btn btn--ghost btn--sm"
+                                disabled={remove.isPending}
+                                onClick={() => remove.mutate(item.symbol)}
+                              >
+                                Remove
+                              </button>
+                            </span>
                           </td>
                         </tr>
                       )

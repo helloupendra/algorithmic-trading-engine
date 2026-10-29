@@ -110,7 +110,7 @@ describe('navFor', () => {
 
   it('gives an admin one page per tab, the backtests aside', () => {
     const nav = navFor(admin)
-    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Commodity', 'Chart', 'Option chain', 'Strategy builder', 'Movers', 'Factors', 'News', 'Patterns'])
+    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Commodity', 'Chart', 'Option chain', 'Strategy builder', 'Movers', 'Factors', 'News', 'Alerts', 'Patterns'])
     expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Compare', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
@@ -136,7 +136,7 @@ describe('navFor', () => {
   it("shows a trader their pages when the grants are not known", () => {
     const nav = navFor(traderUnknown)
     expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Portfolio', 'Research'])
-    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Chart', 'Option chain', 'Strategy builder', 'Movers', 'Factors', 'News'])
+    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Chart', 'Option chain', 'Strategy builder', 'Movers', 'Factors', 'News', 'Alerts'])
     expect(pagesOf(nav, 'trade')).toEqual(['Library', 'History', 'Positions', 'Orders', 'Manual order'])
     expect(pagesOf(nav, 'research')).toEqual(['Filter lab'])
   })
@@ -157,7 +157,7 @@ describe('navFor', () => {
     const adminUrls = new Set(allUrls(navFor(admin)))
     const shared = allUrls(navFor(traderUnknown)).filter((u) => adminUrls.has(u))
     expect(shared).toEqual(['/desk', '/markets', '/markets/chart', '/markets/chain', '/markets/builder', '/markets/movers', '/markets/factors',
-      '/markets/news', '/trade/library', '/trade/history', '/trade/positions', '/trade/orders', '/trade/ticket', '/portfolio', '/research/lab'])
+      '/markets/news', '/markets/alerts', '/trade/library', '/trade/history', '/trade/positions', '/trade/orders', '/trade/ticket', '/portfolio', '/research/lab'])
   })
 })
 

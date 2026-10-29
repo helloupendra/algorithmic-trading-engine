@@ -698,6 +698,11 @@ describe('deskEventKeys', () => {
     expect(deskEventKeys({ kind: 'position', runId: 7 })).toEqual([...deskEventKeys({ kind: 'carry', runId: 7 }), ['strategy', 'track-record']])
   })
 
+  it("re-reads the level alerts, the top bar's count among them, when one fires", () => {
+    expect(deskEventKeys({ kind: 'alert', runId: null })).toEqual([['level-alerts']])
+    expect(allEventedKeys()).toContainEqual(['level-alerts'])
+  })
+
   it("reads every run's views when the event names none, and nothing for a kind it does not know", () => {
     expect(deskEventKeys({ kind: 'fill', runId: null })).toContainEqual(['strategy', 'live'])
     expect(deskEventKeys({ kind: 'fill', runId: null })).toContainEqual(['strategy', 'orders'])

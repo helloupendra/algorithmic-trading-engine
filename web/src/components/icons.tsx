@@ -327,3 +327,11 @@ export const IconKeyboard = (p: SVGProps<SVGSVGElement>) => (
     <path d="M7 10.5h.01M10.3 10.5h.01M13.7 10.5h.01M17 10.5h.01M8 14h8" />
   </Icon>
 )
+
+/** A bell: a level alert has fired (the top bar's count). */
+export const IconBell = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14l1.5-2z" />
+    <path d="M10 20.5a2 2 0 0 0 4 0" />
+  </Icon>
+)

@@ -22,6 +22,7 @@ import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { PatternAlertsPage } from './pages/data/PatternAlertsPage'
+import { LevelAlertsPage } from './pages/markets/alerts/LevelAlertsPage'
 import { MoversPage } from './pages/markets/movers/MoversPage'
 import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { SystemLogPage } from './pages/system/log/SystemLogPage'
@@ -137,6 +138,8 @@ export default function App() {
                 <Route path="/markets/movers" element={<MoversPage />} />
                 <Route path="/markets/factors" element={<MarketFactorsPage />} />
                 <Route path="/markets/news" element={<MarketNewsPage />} />
+                {/* Each user's own price and PCR level alerts; the API answers for the caller alone. */}
+                <Route path="/markets/alerts" element={<LevelAlertsPage />} />
 
                 {/* Trade. A trader deploys from the library and follows runs in History. */}
                 <Route

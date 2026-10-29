@@ -1,7 +1,7 @@
 /**
  * The top bar's status items: the IST clock, the market sessions, whether
- * prices are being pushed, and for an operator the desk's health, Sentinel's
- * live incidents and the kill switch.
+ * prices are being pushed, the caller's new level alerts, and for an
+ * operator the desk's health, Sentinel's live incidents and the kill switch.
  *
  * Every item says only what it knows. A question not yet answered renders
  * nothing rather than a comfortable default: an unknown kill switch is not
@@ -39,9 +39,12 @@ import {
 import type { ConnectorState, Pulse } from '../../lib/pulse'
 import type { IngestorStatus, MarketSessionInfo } from '../../lib/types'
 import { useMarketClock } from '../../lib/marketClock'
+import { accessFor, allows } from '../../lib/modules'
+import { LEVEL_ALERTS_PATH, alertsBadge } from '../../lib/levelAlerts'
+import { useLevelAlertSummary } from '../../lib/levelAlertQueries'
 import { severityTone, silenceNote } from '../../lib/incidents'
 import { formatDateTime } from '../../lib/format'
-import { IconPower, IconShield, IconWarning, IconX } from '../icons'
+import { IconBell, IconPower, IconShield, IconWarning, IconX } from '../icons'
 import { InlineError } from '../ui'
 import { useDialogChrome } from '../../pages/strategies/shared'
 import { useDismiss } from './useDismiss'
@@ -265,6 +268,23 @@ function IncidentsItem() {
 }
 
 /**
+ * The caller's own level alerts that fired since they last looked, as a bell
+ * and a count, opening the page that lists them. Nothing while nothing is
+ * new, and nothing while the count is unknown: an unread count is not 0.
+ */
+function LevelAlertsItem() {
+  const summary = useLevelAlertSummary()
+  const badge = alertsBadge(summary.data)
+  if (!badge) return null
+  return (
+    <Link to={LEVEL_ALERTS_PATH} className="st st--badge st--alert" title={badge.title} aria-label={`Level alerts: ${badge.title}`}>
+      <IconBell aria-hidden="true" />
+      <span className="st__label">{badge.count}</span>
+    </Link>
+  )
+}
+
+/**
  * The kill switch. Operators see it always and can pull it from here, giving
  * the same reason the Risk page asks for; releasing it stays on the Risk page,
  * with the limits and the positions. A trader sees it only when pulled,
@@ -391,7 +411,9 @@ function KillSwitchDialog({ onClose }: { onClose: () => void }) {
 }
 
 export function StatusItems() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
+  // The page and its API are the market-data grant's; the API checks it again.
+  const levelAlerts = allows(accessFor(user), 'market-data')
   const backend = useBackendStatus()
   const nseSession = useMarketSession()
   const mcxSession = useMarketSession('MCX', 'COM')
@@ -434,6 +456,7 @@ export function StatusItems() {
       ))}
       {!down && <LiveItem />}
       {isAdmin && <HealthItem backend={backend} nse={nse} mcx={mcx} heartbeats={heartbeats} />}
+      {levelAlerts && !down && <LevelAlertsItem />}
       {isAdmin && !down && <IncidentsItem />}
       {!down && <KillSwitchItem isAdmin={isAdmin} />}
     </div>

@@ -64,6 +64,7 @@ import { OptionChainAnalysis } from './OptionChainAnalysis'
 import { ReplayClockControl } from './ReplayClock'
 import { useReplayClock } from './useReplayClock'
 import { formatInrSigned } from '../../../lib/format'
+import { alertLink } from '../../../lib/levelAlerts'
 
 // --- columns ----------------------------------------------------------------------
 
@@ -828,6 +829,13 @@ export function ChainView({ underlying }: { underlying: string }) {
           disabled={!data || data.strikes.length === 0}
           title="Every strike of this chain as a CSV file, not only the ones shown, at the prices on screen"
         />
+        <Link
+          className="btn btn--ghost btn--sm"
+          to={alertLink('pcr', underlying, header?.putCallRatio)}
+          title="Be told when this chain's PCR goes above or below a level (Markets → Alerts)"
+        >
+          Alert on PCR
+        </Link>
 
         <span className="oc-toolbar__spacer" />
 

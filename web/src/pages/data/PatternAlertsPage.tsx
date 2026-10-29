@@ -1132,7 +1132,7 @@ function GuidePanel({ catalog }: { catalog: PatternCatalog }) {
       <p className="small-note muted" style={{ maxWidth: '84ch' }}>
         Chart patterns such as head and shoulders, double tops and triangles are not detected yet: they span dozens of
         candles and need swing highs and lows found first. Indicator alerts (RSI, EMA, Supertrend, VWAP) are in their
-        own section above; a breakout above a price level of your choosing is not built yet.
+        own section above; a price or PCR crossing a level of your choosing is a <Link to="/markets/alerts">level alert</Link>.
       </p>
     </Panel>
   )

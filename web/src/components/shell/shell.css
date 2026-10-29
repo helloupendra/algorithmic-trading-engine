@@ -179,6 +179,8 @@ a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
 .st--badge svg { width: 11px; height: 11px; }
 .st--badge.st--warn { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .st--badge.st--neg { border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
+/* A level alert the user asked for has fired: news, not a fault. */
+.st--badge.st--alert { color: var(--brand); border-color: var(--brand-line); }
 
 /* The kill switch pulled is the one state the whole desk must see. */
 .st--halted {

@@ -1,0 +1,102 @@
+/* Level alerts page. Built from the shared vocabulary (panel, table, badge,
+   field, seg, coverage-chip); only what that vocabulary lacks lives here. */
+
+.la-editor__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+
+.la-editor__row:first-child { margin-top: 0; }
+
+/* The symbol search wants the room: a contract name is long. */
+.la-editor__target,
+.la-editor__note { grid-column: span 2; }
+
+.la-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.la-rearm { max-width: 90px; }
+
+/* A field stacks its children full width; a two-button toggle is not a text box. */
+.la-editor .seg { align-self: flex-start; }
+
+.la-use { margin-left: 6px; }
+
+.la-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.la-checks .coverage-chip { cursor: pointer; }
+
+.la-checks .coverage-chip:has(input:checked) {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--text);
+}
+
+.la-preview {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  font-size: 13px;
+}
+
+.la-preview__note {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.la-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+td .la-actions { margin-top: 0; }
+
+.la-rule {
+  white-space: normal;
+  min-width: 200px;
+}
+
+.la-note { font-style: italic; }
+
+.la-delivery {
+  white-space: normal;
+  max-width: 240px;
+}
+
+/* Fired since the page was last looked at: marked for this visit, though already counted seen. */
+.la-fresh td { background: var(--brand-soft); }
+
+.la-guide {
+  margin: 0;
+  padding-left: 18px;
+  max-width: 84ch;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.la-guide li + li { margin-top: 4px; }
+
+@media (max-width: 760px) {
+  .la-editor__target,
+  .la-editor__note { grid-column: auto; }
+  .la-rule { min-width: 0; }
+  .la-delivery { max-width: none; }
+}

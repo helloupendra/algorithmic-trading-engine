@@ -206,6 +206,14 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         pages: [{ label: 'News', to: '/markets/news', keywords: ['headlines'] }],
       },
       {
+        // Each user's own levels: "NIFTY crosses 24,800", "PCR above 1.3".
+        key: 'alerts',
+        label: 'Alerts',
+        home: '/markets/alerts',
+        requires: 'market-data',
+        pages: [{ label: 'Alerts', to: '/markets/alerts', keywords: ['level', 'price alert', 'pcr', 'crosses', 'breakout', 'notify'] }],
+      },
+      {
         key: 'patterns',
         label: 'Patterns',
         home: '/markets/patterns',

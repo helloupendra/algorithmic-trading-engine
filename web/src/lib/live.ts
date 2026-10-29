@@ -93,7 +93,7 @@ export interface LiveTick {
   receivedAtMs: number
 }
 
-export type DeskEventKind = 'order' | 'fill' | 'run' | 'risk' | 'position' | 'carry'
+export type DeskEventKind = 'order' | 'fill' | 'run' | 'risk' | 'position' | 'carry' | 'alert'
 
 /** Something happened to a run or a leg; delivered to its owner and to admins. */
 export interface LiveDeskEvent {
@@ -200,7 +200,7 @@ export function normalizeTick(raw: unknown, receivedAtMs: number, previous?: Liv
   }
 }
 
-const KINDS: readonly DeskEventKind[] = ['order', 'fill', 'run', 'risk', 'position', 'carry']
+const KINDS: readonly DeskEventKind[] = ['order', 'fill', 'run', 'risk', 'position', 'carry', 'alert']
 
 function normalizeEvent(raw: unknown): LiveDeskEvent | null {
   if (!raw || typeof raw !== 'object') return null
@@ -241,6 +241,8 @@ function normalizeEvent(raw: unknown): LiveDeskEvent | null {
  *   the same leg with its Carry tick, the run lists, whose open-leg counts
  *   and realized P&L changed with it, and the exposure. A settlement is
  *   realized P&L, so the track records too.
+ * - alert (a level alert fired; no run): the level alerts, the top bar's
+ *   count among them.
  *
  * The run lists and the exposure are re-priced from the open legs between
  * answers (liveMarks.liveOpenPnl), so whatever moves one moves both: a leg
@@ -266,6 +268,8 @@ export function deskEventKeys(event: Pick<LiveDeskEvent, 'kind' | 'runId'>): Que
       return [...legs, live, ...lists, records]
     case 'carry':
       return [...legs, live, ...lists]
+    case 'alert':
+      return [['level-alerts']]
     default:
       return []
   }
