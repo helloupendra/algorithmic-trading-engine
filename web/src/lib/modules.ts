@@ -164,6 +164,22 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         ],
       },
       {
+        // A multi-leg position read off the chain before it is entered:
+        // payoff, breakevens, max profit and loss, greeks. Analysis only,
+        // so it needs the chain's grant and nothing more.
+        key: 'builder',
+        label: 'Strategy builder',
+        home: '/markets/builder',
+        requires: 'market-data',
+        pages: [
+          {
+            label: 'Strategy builder',
+            to: '/markets/builder',
+            keywords: ['payoff', 'breakeven', 'max loss', 'straddle', 'strangle', 'iron condor', 'spread', 'what-if', 'option strategy'],
+          },
+        ],
+      },
+      {
         key: 'movers',
         label: 'Movers & breadth',
         home: '/markets/movers',

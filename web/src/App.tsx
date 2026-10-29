@@ -42,6 +42,7 @@ import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
 import { AnalysisPage } from './pages/analysis/AnalysisPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
 import { OptionChainPage } from './pages/markets/chain/OptionChainPage'
+import { StrategyBuilderPage } from './pages/markets/builder/StrategyBuilderPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
@@ -129,6 +130,8 @@ export default function App() {
                 <Route path="/markets/chain" element={<OptionChainPage view="chain" />} />
                 <Route path="/markets/chain/oi" element={<OptionChainPage view="oi" />} />
                 <Route path="/markets/chain/levels" element={<OptionChainPage view="levels" />} />
+                {/* A position checked against the chain before it is entered: analysis only, no orders. */}
+                <Route path="/markets/builder" element={<StrategyBuilderPage />} />
                 <Route path="/markets/movers" element={<MoversPage />} />
                 <Route path="/markets/factors" element={<MarketFactorsPage />} />
                 <Route path="/markets/news" element={<MarketNewsPage />} />

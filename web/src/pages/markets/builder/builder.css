@@ -1,0 +1,240 @@
+/* Markets → Strategy builder. The row of underlyings over one rule, the
+   chain's meta and freshness lines, the readings, then the chart beside the
+   chain to add from, with the legs under the chart. On a laptop the chart
+   sits above the fold; under 1100px everything is one column, and on a
+   phone the legs become cards so nothing scrolls sideways.
+
+   Every rule is under .sb: styles.css is imported after the pages, so a
+   rule here with the same weight as .table td or .field__input--sm (whose
+   150px min-width would set every input's width) loses to it. */
+
+/* Closer than the console's 16px: the chart is meant to be above the fold on a laptop. */
+.page.sb > * + * { margin-top: 12px; }
+.page.sb > .oc-fresh { margin-top: 4px; }
+
+.sb .sb-head { border-bottom: 1px solid var(--line); }
+/* Eight underlyings are wider than a phone: the row scrolls on its own, the page never does. */
+.sb .sb-unds {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 3px 0 6px;
+}
+.sb .sb-unds::-webkit-scrollbar { display: none; }
+.sb .sb-unds button { flex: 0 0 auto; }
+
+.sb .sb-meta { margin: 0; font-size: var(--fs); color: var(--text-2); }
+.sb .sb-meta b { color: var(--text); font-weight: 650; }
+
+/* The readings: five in a row on a desk screen, smaller than the console's
+   default tile so the chart under them stays above the fold. */
+.sb .sb-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.sb .sb-stats .stat { padding: 10px 12px; }
+.sb .sb-stats .stat__value { font-size: 18px; }
+.sb .sb-stats__long { font-size: 14px; }
+@media (max-width: 1100px) {
+  .sb .sb-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .sb .sb-stats { gap: 8px; }
+  .sb .sb-stats > :last-child { grid-column: 1 / -1; }
+}
+
+.sb .sb-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  /* The picker spans both rows; its spare height goes under the legs, never between them and the chart. */
+  grid-template-rows: auto 1fr;
+  grid-template-areas: 'chart pick' 'legs pick';
+  gap: 12px;
+  align-items: start;
+}
+.sb .sb-chart-panel { grid-area: chart; min-width: 0; }
+.sb .sb-pick-panel { grid-area: pick; min-width: 0; }
+.sb .sb-legs-panel { grid-area: legs; min-width: 0; }
+@media (max-width: 1100px) {
+  .sb .sb-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: 'chart' 'legs' 'pick'; }
+}
+@media (max-width: 760px) {
+  .sb .sb-main > .panel { padding: 12px; }
+}
+
+.sb .sb-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.sb .sb-legend { margin-bottom: 4px; align-items: center; }
+
+/* The legend's marks are the chart's own: the expiry line's two colours, the dashed model line, the what-if point. */
+.sb .sb-swatch { display: inline-block; width: 14px; }
+.sb .sb-swatch--expiry { height: 2px; background: linear-gradient(90deg, var(--pos) 50%, var(--neg) 50%); }
+.sb .sb-swatch--before { height: 0; border-top: 2px dashed var(--brand-hi); }
+.sb .sb-swatch--point { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); }
+
+/* --- the chart ------------------------------------------------------------------- */
+.sb .sb-chart { position: relative; outline: none; touch-action: pan-y; }
+.sb .sb-chart:focus-visible { box-shadow: 0 0 0 2px var(--brand-line); border-radius: var(--radius-sm); }
+.sb .sb-chart svg { display: block; overflow: visible; }
+.sb .sb-chart__zero { stroke: var(--line-strong); stroke-width: 1; }
+.sb .sb-chart__wash--pos { fill: var(--pos-soft); }
+.sb .sb-chart__wash--neg { fill: var(--neg-soft); }
+.sb .sb-chart__expiry { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.sb .sb-chart__expiry--pos { stroke: var(--pos); }
+.sb .sb-chart__expiry--neg { stroke: var(--neg); }
+/* The model's line, dashed because it is a projection and not the payoff. */
+.sb .sb-chart__before { fill: none; stroke: var(--brand-hi); stroke-width: 1.6; stroke-dasharray: 5 4; stroke-linejoin: round; }
+.sb .sb-chart__spot { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 2 3; }
+.sb .sb-chart__be { fill: var(--bg0); stroke: var(--text-2); stroke-width: 1.5; }
+.sb .sb-chart__whatif { fill: var(--brand); stroke: var(--bg0); stroke-width: 2; }
+.sb .sb-chart__cursor { stroke: var(--text-3); stroke-width: 1; pointer-events: none; }
+.sb .sb-chart__tip {
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+  min-width: 170px;
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  pointer-events: none;
+}
+.sb .sb-chart__row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+
+/* --- what-if ---------------------------------------------------------------------- */
+.sb .sb-whatif {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 8px 18px;
+  align-items: end;
+  margin-top: 10px;
+}
+.sb .sb-slider { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sb .sb-slider__head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sb .sb-slider__value { font-size: var(--fs-s); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sb .sb-slider input { width: 100%; margin: 0; accent-color: var(--brand); }
+.sb .sb-whatif__read { margin: 8px 0 0; font-size: var(--fs); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .sb .sb-whatif { grid-template-columns: minmax(0, 1fr); }
+  .sb .sb-whatif__reset { justify-self: start; }
+}
+
+.sb .sb-greeks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.sb .sb-greek { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--fs-s); }
+.sb .sb-greek__value { font-size: 15px; font-weight: 650; }
+@media (max-width: 560px) {
+  .sb .sb-greeks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* --- the chain to add from ---------------------------------------------------------- */
+.sb .sb-pick-wrap { max-height: 600px; overflow-y: auto; }
+.sb .sb-pick th,
+.sb .sb-pick td { padding: 4px 5px; }
+.sb .sb-pick__atm td { background: var(--brand-soft); }
+.sb .sb-pick__strike { font-weight: 650; }
+.sb .sb-pick__acts { display: inline-flex; gap: 3px; }
+.sb .sb-pick__btn {
+  width: 25px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.sb .sb-pick__btn--buy { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
+.sb .sb-pick__btn--sell { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 40%, transparent); }
+.sb .sb-pick__btn--buy:hover:not(:disabled) { background: var(--pos-soft); }
+.sb .sb-pick__btn--sell:hover:not(:disabled) { background: var(--neg-soft); }
+.sb .sb-pick__btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* --- the legs ----------------------------------------------------------------------- */
+.sb .sb-legs td { vertical-align: top; }
+.sb .sb-legs__contract { white-space: nowrap; }
+.sb .sb-legs__contract .oc-seg { margin-left: 6px; vertical-align: middle; }
+.sb .sb-strike { width: 108px; min-width: 0; }
+.sb .sb-num { width: 84px; min-width: 0; text-align: right; }
+.sb .sb-num--lots { width: 56px; }
+.sb .sb-num[aria-invalid='true'] { border-color: var(--warn); }
+.sb .sb-units { display: block; margin-top: 2px; font-size: var(--fs-xs); }
+.sb .sb-link {
+  display: block;
+  margin: 2px 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--brand-hi);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.sb .sb-link:disabled { color: var(--text-3); cursor: default; }
+.sb .sb-side {
+  min-width: 50px;
+  padding: 4px 8px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.sb .sb-side--buy { color: var(--pos); background: var(--pos-soft); border-color: color-mix(in srgb, var(--pos) 45%, transparent); }
+.sb .sb-side--sell { color: var(--neg); background: var(--neg-soft); border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
+
+.sb .sb-notes { max-width: 960px; }
+
+/* A phone: each leg is a card of three rows (side, contract, remove; lots
+   and entry; market, IV and premium), each value under its own label. */
+@media (max-width: 760px) {
+  .sb .field__input { font-size: 16px; }
+  .sb .sb-legs,
+  .sb .sb-legs tbody { display: block; }
+  .sb .sb-legs thead { display: none; }
+  .sb .sb-legs tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    grid-template-areas: 'side contract contract remove' 'lots entry entry entry' 'market iv premium premium';
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .sb .sb-legs tbody tr:last-child { border-bottom: 0; }
+  .sb .sb-legs td { display: block; padding: 0; border: 0; text-align: left; white-space: normal; min-width: 0; }
+  .sb .sb-legs tbody tr:hover td { background: none; }
+  .sb .sb-legs__lots::before,
+  .sb .sb-legs__entry::before,
+  .sb .sb-legs__market::before,
+  .sb .sb-legs__iv::before,
+  .sb .sb-legs__premium::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    color: var(--text-3);
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+  .sb .sb-legs__side { grid-area: side; }
+  .sb .sb-legs__contract { grid-area: contract; }
+  .sb .sb-legs__remove { grid-area: remove; }
+  .sb .sb-legs__lots { grid-area: lots; }
+  .sb .sb-legs__entry { grid-area: entry; }
+  .sb .sb-legs__market { grid-area: market; }
+  .sb .sb-legs__iv { grid-area: iv; }
+  .sb .sb-legs td.sb-legs__premium { grid-area: premium; text-align: right; }
+  .sb .sb-strike { width: 100px; }
+  .sb .sb-link { margin-left: 0; }
+  .sb .sb-num { text-align: left; }
+}
