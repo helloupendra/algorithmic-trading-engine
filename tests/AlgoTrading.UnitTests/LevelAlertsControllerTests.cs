@@ -166,6 +166,44 @@ public class LevelAlertsControllerTests
         Assert.Equal((24810m, "above"), (rule.Now?.Value, rule.Side));
     }
 
+    [Fact]
+    public async Task The_form_reads_the_number_the_rule_will_be_compared_with_even_after_the_close()
+    {
+        var desk = new Desk();
+        desk.Db.LiveQuotesLatest.Add(new LiveQuoteLatest { Symbol = Nifty, LastTradedPrice = 24812.35m, UpdatedUtc = DateTime.UtcNow, SourceKey = "dhan" });
+        var captured = DateTime.UtcNow.AddMinutes(-1);   // one capture: both sides carry the same stamp
+        foreach (var (type, oi) in new[] { ("CE", 1000L), ("PE", 1250L) })
+        {
+            desk.Db.OptionChainSnapshots.Add(new OptionChainSnapshot
+            {
+                Underlying = "NIFTY", ExpiryDate = IstTime.DateOf(DateTime.UtcNow).AddDays(3), StrikePrice = 24800m, OptionType = type,
+                Symbol = $"NSE:NIFTY24800{type}", CapturedUtc = captured, OpenInterest = oi, SourceKey = "dhan",
+            });
+        }
+
+        await desk.Db.SaveChangesAsync();
+        var reader = new LevelAlertReader(desk.Db, new MarketSessionService(new NoHolidays()));
+        var asha = desk.Controller(desk.Asha);
+
+        // Whether NSE is open at the moment the test runs decides the state, never whether there is a number.
+        var price = Ok(await asha.GetNow("price", "nse:nifty50-index", reader, default));
+        Assert.Equal((24812.35m, "NIFTY"), (price.Value, price.DisplayName));
+        var pcr = Ok(await asha.GetNow("pcr", "nifty", reader, default));
+        Assert.Equal((1.25m, "NIFTY PCR"), (pcr.Value, pcr.DisplayName));
+        Assert.EndsWith("expiry", pcr.Context);
+
+        Assert.IsType<BadRequestObjectResult>((await asha.GetNow("price", "NIFTY", reader, default)).Result);
+    }
+
+    private sealed class NoHolidays : IMarketCalendar
+    {
+        public bool IsLoaded => true;
+        public MarketHoliday? HolidayOn(string exchange, DateOnly date) => null;
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) => null;
+        public bool HasYear(string exchange, int year) => true;
+        public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
     private static T Ok<T>(ActionResult<T> result) => Assert.IsType<T>(Assert.IsType<OkObjectResult>(result.Result).Value);
 
     private static string Message(ObjectResult result) =>

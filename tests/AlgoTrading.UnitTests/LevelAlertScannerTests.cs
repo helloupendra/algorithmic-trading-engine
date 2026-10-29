@@ -266,7 +266,7 @@ public class LevelAlertScannerTests
         Assert.Single(outcome.Readings);
         Assert.Equal(2, outcome.Fired.Count);
         var trader = outcome.Fired.Single(f => f.Fire.UserId == desk.Trader);
-        Assert.Equal((false, "A trader's rule: shown in the console only."), (trader.OwnerIsAdmin, trader.Fire.TelegramNote));
+        Assert.Equal((false, "Telegram carries an admin's alerts only."), (trader.OwnerIsAdmin, trader.Fire.TelegramNote));
         var admin = outcome.Fired.Single(f => f.Fire.UserId == desk.Admin);
         Assert.Equal((LevelAlertConditions.Touch, "Telegram is off for this rule."), (admin.Fire.Condition, admin.Fire.TelegramNote));
     }

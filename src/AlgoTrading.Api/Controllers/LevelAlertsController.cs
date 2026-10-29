@@ -258,7 +258,7 @@ public class LevelAlertsController : ControllerBase
         LevelReading reading;
         if (k == LevelAlertKinds.Price)
         {
-            var prices = await reader.PricesAsync([t], new Dictionary<string, LevelSession> { [t] = session }, nowUtc, cancellationToken);
+            var prices = await reader.PricesAsync(new List<string> { t }, new Dictionary<string, LevelSession> { [t] = session }, nowUtc, cancellationToken);
             reading = prices[t];
         }
         else

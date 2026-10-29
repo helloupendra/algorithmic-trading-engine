@@ -220,7 +220,7 @@ public sealed class LevelAlertScanner
                 PreviousAsOfUtc = change.Previous.AsOfUtc,
                 Title = LevelAlertText.Title(rule.Kind, rule.Target, rule.Condition, rule.Level),
                 Message = LevelAlertText.Message(rule.Kind, rule.Target, rule.Condition, rule.Level, change.Previous, change.Current, change.Context, rule.Note),
-                TelegramNote = !rule.OwnerIsAdmin ? "A trader's rule: shown in the console only."
+                TelegramNote = !rule.OwnerIsAdmin ? "Telegram carries an admin's alerts only."
                     : !rule.Notify ? "Telegram is off for this rule."
                     : null,
             };
