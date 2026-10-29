@@ -1,7 +1,8 @@
 /**
  * Backtesting module — one run. Header with the spec and status, a progress
  * block while the runner is replaying (the sections below fill in as results
- * arrive), metric tiles, the equity curve and daily P&L charts, the
+ * arrive), metric tiles, the equity curve with its underwater curve and its
+ * max drawdown dated, net P&L by month, the daily P&L chart, the
  * position-based table (closed legs stay as rows with qty 0), and the
  * activity / data notes / runner output disclosures. A failed run shows its
  * error first.
@@ -44,6 +45,7 @@ import {
 import { readAccount, summariseYears } from '../../lib/backtestAccount'
 import { BacktestDialog } from './BacktestDialog'
 import { DailyPnlChart, EquityCurveChart } from './charts'
+import { MaxDrawdownLine, MonthlyPnlPanel } from './results'
 import { BacktestStatusBadge, formatDayRange, isActiveStatus, runSpecLabel } from './shared'
 
 /* ---------------------------------------------------------- positions table */
@@ -344,59 +346,69 @@ export function BacktestRunPage() {
 
           <AccountPanel view={view} />
 
-          <div className="two-col">
-            <Panel
-              title={
-                <>
-                  <IconActivity /> Equity curve
-                </>
-              }
-              actions={<span className="muted" style={{ fontSize: 12 }}>{formatNumber(view.equityCurve.length)} points · IST</span>}
-            >
-              <EquityCurveChart
-                points={view.equityCurve}
-                initialCapital={view.initialCapital}
-                fitKey={`${view.runId}|${view.status}`}
-                follow={active}
-              />
-            </Panel>
-            <Panel
-              title={
-                <>
-                  <IconFlask /> Daily P&L
-                </>
-              }
-              actions={<span className="muted" style={{ fontSize: 12 }}>per IST day</span>}
-            >
-              <DailyPnlChart days={view.daily} />
-              {view.daily.length > 0 && (
-                <Disclosure label="Daily table" open={showDaily} onToggle={() => setShowDaily((v) => !v)}>
-                  <div className="tablewrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Day</th>
-                          <th className="r">P&L</th>
-                          <th className="r">Trades</th>
+          <Panel
+            title={
+              <>
+                <IconActivity /> Equity and drawdown
+              </>
+            }
+            actions={
+              <span className="muted" style={{ fontSize: 12 }}>
+                {formatNumber(view.equityCurve.length)} points · IST{view.pnl.charges > 0 ? ' · after charges' : ''}
+              </span>
+            }
+          >
+            <EquityCurveChart
+              points={view.equityCurve}
+              initialCapital={view.initialCapital}
+              fitKey={`${view.runId}|${view.status}`}
+              follow={active}
+            />
+            <MaxDrawdownLine view={view} active={active} />
+          </Panel>
+
+          <MonthlyPnlPanel view={view} active={active} />
+
+          <Panel
+            title={
+              <>
+                <IconFlask /> Daily P&L
+              </>
+            }
+            actions={
+              <span className="muted" style={{ fontSize: 12 }}>
+                per IST day{view.pnl.charges > 0 ? ' · before charges' : ''}
+              </span>
+            }
+          >
+            <DailyPnlChart days={view.daily} />
+            {view.daily.length > 0 && (
+              <Disclosure label="Daily table" open={showDaily} onToggle={() => setShowDaily((v) => !v)}>
+                <div className="tablewrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th className="r">P&L</th>
+                        <th className="r">Trades</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {view.daily.map((d) => (
+                        <tr key={d.date}>
+                          <td className="mono">{formatDay(d.date)}</td>
+                          <td className="r">
+                            <PnlValue value={d.pnl} />
+                          </td>
+                          <td className="r">{formatNumber(d.trades)}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {view.daily.map((d) => (
-                          <tr key={d.date}>
-                            <td className="mono">{formatDay(d.date)}</td>
-                            <td className="r">
-                              <PnlValue value={d.pnl} />
-                            </td>
-                            <td className="r">{formatNumber(d.trades)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </Disclosure>
-              )}
-            </Panel>
-          </div>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Disclosure>
+            )}
+          </Panel>
 
           <Panel
             title={
@@ -552,7 +564,9 @@ function AccountPanel({ view }: { view: BacktestRunView }) {
             <thead>
               <tr>
                 <th>Year</th>
-                <th className="r">P&L</th>
+                <th className="r" title="Summed from the daily P&L, which is the positions' price P&L">
+                  {view.pnl.charges > 0 ? 'P&L before charges' : 'P&L'}
+                </th>
                 <th className="r">Trades</th>
                 <th className="r">Trading days</th>
                 <th className="r">Winning days</th>

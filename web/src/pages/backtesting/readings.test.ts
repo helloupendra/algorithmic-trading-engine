@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { estimateSessions, foldIndexCoverage, resolutionSpan, sessionsOnHand } from './readings'
+import { estimateSessions, foldIndexCoverage, formatDayWithYear, resolutionSpan, sessionsOnHand } from './readings'
 
 describe('estimateSessions', () => {
   it('divides a bar count by a full session at that resolution', () => {
@@ -158,5 +158,15 @@ describe('foldIndexCoverage', () => {
     const rows = [span('1', 0, '2019-01-01T00:00:00Z', '2027-01-01T00:00:00Z'), span('D', 20, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z')]
     expect(foldIndexCoverage(rows)).toEqual({ sessions: 20, resolutions: 'daily only', fromUtc: '2026-01-01T00:00:00Z', toUtc: '2026-02-01T00:00:00Z' })
     expect(foldIndexCoverage([])).toEqual({ sessions: 0, resolutions: '', fromUtc: null, toUtc: null })
+  })
+})
+
+describe('formatDayWithYear', () => {
+  it('names an IST day as written, and an instant by the IST day it fell on', () => {
+    expect(formatDayWithYear('2025-08-03')).toBe('03 Aug 2025')
+    expect(formatDayWithYear('2025-12-31T18:30:00Z')).toBe('01 Jan 2026')   // 00:00 IST
+    expect(formatDayWithYear('2025-12-31T18:29:59Z')).toBe('31 Dec 2025')
+    expect(formatDayWithYear(null)).toBe('—')
+    expect(formatDayWithYear('soon')).toBe('—')
   })
 })

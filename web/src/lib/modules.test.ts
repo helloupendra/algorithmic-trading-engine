@@ -112,7 +112,7 @@ describe('navFor', () => {
     const nav = navFor(admin)
     expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Commodity', 'Chart', 'Option chain', 'Strategy builder', 'Movers', 'Factors', 'News', 'Patterns'])
     expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
-    expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
+    expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Compare', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
     expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
     expect(pagesOf(nav, 'data')).toEqual(['Overview', 'Feeds', 'Historical', 'Instruments', 'Replay'])
@@ -181,6 +181,7 @@ describe('locate', () => {
     expect(at(adminNav, '/markets/mcx')).toBe('Markets / Commodity')
     expect(at(adminNav, '/research/backtests')).toBe('Research / Backtests')
     expect(at(adminNav, '/research/backtests/new')).toBe('Research / New backtest')
+    expect(at(adminNav, '/research/backtests/compare')).toBe('Research / Compare')
     expect(at(adminNav, '/data')).toBe('Data / Overview')
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
     expect(at(adminNav, '/data/replay')).toBe('Data / Replay')
@@ -288,7 +289,7 @@ describe('tabGroups', () => {
   it('keeps a tab of several pages together and every other page on its own', () => {
     const research = navFor(admin).find((w) => w.key === 'research')!
     expect(tabGroups(research.pages).map((g) => g.map((p) => p.label))).toEqual([
-      ['Backtests', 'New backtest', 'Runs'],
+      ['Backtests', 'New backtest', 'Runs', 'Compare'],
       ['Forecasts'],
       ['Filter lab'],
       ['Notebook'],

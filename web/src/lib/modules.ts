@@ -338,6 +338,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
           { label: 'Backtests', to: '/research/backtests', exact: true, only: 'admin' },
           { label: 'New backtest', to: '/research/backtests/new', only: 'admin' },
           { label: 'Runs', to: '/research/backtests/runs', only: 'admin', keywords: ['backtest results'] },
+          { label: 'Compare', to: '/research/backtests/compare', only: 'admin', keywords: ['compare backtests', 'side by side'] },
         ],
       },
       {

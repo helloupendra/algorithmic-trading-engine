@@ -1,6 +1,7 @@
 /**
  * Backtesting module — Runs. Every OfflineReplay run, filterable by strategy,
- * underlying and status; running ones can be stopped, finished ones deleted.
+ * underlying and status; running ones can be stopped, finished ones deleted,
+ * and two to four can be ticked and compared side by side.
  */
 
 import { useMemo, useState } from 'react'
@@ -11,12 +12,13 @@ import { resolutionLabel } from '../../lib/symbols'
 import { InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { IconClock, IconPlus, IconStop, IconTrash } from '../../components/icons'
 import type { BacktestRunSummary } from '../../lib/types'
+import { togglePick } from '../../lib/backtestCompare'
 import { PnlValue } from '../strategies/shared'
-import { BacktestStatusBadge, formatDayRange, isActiveStatus } from './shared'
+import { BacktestStatusBadge, CompareButton, ComparePick, formatDayRange, isActiveStatus } from './shared'
 
 const STATUSES = ['Running', 'Pending', 'Completed', 'Failed', 'Stopped'] as const
 
-function RunRow({ run }: { run: BacktestRunSummary }) {
+function RunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: readonly number[]; onPick: (runId: number) => void }) {
   const stop = useStopBacktest()
   const remove = useDeleteBacktest()
   const active = isActiveStatus(run.status)
@@ -33,6 +35,7 @@ function RunRow({ run }: { run: BacktestRunSummary }) {
   return (
     <>
       <tr>
+        <ComparePick runId={run.runId} picked={picked} onToggle={onPick} />
         <td className="mono muted">#{run.runId}</td>
         <td>
           <Link to={`/research/backtests/runs/${run.runId}`}>
@@ -86,7 +89,7 @@ function RunRow({ run }: { run: BacktestRunSummary }) {
       </tr>
       {(stop.isError || remove.isError) && (
         <tr>
-          <td colSpan={12}>
+          <td colSpan={13}>
             <InlineError error={stop.error ?? remove.error} />
           </td>
         </tr>
@@ -100,6 +103,7 @@ export function BacktestRunsPage() {
   const [strategy, setStrategy] = useState('all')
   const [underlying, setUnderlying] = useState('all')
   const [status, setStatus] = useState('all')
+  const [picked, setPicked] = useState<number[]>([])
 
   const list = useMemo(() => runs.data ?? [], [runs.data])
   const strategyNames = useMemo(() => [...new Set(list.map((r) => r.strategyName))].sort(), [list])
@@ -176,6 +180,7 @@ export function BacktestRunsPage() {
             <span className="small-note" style={{ margin: 0 }}>
               {formatNumber(filtered.length)} of {formatNumber(list.length)}
             </span>
+            <CompareButton picked={picked} onClear={() => setPicked([])} />
           </div>
         }
       >
@@ -188,6 +193,7 @@ export function BacktestRunsPage() {
                 <table className="table">
                   <thead>
                     <tr>
+                      <th className="bt-pick" aria-label="Compare" />
                       <th>Run</th>
                       <th>Strategy</th>
                       <th>Underlying</th>
@@ -204,7 +210,7 @@ export function BacktestRunsPage() {
                   </thead>
                   <tbody>
                     {filtered.map((run) => (
-                      <RunRow key={run.runId} run={run} />
+                      <RunRow key={run.runId} run={run} picked={picked} onPick={(id) => setPicked((was) => togglePick(was, id))} />
                     ))}
                   </tbody>
                 </table>

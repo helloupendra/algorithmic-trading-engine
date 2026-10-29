@@ -217,3 +217,108 @@
 }
 .rules__presets select { max-width: 220px; }
 .rules__presets .field__help { margin-left: auto; }
+
+/* --- results: the curves, the months, the comparison ---------------------- */
+
+/* One colour per compared run, in a fixed order: blue, orange, aqua, magenta.
+   Checked as a set against --surface in each theme with the dataviz
+   validator: the first three stay apart for every reader; the fourth comes
+   within 7 (ΔE, OKLab x100) of aqua for a deuteranope, so its line is also
+   dashed and every run is named beside its key. */
+:root {
+  --run-1: #5f88ff;
+  --run-2: #c9772a;
+  --run-3: #199e70;
+  --run-4: #cc5fa8;
+}
+:root[data-theme='light'] {
+  --run-1: #2f5fd8;
+  --run-2: #9e5817;
+  --run-3: #14866a;
+  --run-4: #c0559f;
+}
+
+/* The balance and, under it on the same time axis, the fall from its best. */
+.chart.bt-curves { height: 420px; }
+@media (max-width: 640px) {
+  .chart.bt-curves { height: 340px; }
+}
+
+.chart-readout__key.chart-readout__key--neg { background: var(--neg); }
+
+.bt-run-key {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--run-1);
+}
+.bt-run-key--2 { border-top-color: var(--run-2); }
+.bt-run-key--3 { border-top-color: var(--run-3); }
+.bt-run-key--4 { border-top: 2px dashed var(--run-4); }
+
+.bt-compare-readout { gap: 8px 16px; }
+.bt-compare-readout__run { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.bt-compare-readout__run .mono { white-space: nowrap; }
+
+/* The deepest fall, in a line under the chart. */
+.bt-fall {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.bt-fall b { color: var(--text); }
+
+/* Year x month. A traded month is tinted by its sign, deeper the larger it is
+   against the run's largest month (--mag, 0-1, set per cell); the figure
+   keeps its own P&L ink, so the tint is never the only signal. */
+.bt-months { font-variant-numeric: tabular-nums; }
+.bt-months th, .bt-months td { padding: 6px 8px; }
+.bt-months td.bt-months__cell {
+  min-width: 82px;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.bt-months__cell--pos { background: color-mix(in srgb, var(--pos) calc(var(--mag, 0) * 16%), transparent); }
+.bt-months__cell--neg { background: color-mix(in srgb, var(--neg) calc(var(--mag, 0) * 16%), transparent); }
+.bt-months__sub { display: block; font-size: 10.5px; color: var(--text-3); }
+.bt-months__year { font-family: var(--mono); color: var(--text-2); }
+.bt-months__total { border-left: 1px solid var(--line); font-weight: 600; }
+.bt-months tfoot td { border-top: 1px solid var(--line); }
+
+.bt-notes {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* Run selection for a comparison, on the runs lists. */
+.bt-pick { width: 28px; }
+.bt-pick input { margin: 0; vertical-align: middle; }
+
+/* Runs side by side: one column per run, the first column names the figure
+   and stays put while a phone scrolls the runs sideways. */
+.bt-compare th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg1);
+  white-space: nowrap;
+}
+.bt-compare thead th:first-child { z-index: 2; }
+.bt-compare td { min-width: 150px; }
+.bt-compare__head { display: grid; gap: 2px; }
+.bt-compare__head .bt-run-key { margin-right: 6px; vertical-align: middle; }
+.bt-compare__note { display: block; font-size: 11px; color: var(--text-3); }
+
+.bt-compare-add { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bt-compare-add select { max-width: 320px; }

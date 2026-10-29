@@ -1,12 +1,15 @@
 /**
  * Backtesting module — helpers shared by the overview, the runs list, the
  * dialog and the run page: IST calendar-day arithmetic (a backtest is
- * bounded by IST dates, not UTC instants), the status badge and the one-line
- * run description. The readings that are plain arithmetic (session estimates
- * from bar counts) live in readings.ts, where they are tested.
+ * bounded by IST dates, not UTC instants), the status badge, the one-line
+ * run description and the ticks that pick runs for a comparison. The
+ * readings that are plain arithmetic (session estimates from bar counts)
+ * live in readings.ts, where they are tested.
  */
 
+import { Link } from 'react-router-dom'
 import { Badge } from '../../components/ui'
+import { compareHref, MAX_COMPARE, MIN_COMPARE } from '../../lib/backtestCompare'
 import { formatLots } from '../../lib/format'
 import { resolutionLabel } from '../../lib/symbols'
 import type { BacktestStatus } from '../../lib/types'
@@ -49,6 +52,49 @@ export function countWeekdays(from: string, to: string): number {
 /** "19 Aug → 3 Sep" for yyyy-MM-dd or ISO bounds. */
 export function formatDayRange(from: string | null | undefined, to: string | null | undefined): string {
   return `${formatDay(from)} → ${formatDay(to)}`
+}
+
+/* -------------------------------------------------------- compare picking */
+
+/** The tick beside a run on a runs list that picks it for a comparison (lib/backtestCompare.togglePick). */
+export function ComparePick({ runId, picked, onToggle }: { runId: number; picked: readonly number[]; onToggle: (runId: number) => void }) {
+  const on = picked.includes(runId)
+  const full = !on && picked.length >= MAX_COMPARE
+  return (
+    <td className="bt-pick">
+      <input
+        type="checkbox"
+        checked={on}
+        disabled={full}
+        onChange={() => onToggle(runId)}
+        aria-label={`Compare run ${runId}`}
+        title={full ? `At most ${MAX_COMPARE} runs side by side` : on ? 'Leave out of the comparison' : 'Add to the comparison'}
+      />
+    </td>
+  )
+}
+
+/** Clear, and Compare once two runs are ticked: a link, so the comparison opens at its own address. */
+export function CompareButton({ picked, onClear }: { picked: readonly number[]; onClear: () => void }) {
+  const ready = picked.length >= MIN_COMPARE
+  return (
+    <span className="bt-compare-add">
+      {picked.length > 0 && (
+        <button type="button" className="btn btn--ghost btn--sm" onClick={onClear}>
+          Clear
+        </button>
+      )}
+      {ready ? (
+        <Link className="btn btn--sm" to={compareHref(picked)}>
+          Compare {picked.length}
+        </Link>
+      ) : (
+        <span className="small-note" style={{ margin: 0 }} title={`Tick ${MIN_COMPARE} to ${MAX_COMPARE} runs to see them side by side`}>
+          {picked.length === 0 ? `Tick ${MIN_COMPARE}–${MAX_COMPARE} runs to compare` : 'Tick one more to compare'}
+        </span>
+      )}
+    </span>
+  )
 }
 
 /* ------------------------------------------------------------- run status */

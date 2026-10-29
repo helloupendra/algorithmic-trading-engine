@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareFlags, compareHref, curveValues, parseCompareIds, runStats } from './backtestCompare'
+import { compareFlags, compareHref, curveValues, parseCompareIds, runStats, togglePick } from './backtestCompare'
 import type { BacktestMetrics, BacktestPosition, BacktestRunView } from './types'
 
 const METRICS: BacktestMetrics = {
@@ -61,6 +61,13 @@ describe('a compare link', () => {
 
   it('is a page address that can be shared', () => {
     expect(compareHref([12, 15])).toBe('/research/backtests/compare?ids=12,15')
+  })
+
+  it('is picked by ticks that join at the end, leave on a second tick, and stop at four', () => {
+    expect(togglePick([], 12)).toEqual([12])
+    expect(togglePick([12, 15], 9)).toEqual([12, 15, 9])
+    expect(togglePick([12, 15, 9], 15)).toEqual([12, 9])
+    expect(togglePick([1, 2, 3, 4], 5)).toEqual([1, 2, 3, 4])
   })
 })
 

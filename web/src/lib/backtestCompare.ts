@@ -38,6 +38,16 @@ export function compareHref(ids: readonly number[]): string {
   return `/research/backtests/compare?ids=${ids.join(',')}`
 }
 
+/**
+ * A tick on a runs list: an unticked run joins at the end (so the runs
+ * already picked keep their place, and with it their colour), a ticked one
+ * leaves, and a fifth is refused.
+ */
+export function togglePick(picked: readonly number[], runId: number): number[] {
+  if (picked.includes(runId)) return picked.filter((id) => id !== runId)
+  return picked.length >= MAX_COMPARE ? [...picked] : [...picked, runId]
+}
+
 /** What a profit factor can honestly be: a ratio, "no losses" (∞), or nothing to divide. */
 export type ProfitFactor = number | 'no-losses' | null
 

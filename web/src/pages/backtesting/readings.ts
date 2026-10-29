@@ -3,7 +3,8 @@
  * kept apart from the React files so they can be tested on their own: the
  * sessions a bar count implies, the sessions a set of stored ranges really
  * holds once each index is counted a single time, and one index's ranges
- * folded into the single line the overview gives it.
+ * folded into the single line the overview gives it; and the day labels the
+ * run results carry.
  */
 
 import { resolutionRank, toCandleResolution } from '../../lib/symbols'
@@ -133,4 +134,24 @@ export function foldIndexCoverage(rows: readonly StoredSpan[]): {
     fromUtc,
     toUtc,
   }
+}
+
+/* ------------------------------------------------------------- day labels */
+
+const IST_OFFSET_MS = 330 * 60_000
+
+/**
+ * "03 Aug 2025": a day of a result, which can lie in any year. An IST
+ * "yyyy-MM-dd" is that day as written; an instant is the IST day it fell on,
+ * whatever zone the browser is in.
+ */
+export function formatDayWithYear(value: string | null | undefined): string {
+  if (!value) return '—'
+  let ymd = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null
+  if (!ymd) {
+    const ms = Date.parse(value)
+    if (Number.isNaN(ms)) return '—'
+    ymd = new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10)
+  }
+  return new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }

@@ -1303,7 +1303,11 @@ export function useBacktestRuns() {
  * the poll going while that run is still active.
  */
 export function useBacktestRun(id: number | null) {
-  return useQuery({
+  return useQuery(backtestRunQuery(id))
+}
+
+function backtestRunQuery(id: number | null) {
+  return {
     queryKey: ['backtest', 'run', id],
     queryFn: () => api.get<BacktestRunView>(`/api/Backtest/runs/${id}`),
     enabled: id != null,
@@ -1312,7 +1316,23 @@ export function useBacktestRun(id: number | null) {
       if (!data) return status === 'error' ? false : POLL_BACKTEST_VIEW
       return isBacktestActive(data.status) ? POLL_BACKTEST_VIEW : false
     },
-  })
+  }
+}
+
+/** Module-level, so the combined answer is the same object until a view changes. */
+const runViewAnswers = (results: UseQueryResult<BacktestRunView>[]) => ({
+  views: results.map((r) => r.data),
+  errors: results.map((r) => r.error),
+  pending: results.some((r) => r.isPending),
+})
+
+/**
+ * Several runs' results views at once, in the order asked, for the compare
+ * page. Shares the cache key and the poll with useBacktestRun, so a run
+ * opened from the comparison is already loaded.
+ */
+export function useBacktestRunViews(ids: readonly number[]) {
+  return useQueries({ queries: ids.map((id) => backtestRunQuery(id)), combine: runViewAnswers })
 }
 
 /**

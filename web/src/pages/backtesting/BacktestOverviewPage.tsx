@@ -1,9 +1,10 @@
 /**
- * Backtesting module — Overview. The most recent runs come first, then the
- * data there is to replay: one line per index (how many sessions, at which
- * resolutions, over which days), each opening onto its stored ranges. It
- * opened with every range of every index, 37 rows with ditto marks, and the
- * results under them. "New backtest" leads to the strategy grid.
+ * Backtesting module — Overview. The most recent runs come first (tick two
+ * to four to compare them), then the data there is to replay: one line per
+ * index (how many sessions, at which resolutions, over which days), each
+ * opening onto its stored ranges. It opened with every range of every index,
+ * 37 rows with ditto marks, and the results under them. "New backtest" leads
+ * to the strategy grid.
  */
 
 import { useMemo, useState } from 'react'
@@ -20,11 +21,14 @@ import { classifySymbol, instrumentName, resolutionLabel, resolutionRank } from 
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { IconArrowRight, IconChevronDown, IconChevronRight, IconDatabase, IconFlask, IconPlus } from '../../components/icons'
 import type { BacktestRunSummary, FnoUnderlying } from '../../lib/types'
+import { togglePick } from '../../lib/backtestCompare'
 import { PnlValue } from '../strategies/shared'
 import { BackfillDialog } from './BackfillDialog'
 import { estimateSessions, foldIndexCoverage, sessionsOnHand } from './readings'
 import {
   BacktestStatusBadge,
+  CompareButton,
+  ComparePick,
   formatDayRange,
   isActiveStatus,
   runSpecLabel,
@@ -184,9 +188,10 @@ function IndexCoverageRows({
   )
 }
 
-function RecentRunRow({ run }: { run: BacktestRunSummary }) {
+function RecentRunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: readonly number[]; onPick: (runId: number) => void }) {
   return (
     <tr>
+      <ComparePick runId={run.runId} picked={picked} onToggle={onPick} />
       <td>
         <Link to={`/research/backtests/runs/${run.runId}`}>
           <b>{run.strategyName}</b>
@@ -217,6 +222,7 @@ export function BacktestOverviewPage() {
   const broker = useBrokerSession()
   const [backfillFor, setBackfillFor] = useState<{ underlying: string; spotSymbol: string } | null>(null)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+  const [picked, setPicked] = useState<number[]>([])
   const toggle = (spotSymbol: string) =>
     setOpened((was) => {
       const next = new Set(was)
@@ -308,9 +314,12 @@ export function BacktestOverviewPage() {
           </>
         }
         actions={
-          <Link className="btn btn--ghost btn--sm" to="/research/backtests/runs">
-            All runs <IconArrowRight style={{ width: 12, height: 12 }} />
-          </Link>
+          <>
+            {recent.length > 1 && <CompareButton picked={picked} onClear={() => setPicked([])} />}
+            <Link className="btn btn--ghost btn--sm" to="/research/backtests/runs">
+              All runs <IconArrowRight style={{ width: 12, height: 12 }} />
+            </Link>
+          </>
         }
       >
         <QueryBoundary query={runs}>
@@ -325,6 +334,7 @@ export function BacktestOverviewPage() {
                 <table className="table">
                   <thead>
                     <tr>
+                      <th className="bt-pick" aria-label="Compare" />
                       <th>Strategy</th>
                       <th>Underlying</th>
                       <th>Range</th>
@@ -337,7 +347,7 @@ export function BacktestOverviewPage() {
                   </thead>
                   <tbody>
                     {recent.map((run) => (
-                      <RecentRunRow key={run.runId} run={run} />
+                      <RecentRunRow key={run.runId} run={run} picked={picked} onPick={(id) => setPicked((was) => togglePick(was, id))} />
                     ))}
                   </tbody>
                 </table>

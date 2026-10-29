@@ -39,6 +39,7 @@ import { BacktestOverviewPage } from './pages/backtesting/BacktestOverviewPage'
 import { NewBacktestPage } from './pages/backtesting/NewBacktestPage'
 import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
 import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
+import { BacktestComparePage } from './pages/backtesting/BacktestComparePage'
 import { AnalysisPage } from './pages/analysis/AnalysisPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
 import { OptionChainPage } from './pages/markets/chain/OptionChainPage'
@@ -183,6 +184,7 @@ export default function App() {
                   <Route path="/research/backtests/new" element={<NewBacktestPage />} />
                   <Route path="/research/backtests/runs" element={<BacktestRunsPage />} />
                   <Route path="/research/backtests/runs/:id" element={<BacktestRunPage />} />
+                  <Route path="/research/backtests/compare" element={<BacktestComparePage />} />
                   {/* Forecasts with proof; its sections are tabs on the one page (?section=). */}
                   <Route path="/research/forecasts" element={<AnalysisPage />} />
                   {/* The board list; a board itself is the full-window route above. */}
