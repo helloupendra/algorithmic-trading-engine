@@ -15,8 +15,8 @@ import {
   useFnoUnderlyings,
   type CoverageRow,
 } from '../../lib/queries'
-import { formatNumber, formatPercent, shortSymbol } from '../../lib/format'
-import { classifySymbol, resolutionLabel, resolutionRank } from '../../lib/symbols'
+import { formatNumber, formatPercent } from '../../lib/format'
+import { classifySymbol, instrumentName, resolutionLabel, resolutionRank } from '../../lib/symbols'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { IconArrowRight, IconChevronDown, IconChevronRight, IconDatabase, IconFlask, IconPlus } from '../../components/icons'
 import type { BacktestRunSummary, FnoUnderlying } from '../../lib/types'
@@ -70,6 +70,15 @@ function buildLines(rows: CoverageRow[], fno: FnoUnderlying[]): IndexLine[] {
   return lines
 }
 
+/** "03 Aug 2020": a stored range spans years, so its days carry theirs. */
+function dayWithYear(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+}
+
+const yearRange = (from: string | null, to: string | null) => `${dayWithYear(from)} → ${dayWithYear(to)}`
+
 /**
  * An index in one line — "NIFTY ≈ 1,528 days · 1m to daily" and the days it
  * reaches — that opens onto a row per stored range: the resolution, its
@@ -86,7 +95,8 @@ function IndexCoverageRows({
   onToggle: () => void
   onBackfill: () => void
 }) {
-  const name = line.underlying ?? shortSymbol(line.spotSymbol)
+  // An index that is no F&O underlying (India VIX) by its name, not its symbol.
+  const name = line.underlying ?? instrumentName({ symbol: line.spotSymbol })
   const fold = foldIndexCoverage(line.rows)
   const backfill = (
     <td className="r">
@@ -135,7 +145,7 @@ function IndexCoverageRows({
         </td>
         <td className="r">≈ {formatNumber(fold.sessions)} days</td>
         <td>{fold.resolutions}</td>
-        <td className="muted">{formatDayRange(fold.fromUtc, fold.toUtc)}</td>
+        <td className="muted">{yearRange(fold.fromUtc, fold.toUtc)}</td>
         {backfill}
       </tr>
       {open && (
@@ -157,7 +167,7 @@ function IndexCoverageRows({
                     <td>
                       <Badge tone="neutral">{resolutionLabel(r.resolution)}</Badge>
                     </td>
-                    <td className="muted">{formatDayRange(r.fromUtc, r.toUtc)}</td>
+                    <td className="muted">{yearRange(r.fromUtc, r.toUtc)}</td>
                     <td className="r">≈ {formatNumber(estimateSessions(r.resolution, r.barCount))}</td>
                     <td className="r">{formatNumber(r.barCount)}</td>
                     <td>
