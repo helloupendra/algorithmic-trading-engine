@@ -4,6 +4,7 @@ using AlgoTrading.Contracts.OptionChain;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -25,19 +26,27 @@ public class OptionChainService
     private readonly TradingDbContext _dbContext;
     private readonly IMarketSessionService? _sessions;
     private readonly ILotSizeResolver? _lotSizes;
+    private readonly IMemoryCache? _cache;
+    private readonly TimeProvider _time;
 
     /// <param name="sessions">Needed only by the live view, for the market's open/closed state.</param>
     /// <param name="lotSizes">Needed only by the live view, for the per-lot premium.</param>
+    /// <param name="cache">Keeps the list of recorded days between requests; without it each request walks the index again.</param>
+    /// <param name="time">The clock the kept list of recorded days is aged by.</param>
     public OptionChainService(
         TradingDbContext dbContext,
         IMarketSessionService? sessions = null,
         ILotSizeResolver? lotSizes = null,
-        OptionHistory.IndexOptionHistory? optionHistory = null)
+        OptionHistory.IndexOptionHistory? optionHistory = null,
+        IMemoryCache? cache = null,
+        TimeProvider? time = null)
     {
         _dbContext = dbContext;
         _sessions = sessions;
         _lotSizes = lotSizes;
         _optionHistory = optionHistory;
+        _cache = cache;
+        _time = time ?? TimeProvider.System;
     }
 
     // ------------------------------------------------------------------
@@ -887,6 +896,123 @@ public class OptionChainService
         gaps.Sort();
         double median = gaps.Count % 2 == 1 ? gaps[gaps.Count / 2] : (gaps[gaps.Count / 2 - 1] + gaps[gaps.Count / 2]) / 2;
         return (int)Math.Round(median, MidpointRounding.AwayFromZero);
+    }
+
+    // ------------------------------------------------------------------
+    // Which days
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// How long the list of recorded days is answered from memory before its
+    /// newest end is read again. A session's first capture can take this long
+    /// to be listed; the chain page offers the session it shows live whatever
+    /// the list says.
+    /// </summary>
+    public static readonly TimeSpan RecordedDaysFor = TimeSpan.FromMinutes(2);
+
+    /// <summary>A list nobody has asked for in this long is let go.</summary>
+    private static readonly TimeSpan RecordedDaysIdle = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// How far before the newest listed day a refresh looks for expiries that
+    /// may still be captured. FYERS rows stored before 27 Sep 2026 date some
+    /// monthlies two days early, so an expiry can be captured past its date.
+    /// </summary>
+    private const int RecordedDaysExpiryLag = 7;
+
+    /// <summary>The recorded days, newest first, and when the newest end was last read.</summary>
+    private sealed record RecordedDays(IReadOnlyList<DateOnly> Days, DateTime CheckedUtc);
+
+    /// <summary>
+    /// Every IST day the underlying's chain was recorded on, newest first: the
+    /// days the chain page can be rewound to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The table is some 15 GB and no index holds the day of a capture, so a
+    /// DISTINCT over the day would read every one of the underlying's rows.
+    /// This walks (Underlying, ExpiryDate, CapturedUtc) instead, a loose index
+    /// scan done from here: the next expiry after the last one found, then
+    /// within that expiry the first capture from the next IST midnight not
+    /// already listed. Every read is one descent of that index with LIMIT 1,
+    /// index-only since the three columns are the index, so a list costs about
+    /// one read per recorded day and two or three per expiry, however many
+    /// rows a day holds: a few hundred reads for a year of weekly expiries.
+    /// No new index is needed; building one on the live table would hold up
+    /// the recorder's writes while it built.
+    /// </para>
+    /// <para>
+    /// A day that has ended cannot gain captures, so once listed only the
+    /// newest end is read again, every <see cref="RecordedDaysFor"/>: the
+    /// expiries that can still be captured, from the newest listed day on,
+    /// which is a dozen reads. A day of chains imported after the list was
+    /// built is listed once the list has gone unasked for half a day, or
+    /// after a restart.
+    /// </para>
+    /// </remarks>
+    public async Task<OptionChainRecordedDaysResponse> GetRecordedDaysAsync(string underlying, CancellationToken cancellationToken = default)
+    {
+        string key = (underlying ?? string.Empty).Trim().ToUpperInvariant();
+        var nowUtc = _time.GetUtcNow().UtcDateTime;
+        var cacheKey = ("chain-recorded-days", key);
+
+        RecordedDays? kept = null;
+        _cache?.TryGetValue(cacheKey, out kept);
+        if (kept is null || nowUtc - kept.CheckedUtc >= RecordedDaysFor)
+        {
+            var days = new HashSet<DateOnly>(kept?.Days ?? []);
+            DateOnly? newest = kept is { Days.Count: > 0 } ? kept.Days[0] : null;
+            await AddRecordedDaysAsync(key, newest, days, cancellationToken);
+            kept = new RecordedDays(days.OrderByDescending(d => d).ToList(), nowUtc);
+            _cache?.Set(cacheKey, kept, new MemoryCacheEntryOptions { SlidingExpiration = RecordedDaysIdle });
+        }
+
+        return new OptionChainRecordedDaysResponse { Underlying = key, Days = kept.Days.ToList() };
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="days"/> every IST day from <paramref name="fromDay"/>
+    /// on (every day, when null) with a capture of the underlying, and says how
+    /// many reads of the index that took.
+    /// </summary>
+    internal async Task<int> AddRecordedDaysAsync(string key, DateOnly? fromDay, ISet<DateOnly> days, CancellationToken cancellationToken)
+    {
+        var rows = _dbContext.OptionChainSnapshots.AsNoTracking().Where(x => x.Underlying == key);
+        DateTime? floorUtc = fromDay is { } first ? IstTime.StartOfDayUtc(first) : null;
+        DateOnly? previous = fromDay?.AddDays(-RecordedDaysExpiryLag - 1);
+        int reads = 0;
+
+        while (true)
+        {
+            var later = previous is { } after ? rows.Where(x => x.ExpiryDate > after) : rows;
+            reads++;
+            var next = await later.OrderBy(x => x.ExpiryDate)
+                .Select(x => (DateOnly?)x.ExpiryDate)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (next is not { } expiry) return reads;
+            previous = expiry;
+
+            // The expiry's days, a read each: its first capture from the next
+            // midnight not yet listed. A day an earlier expiry listed (a later
+            // expiry is captured on the nearest one's days) costs no read.
+            var contract = rows.Where(x => x.ExpiryDate == expiry);
+            var cursor = floorUtc;
+            while (true)
+            {
+                var from = cursor is { } c ? contract.Where(x => x.CapturedUtc >= c) : contract;
+                reads++;
+                var at = await from.OrderBy(x => x.CapturedUtc)
+                    .Select(x => (DateTime?)x.CapturedUtc)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (at is null) break;
+
+                var day = IstTime.DateOf(at.Value);
+                days.Add(day);
+                var unlisted = day.AddDays(1);
+                while (days.Contains(unlisted)) unlisted = unlisted.AddDays(1);
+                cursor = IstTime.StartOfDayUtc(unlisted);
+            }
+        }
     }
 
     /// <summary>Snapshots are stamped to the second; a chain is not a tick.</summary>

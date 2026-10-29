@@ -256,6 +256,22 @@ public class OptionChainController : ControllerBase
     }
 
     /// <summary>
+    /// The IST days the underlying's chain was recorded on, newest first: the
+    /// days the chain page can be rewound to. A loose walk of the chain index,
+    /// kept in memory and only its newest end read again (OptionChainService).
+    /// </summary>
+    [HttpGet("days/recorded")]
+    public async Task<ActionResult<OptionChainRecordedDaysResponse>> GetRecordedDays(
+        [FromQuery] string underlying,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = "underlying is required." });
+
+        return Ok(await _chain.GetRecordedDaysAsync(underlying, cancellationToken));
+    }
+
+    /// <summary>
     /// Records one poll of the chain. Posted by the ingestor's chain poller.
     /// </summary>
     /// <remarks>

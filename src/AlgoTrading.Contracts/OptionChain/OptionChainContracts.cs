@@ -351,6 +351,18 @@ public class OptionChainRecordedExpiryResponse
     public bool IsDefault { get; set; }
 }
 
+/// <summary>
+/// The IST days an underlying's chain was recorded on: what the chain page can
+/// be rewound to (GET /api/OptionChain/days/recorded).
+/// </summary>
+public class OptionChainRecordedDaysResponse
+{
+    public string Underlying { get; set; } = string.Empty;
+
+    /// <summary>Every IST day with a capture of any expiry, newest first; empty when nothing is recorded.</summary>
+    public List<DateOnly> Days { get; set; } = new();
+}
+
 /// <summary>One strike's intraday history — the OI-change curves.</summary>
 public class OptionChainSeriesPointResponse
 {
