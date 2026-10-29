@@ -98,8 +98,17 @@ const instrument = (over: Partial<Instrument>): Instrument => ({
 describe('symbolItems', () => {
   it('opens a symbol on the Markets chart', () => {
     const [hit] = symbolItems([instrument({})])
-    expect(hit).toMatchObject({ label: 'NSE:NIFTY50-INDEX', detail: 'NIFTY 50', meta: 'NSE · INDEX' })
     expect(hit.to).toBe('/markets/chart?symbol=NSE%3ANIFTY50-INDEX')
+  })
+
+  it('names a symbol as people say it, says what it is, and keeps the code once, on the right', () => {
+    // The master describes an index by its code again: the palette listed "NSE:NIFTY50-INDEX  NIFTY50-INDEX".
+    const [index] = symbolItems([instrument({ description: 'NIFTY50-INDEX' })])
+    expect(index).toMatchObject({ label: 'NIFTY 50', detail: 'NSE index', meta: 'NSE:NIFTY50-INDEX' })
+    const [share] = symbolItems([instrument({ symbol: 'NSE:SBIN-EQ', description: 'STATE BANK OF INDIA', instrumentType: 'EQ' })])
+    expect(share).toMatchObject({ label: 'STATE BANK OF INDIA', detail: 'NSE equity', meta: 'NSE:SBIN-EQ' })
+    const [option] = symbolItems([instrument({ symbol: 'NSE:NIFTY26N1024500CE', description: 'NIFTY 10 Nov 26 24500 CE', segment: 'FO', instrumentType: 'CE' })])
+    expect(option).toMatchObject({ label: 'NIFTY 24500 CE · 10 Nov', detail: 'NSE option', meta: 'NSE:NIFTY26N1024500CE' })
   })
 
   it('caps the list and says nothing before the search answers', () => {

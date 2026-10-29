@@ -55,6 +55,70 @@ export function indexLabel(symbol: string): string {
   return body.replace(/-INDEX$/i, '')
 }
 
+/* --- display names --------------------------------------------------------- */
+
+/**
+ * The indices whose symbol spells them otherwise than people say them, by
+ * the exchange's own name. Any other index is named by its symbol
+ * (indexLabel): FINNIFTY, BANKEX and SENSEX are what traders call those.
+ */
+const INDEX_NAMES: Readonly<Record<string, string>> = {
+  'NSE:NIFTY50-INDEX': 'NIFTY 50',
+  'NSE:NIFTYBANK-INDEX': 'NIFTY BANK',
+  'NSE:NIFTYNXT50-INDEX': 'NIFTY NEXT 50',
+  'NSE:INDIAVIX-INDEX': 'INDIA VIX',
+}
+
+const codeKey = (s: string) => s.toUpperCase().replace(/\s+/g, '')
+
+/**
+ * What a person calls an instrument: "NIFTY 50", "STATE BANK OF INDIA",
+ * "NIFTY 24500 CE · 4 Nov". The master's description when it is a name; it
+ * is often the symbol again ("NIFTY50-INDEX" for NSE:NIFTY50-INDEX), and then
+ * the name comes from the symbol. An option is read off its symbol, as the
+ * rest of the console labels contracts (formatContract).
+ */
+export function instrumentName(instrument: { symbol: string; description?: string | null }): string {
+  const symbol = instrument.symbol.trim()
+  const known = INDEX_NAMES[symbol.toUpperCase()]
+  if (known) return known
+  if (parseOptionSymbol(symbol)) return formatContract(symbol)
+  const body = symbol.includes(':') ? symbol.slice(symbol.indexOf(':') + 1) : symbol
+  const description = instrument.description?.trim() ?? ''
+  if (description && codeKey(description) !== codeKey(symbol) && codeKey(description) !== codeKey(body)) return description
+  if (classifySymbol(symbol) === 'Index') return indexLabel(symbol)
+  return body.replace(/-(EQ|BE|SM)$/i, '')
+}
+
+/**
+ * What an instrument is and where it trades, in two words: "NSE index",
+ * "NSE option", "MCX future". The symbol says what it is; an MCX contract is
+ * a future or an option like any other, and a cash-market listing outside
+ * the -EQ/-BE/-SM series (BSE's groups) is still a share.
+ */
+export function instrumentKind(instrument: { symbol: string; exchange?: string | null; segment?: string | null }): string {
+  const s = instrument.symbol.trim().toUpperCase()
+  const exchange = instrument.exchange?.trim() || (s.includes(':') ? s.slice(0, s.indexOf(':')) : '')
+  return [exchange, kindWord(s, instrument.segment)].filter(Boolean).join(' ')
+}
+
+function kindWord(symbol: string, segment: string | null | undefined): string {
+  switch (classifySymbol(symbol)) {
+    case 'Index':
+      return 'index'
+    case 'Equity':
+      return 'equity'
+    case 'Options':
+      return 'option'
+    case 'Futures':
+      return 'future'
+    case 'Commodity':
+      return symbol.endsWith('FUT') ? 'future' : /(CE|PE)$/.test(symbol) ? 'option' : 'commodity'
+    case 'Other':
+      return segment?.toUpperCase() === 'CM' ? 'equity' : ''
+  }
+}
+
 /** Sensible ordering for resolution columns: intraday minutes first, then D. */
 export function resolutionRank(resolution: string): number {
   const r = resolution.toLowerCase()

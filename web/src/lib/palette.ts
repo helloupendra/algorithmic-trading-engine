@@ -11,6 +11,7 @@
 import type { NavWorkspace, Side } from './modules'
 import type { Instrument, LiveRunSummary, StrategyListItem } from './types'
 import { UNDERLYINGS } from './optionChain'
+import { instrumentKind, instrumentName } from './symbols'
 
 export type PaletteKind = 'page' | 'symbol' | 'strategy' | 'run'
 
@@ -125,13 +126,19 @@ export function symbolUrl(symbol: string): string {
   return `/markets/chart?symbol=${encodeURIComponent(symbol)}`
 }
 
+/**
+ * A symbol by the name people use and what it is ("NIFTY 50", "NSE index"),
+ * with its code on the right for whoever knows it by that. It was listed by
+ * its code and then by the master's description, which for an index is the
+ * code again: "NSE:NIFTY50-INDEX  NIFTY50-INDEX".
+ */
 export function symbolItems(instruments: readonly Instrument[] | undefined, limit = 8): PaletteItem[] {
   return (instruments ?? []).slice(0, limit).map((i) => ({
     id: `symbol:${i.id}:${i.symbol}`,
     kind: 'symbol',
-    label: i.symbol,
-    detail: i.description || undefined,
-    meta: [i.exchange, i.instrumentType].filter(Boolean).join(' · '),
+    label: instrumentName(i),
+    detail: instrumentKind(i) || undefined,
+    meta: i.symbol,
     to: symbolUrl(i.symbol),
   }))
 }
