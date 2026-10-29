@@ -64,6 +64,8 @@
   flex-direction: column;
 }
 .charts__stage .chart { height: min(62vh, 620px); }
+/* RSI or MACD under the price: the panes take their share, so the chart grows rather than squeezing the candles. */
+.charts__stage .chart.chart--panes { height: min(80vh, 820px); }
 .charts__empty {
   display: flex;
   flex-direction: column;
@@ -100,13 +102,76 @@
 }
 .charts__stat-v { font-size: 13.5px; color: var(--text); font-variant-numeric: tabular-nums; }
 
+/* The indicators menu (IndicatorMenu.tsx): a button at the end of the
+   toolbar and the list it opens under it, right-aligned to it. */
+.ind { position: relative; }
+.ind__btn { display: inline-flex; align-items: center; gap: 6px; }
+.ind__count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ind__pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: min(320px, calc(100vw - 32px));
+  padding: 6px 0;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs);
+}
+.ind__section {
+  padding: 8px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ind__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 2px 12px;
+}
+.ind__switch { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.ind__switch input { margin: 0; accent-color: var(--brand); }
+.ind__switch:has(input:disabled) { cursor: not-allowed; opacity: 0.55; }
+.ind__name { font-weight: 550; }
+.ind__numbers { color: var(--text-3); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
+.ind__row .ind__period { width: 68px; min-height: 28px; padding: 4px 8px; font-size: 12.5px; }
+.ind__note { max-width: 58%; color: var(--text-3); font-size: var(--fs-xs); text-align: right; }
+.ind__foot {
+  margin: 4px 0 0;
+  padding: 8px 12px 2px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-3);
+  font-size: var(--fs-s);
+}
+
 .charts__data { color: var(--text-3); font-size: 12.5px; }
 .charts__data summary { cursor: pointer; padding: 4px 0; }
 .charts__data-table { margin-top: 6px; }
 .charts__data-table td { padding: 6px 10px; font-size: 12.5px; }
 
 @media (max-width: 720px) {
-  .charts__symbol { width: 100%; }
+  /* The symbol box and the indicators menu share the first row; the
+     switches take the second. */
+  .charts__symbol { width: auto; flex: 1 1 0; }
+  .ind { order: 1; }
+  .charts__segs { order: 2; }
   /* On a phone the switches, the picks and the structure switches are one
      row each that scrolls sideways in its own box (the hidden edge fades:
      .scroll-x, lib/scrollCues.ts), so the chart is not four rows down. The
@@ -123,5 +188,6 @@
   .charts__segs .seg__btn { padding-left: 8px; padding-right: 8px; min-height: 36px; }
   .charts__pick { min-height: 36px; display: inline-flex; align-items: center; }
   .charts__stage .chart { height: 46vh; }
+  .charts__stage .chart.chart--panes { height: 66vh; }
   .charts__price { font-size: 22px; }
 }

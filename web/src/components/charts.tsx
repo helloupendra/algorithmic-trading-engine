@@ -8,14 +8,20 @@
 
 import { chartOptions } from '../lib/chartTheme'
 import { useTheme } from '../lib/theme'
-import { useEffect, useRef } from 'react'
+import { hasLowerPanes, istDate, type IndicatorSettings } from '../lib/chart'
+import { bollinger, cursor, ema, macd, rsi, sessionVwap, sma, supertrend, type StudyCursor } from '../lib/indicators'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
   createChart,
   HistogramSeries,
+  LineSeries,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
+  type LineSeriesPartialOptions,
   type UTCTimestamp,
+  type WhitespaceData,
 } from 'lightweight-charts'
 
 function cssVar(name: string): string {
@@ -83,17 +89,207 @@ function drawable(candles: readonly PriceCandle[]): [UTCTimestamp, PriceCandle][
   return [...byTime.entries()]
 }
 
+// ---------------------------------------------------------- the indicators
+
+/** A study's value on one candle. */
+interface Reading<V> {
+  bar: PriceCandle
+  value: V | null
+}
+
+/** One line (or histogram) a study draws: its series, and its number and colour from the study's value. */
+interface Plot<V> {
+  series: ISeriesApi<'Line' | 'Histogram'>
+  value: (v: V) => number | null
+  color?: (v: V) => string
+  /**
+   * Where the line must not run on to the next candle: a new session's VWAP,
+   * a Supertrend that turned. lightweight-charts joins every point it is
+   * given and colours a segment by its first point, so that point is drawn
+   * in no colour at all.
+   */
+  breaks?: (a: Reading<V>, b: Reading<V>) => boolean
+}
+
+const NO_COLOUR = 'rgba(0, 0, 0, 0)'
+
+function point<V>(plot: Plot<V>, at: Reading<V>, next: Reading<V> | null): { time: UTCTimestamp; value: number; color?: string } | WhitespaceData<UTCTimestamp> {
+  const time = istTime(at.bar.timeUtc)
+  if (at.value == null) return { time }
+  const value = plot.value(at.value)
+  if (value == null) return { time }
+  if (next && plot.breaks?.(at, next)) return { time, value, color: NO_COLOUR }
+  return plot.color ? { time, value, color: plot.color(at.value) } : { time, value }
+}
+
+/**
+ * One study on the chart. `fill` draws it over every candle; `tick` moves it
+ * with the forming candle, which costs one step of the study (lib/indicators,
+ * `cursor`) and an update of the last point of each line, not the series
+ * again: on a day of 1-minute candles a price arrives several times a second.
+ */
+interface Track {
+  fill(rows: readonly PriceCandle[]): void
+  /** The last candle moved (`grew` false) or a new one opened after it (`grew` true). */
+  tick(last: PriceCandle, grew: boolean): void
+  remove(): void
+}
+
+function track<V>(chart: IChartApi, start: () => StudyCursor<V>, plots: Plot<V>[]): Track {
+  let walk = start()
+  // The candle before the forming one, and the forming one, as last drawn.
+  let before: Reading<V> | null = null
+  let last: Reading<V> | null = null
+  // Per plot, whether the point before the forming candle is drawn as a break.
+  let broken = plots.map(() => false)
+
+  return {
+    fill(rows) {
+      walk = start()
+      const readings = rows.map((bar, i) => ({ bar, value: i < rows.length - 1 ? walk.close(bar) : walk.peek(bar) }))
+      for (const plot of plots) plot.series.setData(readings.map((r, i) => point(plot, r, readings[i + 1] ?? null)))
+      before = readings[readings.length - 2] ?? null
+      last = readings[readings.length - 1] ?? null
+      broken = plots.map((plot) => !!(before && last && plot.breaks?.(before, last)))
+    },
+    tick(bar, grew) {
+      if (grew && last) {
+        // The candle that was forming has closed (the same object, as isTailUpdate checks).
+        walk.close(last.bar)
+        before = last
+        broken = plots.map(() => false)
+      }
+      const now: Reading<V> = { bar, value: walk.peek(bar) }
+      last = now
+      plots.forEach((plot, i) => {
+        // The forming candle can turn the trend and turn it back between two prices.
+        const breaks = !!(before && plot.breaks?.(before, now))
+        if (before && breaks !== broken[i]) {
+          plot.series.update(point(plot, before, now), true)
+          broken[i] = breaks
+        }
+        plot.series.update(point(plot, now, null))
+      })
+    },
+    remove() {
+      for (const plot of plots) chart.removeSeries(plot.series)
+    },
+  }
+}
+
+/** The colours the studies draw in, read from the theme's tokens when the chart is made. */
+function studyColours() {
+  return {
+    sma: cssVar('--warn') || '#e3b341',
+    ema: cssVar('--brand-hi') || '#7096ff',
+    vwap: cssVar('--study-vwap') || '#b48cff',
+    band: cssVar('--text-3') || '#76869c',
+    guide: cssVar('--line-strong') || '#2b3a4e',
+    up: cssVar('--success') || '#31c48d',
+    down: cssVar('--danger') || '#f4635e',
+  }
+}
+
+/**
+ * The tracks for a choice of indicators: the overlays on the price pane, then
+ * RSI and MACD in panes of their own under it, in that order.
+ */
+function buildTracks(chart: IChartApi, settings: IndicatorSettings): Track[] {
+  const c = studyColours()
+  const { on } = settings
+  const line = (pane: number, options: LineSeriesPartialOptions) =>
+    chart.addSeries(LineSeries, { lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, ...options }, pane) as ISeriesApi<'Line' | 'Histogram'>
+  const tracks: Track[] = []
+
+  if (on.sma) {
+    const period = settings.smaPeriod
+    tracks.push(track(chart, () => cursor(sma(period)), [{ series: line(0, { color: c.sma, title: `SMA ${period}` }), value: (v) => v }]))
+  }
+  if (on.ema) {
+    const period = settings.emaPeriod
+    tracks.push(track(chart, () => cursor(ema(period)), [{ series: line(0, { color: c.ema, title: `EMA ${period}` }), value: (v) => v }]))
+  }
+  if (on.vwap) {
+    tracks.push(
+      track(chart, () => cursor(sessionVwap()), [
+        { series: line(0, { color: c.vwap, title: 'VWAP' }), value: (v) => v, breaks: (a, b) => istDate(a.bar.timeUtc) !== istDate(b.bar.timeUtc) },
+      ]),
+    )
+  }
+  if (on.bollinger) {
+    const edge = { color: c.band, lastValueVisible: false }
+    tracks.push(
+      track(chart, () => cursor(bollinger(20, 2)), [
+        { series: line(0, edge), value: (v) => v.upper },
+        { series: line(0, { color: c.band, lineStyle: LineStyle.Dashed, title: 'BB 20, 2' }), value: (v) => v.middle },
+        { series: line(0, edge), value: (v) => v.lower },
+      ]),
+    )
+  }
+  if (on.supertrend) {
+    tracks.push(
+      track(chart, () => cursor(supertrend(10, 3)), [
+        {
+          series: line(0, { lineWidth: 2, title: 'ST 10, 3' }),
+          value: (v) => v.line,
+          color: (v) => (v.up ? c.up : c.down),
+          breaks: (a, b) => a.value != null && b.value != null && a.value.up !== b.value.up,
+        },
+      ]),
+    )
+  }
+
+  // The panes under the price are numbered in the order they are added.
+  let pane = 1
+  if (on.rsi) {
+    const series = line(pane, {
+      color: c.ema,
+      title: 'RSI 14',
+      // RSI lives between 0 and 100; a scale fitted to the visible stretch would move the 70 and 30 lines.
+      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+    })
+    for (const price of [70, 30]) series.createPriceLine({ price, color: c.guide, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '' })
+    tracks.push(track(chart, () => cursor(rsi(14)), [{ series, value: (v) => v }]))
+    pane += 1
+  }
+  if (on.macd) {
+    const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, pane) as ISeriesApi<'Line' | 'Histogram'>
+    tracks.push(
+      track(chart, () => cursor(macd(12, 26, 9)), [
+        { series: histogram, value: (v) => v.histogram, color: (v) => ((v.histogram ?? 0) >= 0 ? `${c.up}88` : `${c.down}88`) },
+        { series: line(pane, { color: c.ema, title: 'MACD 12, 26' }), value: (v) => v.macd },
+        { series: line(pane, { color: c.sma, title: 'Signal 9' }), value: (v) => v.signal },
+      ]),
+    )
+  }
+
+  // The price keeps most of the height: three parts to each pane under it.
+  const panes = chart.panes()
+  if (panes.length > 1) panes[0].setStretchFactor(3)
+  return tracks
+}
+
 /**
  * Full-height price chart: candlesticks with a volume histogram tucked into the
- * bottom fifth of the same pane. Crosshair/tooltip come from lightweight-charts.
+ * bottom fifth of the same pane, the chosen indicators over the price, and
+ * RSI and MACD in panes under it. Crosshair/tooltip come from lightweight-charts.
  *
  * The chart is built once and fed new data in place. The forming candle
  * moves with every pushed price, several times a second; rebuilding the
  * chart for each would flicker and throw away the reader's zoom. It is
  * fitted to its data only when `fitKey` changes (another symbol, resolution
- * or range), or on its first data when no key is given.
+ * or range), or on its first data when no key is given. The indicators move
+ * with the forming candle the same way, one step and one point per price.
  */
-export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCandle[]; fitKey?: string }) {
+export function PriceChart({
+  candles,
+  fitKey = '',
+  indicators,
+}: {
+  candles: readonly PriceCandle[]
+  fitKey?: string
+  indicators?: IndicatorSettings
+}) {
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const priceRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -101,6 +297,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
   const colorsRef = useRef({ up: '', down: '' })
   const shownRef = useRef<readonly PriceCandle[] | null>(null)
   const fittedRef = useRef<string | null>(null)
+  const tracksRef = useRef<Track[]>([])
 
   // The tokens are read once, when the chart is created: a theme change makes a new chart.
   const { theme } = useTheme()
@@ -146,6 +343,24 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
     }
   }, [theme])
 
+  // The indicators, made again whenever the choice changes and drawn over
+  // the candles already on the chart. A theme change makes a new chart, and
+  // the data effect below draws them on it.
+  const chosen = useMemo(() => (indicators ? JSON.stringify(indicators) : ''), [indicators])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !chosen) return
+    const tracks = buildTracks(chart, JSON.parse(chosen) as IndicatorSettings)
+    tracksRef.current = tracks
+    const rows = drawable(shownRef.current ?? []).map(([, c]) => c)
+    for (const t of tracks) t.fill(rows)
+    return () => {
+      // After a theme change the chart they were on is gone, and its series with it.
+      if (chartRef.current === chart) for (const t of tracks) t.remove()
+      tracksRef.current = []
+    }
+  }, [chosen, theme])
+
   useEffect(() => {
     const chart = chartRef.current
     const priceSeries = priceRef.current
@@ -166,6 +381,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
       const time = istTime(last.timeUtc)
       priceSeries.update(bar(time, last))
       volumeSeries.update(volume(time, last))
+      for (const t of tracksRef.current) t.tick(last, candles.length > prev.length)
       return
     }
 
@@ -174,6 +390,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
     volumeSeries.setData(rows.map(([time, c]) => volume(time, c)))
     // An index trades no volume, and a row of empty bars reads as a dotted line under the candles.
     volumeSeries.applyOptions({ visible: rows.some(([, c]) => (c.volume ?? 0) > 0) })
+    for (const t of tracksRef.current) t.fill(rows.map(([, c]) => c))
     if (fittedRef.current !== fitKey && rows.length > 0) {
       fittedRef.current = fitKey
       chart.timeScale().fitContent()
@@ -182,5 +399,5 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
 
   useResize(chartRef, ref)
 
-  return <div ref={ref} className="chart chart--tall" />
+  return <div ref={ref} className={`chart chart--tall${hasLowerPanes(indicators) ? ' chart--panes' : ''}`} />
 }

@@ -1,10 +1,10 @@
 /**
  * Markets → Chart: the chart first, everything else in service of it.
  *
- * A symbol, a resolution, a range and a big candlestick, with market
- * structure as a layer over it. The resolution and range only offer what
- * this installation has for the symbol (the coverage endpoint says), so a
- * reader never lands on an empty chart without knowing why. Intraday
+ * A symbol, a resolution, a range and a big candlestick, with indicators and
+ * market structure as layers over it. The resolution and range only offer
+ * what this installation has for the symbol (the coverage endpoint says), so
+ * a reader never lands on an empty chart without knowing why. Intraday
  * resolutions are stitched from the stored candles (the nightly archive and
  * backfills) and today's live 1-minute bars, rolled up in the browser with
  * the server's bucket rule; 30m and 1h are then folded from the session's
@@ -31,16 +31,19 @@ import {
   STRUCTURE_DEFAULTS,
   chartLayer,
   coverageByResolution,
+  drawnIndicators,
   hasResolution,
   hasStructure,
   isIntraday,
   rangeFromDate,
+  readIndicatorSettings,
   stitch,
   storedResolution,
   structureTimeframes,
   withLiveTick,
+  writeIndicatorSettings,
 } from '../../../lib/chart'
-import type { Candle, RangeKey, Resolution, StructureSettings } from '../../../lib/chart'
+import type { Candle, IndicatorSettings, RangeKey, Resolution, StructureSettings } from '../../../lib/chart'
 import { useLivePrices } from '../../../lib/live'
 import { answerAsOf } from '../../../lib/asOf'
 import { formatAge, formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../../lib/format'
@@ -48,6 +51,7 @@ import { SymbolCombobox } from '../../../components/SymbolCombobox'
 import { InlineError, Loading } from '../../../components/ui'
 import { PriceChart } from '../../../components/charts'
 import { SmcChart } from '../../../components/SmcChart'
+import { IndicatorMenu } from './IndicatorMenu'
 import {
   StructureControls,
   StructureLadder,
@@ -77,6 +81,11 @@ export function ChartPage() {
   // a week; the toolbar keeps the two apart, and this holds if a link does not.
   const structureResolution = hasStructure(resolution) ? resolution : null
   const structureOn = layer === 'smc' && structureResolution != null
+  const [indicators, setIndicators] = useState<IndicatorSettings>(() => readIndicatorSettings())
+  const chooseIndicators = (next: IndicatorSettings) => {
+    setIndicators(next)
+    writeIndicatorSettings(next)
+  }
 
   // The address carries the symbol and the layer, and nothing else is lost when either changes.
   const setQuery = (key: 'symbol' | 'layer', value: string | null) => {
@@ -159,6 +168,11 @@ export function ChartPage() {
   // "live" only while prices are arriving. hasLive says bars were once
   // recorded for the symbol, which decides what to fetch, not what to claim.
   const isLive = !!tick && Date.now() - tick.receivedAtMs < LIVE_WITHIN_MS
+
+  // What the chart draws of the choice here (no VWAP on a day or a week), and
+  // whether there is any volume for a VWAP to weigh: an index reports none.
+  const drawn = useMemo(() => drawnIndicators(indicators, resolution), [indicators, resolution])
+  const hasVolume = useMemo(() => candles.some((c) => (c.volume ?? 0) > 0), [candles])
 
   const summary = useMemo(() => {
     if (!shown.length) return null
@@ -274,6 +288,8 @@ export function ChartPage() {
           </button>
         </div>
         </div>
+        {/* Outside the row of switches: on a phone that row scrolls, and its edge fade would cut the menu. */}
+        <IndicatorMenu value={indicators} onChange={chooseIndicators} intraday={intraday} hasVolume={hasVolume} disabled={structureOn} />
       </div>
 
       {structureOn && <StructureControls value={structure} onChange={setStructure} />}
@@ -344,7 +360,7 @@ export function ChartPage() {
         ) : structureOn ? (
           <SmcChart data={smcData} higher={higher} layers={structure.layers} fitKey={`${symbol}|${resolution}|${range}`} />
         ) : (
-          <PriceChart candles={shown} fitKey={fitKey} />
+          <PriceChart candles={shown} fitKey={fitKey} indicators={drawn} />
         )}
       </div>
 

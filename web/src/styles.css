@@ -60,6 +60,11 @@
   --acct-1: #5f88ff;
   --acct-2: #c9772a;
 
+  /* The chart's VWAP line (components/charts.tsx): a hue no other line or
+     candle on that chart uses. The other studies take --warn, --brand-hi and
+     --text-3. */
+  --study-vwap: #b48cff;
+
   /* Zones painted behind the candles on the structure chart. Deliberately not
      --pos-soft / --neg-soft: that alpha was tuned for a flat fill on a panel,
      and a block and a gap routinely share the same band of price, where two of
@@ -174,6 +179,8 @@
 
   --acct-1: #2f5fd8;
   --acct-2: #9e5817;
+
+  --study-vwap: #7448c9;
 
   --zone-ob-bull: rgba(20, 121, 81, 0.1);
   --zone-ob-bull-edge: rgba(20, 121, 81, 0.55);

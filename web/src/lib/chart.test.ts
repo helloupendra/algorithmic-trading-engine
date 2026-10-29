@@ -1,23 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  INDICATOR_DEFAULTS,
   RANGES_FOR,
   aggregate,
   chartLayer,
   coverageByResolution,
+  drawnIndicators,
   hasResolution,
   hasStructure,
   isPreOpen,
   istWeek,
   lastSessions,
   outsideSession,
+  parseIndicatorSettings,
   rangeFromDate,
+  readIndicatorSettings,
   rollUp,
   stitch,
   storedResolution,
   structureTimeframes,
   weekly,
   withLiveTick,
+  writeIndicatorSettings,
 } from './chart'
 import type { Candle } from './chart'
 import type { CoverageRow } from './queries'
@@ -298,6 +303,44 @@ describe('the week', () => {
     // The option history stamps its days that way; the pre-open rule used to throw them all away.
     const days = [ohlc('2026-10-26T00:00:00Z', 10, 12, 9, 11), ohlc('2026-10-27T00:00:00Z', 11, 13, 10, 12)]
     expect(stitch(days, [], { symbol: 'NSE:NIFTY26OCT25000CE', resolution: 'D', range: '1M' })).toHaveLength(2)
+  })
+})
+
+describe('indicator settings', () => {
+  const memory = () => {
+    const kept = new Map<string, string>()
+    return { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) }
+  }
+
+  it('reads back what was chosen, in this browser', () => {
+    const store = memory()
+    const chosen = { ...INDICATOR_DEFAULTS, on: { ...INDICATOR_DEFAULTS.on, ema: true, rsi: true }, emaPeriod: 9 }
+    writeIndicatorSettings(chosen, store)
+    expect(readIndicatorSettings(store)).toEqual(chosen)
+  })
+
+  it('takes the default for whatever is missing or wrong, and starts with nothing drawn', () => {
+    expect(parseIndicatorSettings(null)).toEqual(INDICATOR_DEFAULTS)
+    expect(parseIndicatorSettings('not json')).toEqual(INDICATOR_DEFAULTS)
+    const odd = parseIndicatorSettings(JSON.stringify({ on: { sma: true, macd: 'yes', bogus: true }, smaPeriod: 1, emaPeriod: 12.5 }))
+    expect(odd.on).toEqual({ ...INDICATOR_DEFAULTS.on, sma: true })
+    expect(odd.smaPeriod).toBe(INDICATOR_DEFAULTS.smaPeriod)
+    expect(odd.emaPeriod).toBe(INDICATOR_DEFAULTS.emaPeriod)
+  })
+
+  it('survives storage that throws (a private window, blocked site data)', () => {
+    const denied = () => {
+      throw new Error('denied')
+    }
+    const blocked = { getItem: denied, setItem: denied }
+    expect(readIndicatorSettings(blocked)).toEqual(INDICATOR_DEFAULTS)
+    expect(() => writeIndicatorSettings(INDICATOR_DEFAULTS, blocked)).not.toThrow()
+  })
+
+  it('draws no VWAP on a day or a week, and keeps the choice for the next intraday chart', () => {
+    const chosen = { ...INDICATOR_DEFAULTS, on: { ...INDICATOR_DEFAULTS.on, vwap: true, sma: true } }
+    expect(drawnIndicators(chosen, 'W').on).toMatchObject({ vwap: false, sma: true })
+    expect(drawnIndicators(chosen, '60')).toBe(chosen)
   })
 })
 

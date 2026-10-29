@@ -2,9 +2,9 @@
  * Markets → Chart as data: which resolutions and ranges a symbol offers, how
  * a range becomes a window of candles, how live 1-minute bars fold into the
  * stored series, how 30m, 1h and weekly candles are built from the stored
- * ones, and which timeframes the structure layer reads. The page only
- * renders these, so each rule is pinned by chart.test.ts rather than by a
- * screenshot of an empty chart.
+ * ones, which indicators are drawn, and which timeframes the structure layer
+ * reads. The page only renders these, so each rule is pinned by
+ * chart.test.ts rather than by a screenshot of an empty chart.
  */
 
 import type { CoverageRow } from './queries'
@@ -452,3 +452,98 @@ export function structureTimeframes(resolution: StructureResolution): string {
   return [...above[resolution], resolution].map((r) => (r === 'D' ? '1D' : `${r}m`)).join(',')
 }
 
+// ------------------------------------------------------------- indicators
+
+/** What the chart can draw over the price, and in panes under it (RSI, MACD). */
+export type IndicatorKey = 'sma' | 'ema' | 'vwap' | 'bollinger' | 'supertrend' | 'rsi' | 'macd'
+
+export interface IndicatorSettings {
+  on: Record<IndicatorKey, boolean>
+  /** The two periods a reader sets; the others are drawn at their standard numbers. */
+  smaPeriod: number
+  emaPeriod: number
+}
+
+/** Shortest and longest SMA or EMA a reader can ask for; the alerts take EMAs to 500 too. */
+export const PERIOD_MIN = 2
+export const PERIOD_MAX = 500
+
+/** A first visit is the plain chart: nothing on until the reader turns it on. */
+export const INDICATOR_DEFAULTS: IndicatorSettings = {
+  on: { sma: false, ema: false, vwap: false, bollinger: false, supertrend: false, rsi: false, macd: false },
+  smaPeriod: 50,
+  emaPeriod: 20,
+}
+
+/** A whole period in range, or null. */
+export function parsePeriod(value: unknown): number | null {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return typeof n === 'number' && Number.isInteger(n) && n >= PERIOD_MIN && n <= PERIOD_MAX ? n : null
+}
+
+/**
+ * The choice as stored, field by field: whatever is missing or not a valid
+ * value takes its default, so a key written by an older console, or edited
+ * by hand, never leaves the chart without a setting.
+ */
+export function parseIndicatorSettings(raw: string | null | undefined): IndicatorSettings {
+  let stored: unknown = null
+  try {
+    stored = raw ? JSON.parse(raw) : null
+  } catch {
+    stored = null
+  }
+  const s = stored && typeof stored === 'object' ? (stored as Partial<Record<keyof IndicatorSettings, unknown>>) : {}
+  const on = s.on && typeof s.on === 'object' ? (s.on as Partial<Record<IndicatorKey, unknown>>) : {}
+  const keys = Object.keys(INDICATOR_DEFAULTS.on) as IndicatorKey[]
+  return {
+    on: Object.fromEntries(keys.map((k) => [k, on[k] === true])) as Record<IndicatorKey, boolean>,
+    smaPeriod: parsePeriod(s.smaPeriod) ?? INDICATOR_DEFAULTS.smaPeriod,
+    emaPeriod: parsePeriod(s.emaPeriod) ?? INDICATOR_DEFAULTS.emaPeriod,
+  }
+}
+
+/**
+ * Remembered per browser (localStorage), which is why every read and write is
+ * guarded: a private window or blocked site data must not take the chart down.
+ */
+const INDICATORS_KEY = 'openfno.chart.indicators'
+
+function storage(): Storage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+export function readIndicatorSettings(store: Pick<Storage, 'getItem'> | null = storage()): IndicatorSettings {
+  try {
+    return parseIndicatorSettings(store?.getItem(INDICATORS_KEY))
+  } catch {
+    return INDICATOR_DEFAULTS
+  }
+}
+
+export function writeIndicatorSettings(settings: IndicatorSettings, store: Pick<Storage, 'setItem'> | null = storage()): void {
+  try {
+    store?.setItem(INDICATORS_KEY, JSON.stringify(settings))
+  } catch {
+    // Storage can be full or blocked; the choice still holds while the page is open.
+  }
+}
+
+/**
+ * What is drawn of the choice at a resolution. VWAP is a session's average,
+ * so a day or a week chart has none; the choice itself is kept, and comes
+ * back on the next intraday chart.
+ */
+export function drawnIndicators(settings: IndicatorSettings, resolution: Resolution): IndicatorSettings {
+  if (isIntraday(resolution) || !settings.on.vwap) return settings
+  return { ...settings, on: { ...settings.on, vwap: false } }
+}
+
+/** Whether a choice draws anything under the price, which gives the chart more height. */
+export function hasLowerPanes(settings: IndicatorSettings | undefined): boolean {
+  return !!settings && (settings.on.rsi || settings.on.macd)
+}
