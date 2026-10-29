@@ -64,15 +64,16 @@ export function chainUnderlying(requested: string | null | undefined, known?: re
 
 /**
  * A view's URL, carrying what the views share: the underlying and the expiry,
- * and the replay clock (`at`) to the views that read it. The Chain and OI
- * history both stop at it, so a chain rewound to 11:00 opens OI history
- * ending at 11:00 rather than at now; Levels reads the live chain and leaves
- * it behind.
+ * and the replay clock (the day `d` and the minute `at`, lib/chainReplay.ts)
+ * to the views that read it. The Chain and OI history both stop at it, so a
+ * chain rewound to 14 Oct 11:00 opens OI history ending then rather than
+ * now, and Straddle & IV opens on that day; Levels reads the live chain and
+ * leaves it behind.
  */
 export function chainViewUrl(view: ChainViewKey, search: string | URLSearchParams): string {
   const from = new URLSearchParams(search)
   const next = new URLSearchParams()
-  for (const key of view === 'levels' ? ['u', 'expiry'] : ['u', 'expiry', 'at']) {
+  for (const key of view === 'levels' ? ['u', 'expiry'] : ['u', 'expiry', 'd', 'at']) {
     const value = from.get(key)
     if (value) next.set(key, value)
   }

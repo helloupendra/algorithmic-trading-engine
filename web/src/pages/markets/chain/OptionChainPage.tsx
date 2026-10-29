@@ -48,12 +48,13 @@ export function OptionChainPage({ view }: { view: ChainViewKey }) {
     }
   }, [underlying])
 
-  // Another underlying has other expiries and another session to replay.
+  // Another underlying has other expiries. The replay clock is a moment of
+  // the market and stays (lib/chainReplay.ts writes a minute with its day),
+  // so NIFTY and BANKNIFTY can be read at the same minute of 14 Oct.
   const pick = (name: string) => {
     const next = new URLSearchParams(params)
     next.set('u', name)
     next.delete('expiry')
-    next.delete('at')
     setParams(next, { replace: true })
   }
 

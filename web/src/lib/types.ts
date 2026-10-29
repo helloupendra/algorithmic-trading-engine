@@ -1901,6 +1901,13 @@ export interface OptionChainRecordedExpiries {
   expiries: OptionChainRecordedExpiry[]
 }
 
+/** GET /api/OptionChain/days/recorded: the IST days an underlying's chain was recorded on. */
+export interface OptionChainRecordedDays {
+  underlying: string
+  /** "yyyy-mm-dd", newest first. */
+  days: string[]
+}
+
 export interface OptionChainSeriesPoint {
   capturedUtc: string
   spotPrice: number

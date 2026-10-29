@@ -363,6 +363,12 @@ describe('the chain page views', () => {
     expect(chainViewUrl('levels', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/levels?u=SENSEX&expiry=2026-10-01')
   })
 
+  it('carries the replay day with the minute, so OI history and the straddle open on the day the chain was rewound to', () => {
+    expect(chainViewUrl('oi', '?u=NIFTY&d=2026-10-14&at=11:00')).toBe('/markets/chain/oi?u=NIFTY&d=2026-10-14&at=11%3A00')
+    expect(chainViewUrl('straddle', '?u=NIFTY&d=2026-10-14')).toBe('/markets/chain/straddle?u=NIFTY&d=2026-10-14')
+    expect(chainViewUrl('levels', '?u=NIFTY&d=2026-10-14&at=11:00')).toBe('/markets/chain/levels?u=NIFTY')
+  })
+
   it('has one path per view, all under the chain tab', () => {
     expect(CHAIN_VIEWS.map((v) => v.path)).toEqual(['/markets/chain', '/markets/chain/oi', '/markets/chain/levels', '/markets/chain/straddle'])
   })

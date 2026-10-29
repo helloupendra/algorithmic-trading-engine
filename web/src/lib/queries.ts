@@ -2126,18 +2126,24 @@ export function useActivityUserSummary(userId: number | null) {
 
 // --- option chain ------------------------------------------------------------
 
-/** One strike through the session — the OI-change curves. */
+/**
+ * One strike through the session — the OI-change curves. `fromUtc` is the
+ * session's start: without it the answer is every capture of the expiry,
+ * a week of a weekly's days laid end to end.
+ */
 export function useOptionChainSeries(
   underlying: string,
   strike: number | null,
   expiry?: string,
   toUtc?: string,
+  fromUtc?: string,
 ) {
   return useQuery({
-    queryKey: ['optionChainSeries', underlying, strike, expiry ?? null, toUtc ?? null],
+    queryKey: ['optionChainSeries', underlying, strike, expiry ?? null, toUtc ?? null, fromUtc ?? null],
     queryFn: () => {
       const params = new URLSearchParams({ underlying, strike: String(strike) })
       if (expiry) params.set('expiry', expiry)
+      if (fromUtc) params.set('fromUtc', fromUtc)
       if (toUtc) params.set('toUtc', toUtc)
       return api.get<OptionChainSeries>(`/api/OptionChain/series?${params}`)
     },
@@ -2161,6 +2167,23 @@ export function useOptionChainRecordedExpiries(underlying: string, day?: string)
       if (day) params.set('day', day)
       return api.get<import('./types').OptionChainRecordedExpiries>(`/api/OptionChain/expiries/recorded?${params}`)
     },
+    enabled: Boolean(underlying),
+    staleTime: 60_000,
+    refetchInterval: 300_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * The IST days the underlying's chain was recorded on, newest first: what the
+ * chain's day picker lists. Only a new session changes it, and the API keeps
+ * it for two minutes, so it is asked for again every five.
+ */
+export function useOptionChainRecordedDays(underlying: string) {
+  return useQuery({
+    queryKey: ['optionChainRecordedDays', underlying],
+    queryFn: () =>
+      api.get<import('./types').OptionChainRecordedDays>(`/api/OptionChain/days/recorded?${new URLSearchParams({ underlying })}`),
     enabled: Boolean(underlying),
     staleTime: 60_000,
     refetchInterval: 300_000,

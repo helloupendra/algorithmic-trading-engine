@@ -3,7 +3,8 @@
  * trader reads it: where the price is, what every strike costs, how much is
  * written on it and how that moved today. The page around it (OptionChainPage)
  * picks the underlying; this view picks the expiry, the columns and the replay
- * clock.
+ * clock: any recorded day and a minute on it, carried in the URL with the OI
+ * history tab (ReplayClock), so a link opens the chain of that minute.
  *
  * Two layers, and the page always says which it is showing. The Dhan recorder
  * captures the whole chain once a minute (with IV and greeks); the Dhan feed
@@ -50,7 +51,6 @@ import {
   istTime,
   price,
   recordedCadence,
-  replayAsOfUtc,
   sidePeak,
   signedPercent,
   sourceLabel,
@@ -59,7 +59,10 @@ import {
   tone,
   type WindowSize,
 } from '../../../lib/optionChain'
+import { replayGapNote, replayMoment } from '../../../lib/chainReplay'
 import { OptionChainAnalysis } from './OptionChainAnalysis'
+import { ReplayClockControl } from './ReplayClock'
+import { useReplayClock } from './useReplayClock'
 import { formatInrSigned } from '../../../lib/format'
 
 // --- columns ----------------------------------------------------------------------
@@ -695,15 +698,16 @@ const runLink = (runId: number) => `/trade/runs/${runId}`
 export function ChainView({ underlying }: { underlying: string }) {
   const [params, setParams] = useSearchParams()
   const expiry = params.get('expiry') ?? undefined
-  const replayTime = params.get('at') ?? ''
   const [windowSize, setWindowSize] = useState<WindowSize>(20)
   const [toggles, setToggles] = useState<Toggles>({ greeks: false, bidAsk: false, perLot: false })
-  const [sessionDate, setSessionDate] = useState<string>('')
+  // The day the live chain was last seen on, for this underlying: the newest
+  // session even in the minutes before the recorded days list it.
+  const [liveSeen, setLiveSeen] = useState<{ underlying: string; day: string } | null>(null)
+  const replay = useReplayClock(underlying, liveSeen?.underlying === underlying ? liveSeen.day : null)
+  const asOfUtc = replay.asOfUtc
 
-  const asOfUtc = replayTime && sessionDate ? replayAsOfUtc(sessionDate, replayTime) : undefined
-
-  // The expiries recorded on the session shown: the nearest every minute, a few later ones every five.
-  const recorded = useOptionChainRecordedExpiries(underlying, sessionDate || undefined)
+  // The expiries recorded on the day shown: the nearest every minute, a few later ones every five.
+  const recorded = useOptionChainRecordedExpiries(underlying, replay.sessionDay ?? undefined)
   const recordedData = recorded.data && recorded.data.underlying === underlying ? recorded.data : undefined
   const view = useOptionChainView(underlying, expiry, asOfUtc)
   // keepPreviousData must never show one underlying's chain under another's tab.
@@ -748,11 +752,13 @@ export function ChainView({ underlying }: { underlying: string }) {
   const positions = !asOfUtc && positionsQuery.data ? positionsQuery.data : []
   const trendData = trend.data && trend.data.underlying === underlying ? trend.data : undefined
 
-  // The replay clock is a time on the session the chain belongs to.
-  const knownSession = trendData?.sessionDate ?? (header?.snapshotCapturedUtc ? istDate(Date.parse(header.snapshotCapturedUtc)) : '')
+  const liveDay = !asOfUtc && header?.snapshotCapturedUtc ? istDate(Date.parse(header.snapshotCapturedUtc)) : null
   useEffect(() => {
-    if (knownSession && (!sessionDate || (!replayTime && knownSession !== sessionDate))) setSessionDate(knownSession)
-  }, [knownSession, replayTime, sessionDate])
+    if (liveDay && (liveSeen?.underlying !== underlying || liveSeen.day !== liveDay)) setLiveSeen({ underlying, day: liveDay })
+  }, [liveDay, liveSeen, underlying])
+  // Rewound to a minute nothing of this expiry was captured by on the day:
+  // the chain shown is the one before, and the page says so.
+  const gapNote = asOfUtc && replay.sessionDay ? replayGapNote(replay.sessionDay, replay.clock.time, header?.snapshotCapturedUtc) : null
 
   const setParam = (key: string, value: string | undefined) => {
     const next = new URLSearchParams(params)
@@ -761,7 +767,8 @@ export function ChainView({ underlying }: { underlying: string }) {
     setParams(next, { replace: true })
   }
 
-  const todayIso = istDate(Date.now())
+  // Days to expiry as they stood on the day shown, not as they stand today.
+  const shownDay = replay.sessionDay ?? istDate(Date.now())
   // Each recorded expiry with its cadence mark; the one on screen and the one
   // a link named are kept even when that day's list does not have them.
   const expiryOptions = useMemo(() => {
@@ -774,9 +781,6 @@ export function ChainView({ underlying }: { underlying: string }) {
   // The nearest is what every read gets without an expiry, so picking it
   // clears the choice: the page then follows the nearest into the next week.
   const pickExpiry = (d: string) => setParam('expiry', d && d === recordedData?.defaultExpiry ? undefined : d)
-
-  const firstCapture = trendData?.points[0]?.capturedUtc
-  const lastCapture = trendData?.points[trendData.points.length - 1]?.capturedUtc
 
   return (
     <>
@@ -794,7 +798,7 @@ export function ChainView({ underlying }: { underlying: string }) {
             {expiryOptions.length === 0 && <option value="">no expiry captured</option>}
             {expiryOptions.map((o) => (
               <option key={o.date} value={o.date}>
-                {expiryLabel(o.date, todayIso)}{o.cadence ? ` · ${o.cadence}` : ''}
+                {expiryLabel(o.date, shownDay)}{o.cadence ? ` · ${o.cadence}` : ''}
               </option>
             ))}
           </select>
@@ -827,25 +831,7 @@ export function ChainView({ underlying }: { underlying: string }) {
 
         <span className="oc-toolbar__spacer" />
 
-        <label className="oc-control" title="Replay a capture from this session (IST)">
-          <span className="oc-control__label">As of</span>
-          <input
-            type="time"
-            className="field__input field__input--sm oc-time"
-            value={replayTime}
-            min={firstCapture ? istTime(firstCapture) : undefined}
-            max={lastCapture ? istTime(lastCapture) : undefined}
-            onChange={(e) => setParam('at', e.target.value || undefined)}
-            aria-label="Replay time (IST)"
-          />
-          {replayTime ? (
-            <button type="button" className="btn btn--sm btn--primary" onClick={() => setParam('at', undefined)}>
-              Back to live
-            </button>
-          ) : (
-            <span className="faint oc-control__hint">{sessionDate ? `${sessionDate.slice(8, 10)}/${sessionDate.slice(5, 7)}` : ''}</span>
-          )}
-        </label>
+        <ReplayClockControl underlying={underlying} replay={replay} expiry={chainExpiry ?? capturedExpiry(expiry)} />
       </div>
 
       {view.isError && !data && <InlineError error={view.error} />}
@@ -856,12 +842,22 @@ export function ChainView({ underlying }: { underlying: string }) {
         <>
           <HeaderStrip chain={data} header={header} />
           <FreshnessLine header={header} receivedAt={view.dataUpdatedAt} fetchFailed={view.isError} />
+          {gapNote && <p className="small-note warn">{gapNote}</p>}
           {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} answeredAtMs={answerAsOf(positionsQuery)} runLink={runLink} />}
 
           {data.strikes.length === 0 ? (
             <EmptyState>
-              No chain has been captured for {underlying}{expiry ? ` (${expiry})` : ''} yet. The Dhan chain recorder captures each
-              underlying once a minute while its exchange is open; this page fills in with the first capture.
+              {asOfUtc && replay.sessionDay ? (
+                <>
+                  Nothing of {underlying}'s chain{expiry ? ` for the ${expiry} expiry` : ''} was captured by{' '}
+                  {replayMoment(replay.sessionDay, replay.clock.time)}.
+                </>
+              ) : (
+                <>
+                  No chain has been captured for {underlying}{expiry ? ` (${expiry})` : ''} yet. The Dhan chain recorder captures each
+                  underlying once a minute while its exchange is open; this page fills in with the first capture.
+                </>
+              )}
             </EmptyState>
           ) : (
             <>

@@ -28,6 +28,11 @@
 .ocp-meta { margin: 0; }
 .oi-strike { width: auto; min-width: 140px; }
 
+/* The replay clock (ReplayClock.tsx): on a phone "Back to live" drops under
+   the day and the minute rather than off the edge. */
+.oc-replay { flex-wrap: wrap; max-width: 100%; }
+.oc-replay .oc-control__label { white-space: nowrap; }
+
 /* Levels: the nine readings in one row on a desk screen, two to a row on a phone. */
 .lv-metrics { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); }
 

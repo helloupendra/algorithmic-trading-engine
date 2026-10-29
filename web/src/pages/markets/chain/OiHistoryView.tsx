@@ -23,9 +23,13 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useOptionChainSeries, useOptionChainView } from '../../../lib/queries'
 import type { OptionChainSeries, OptionChainSeriesPoint } from '../../../lib/types'
-import { capturedExpiry, expiryLabel, istDate, replayAsOfUtc } from '../../../lib/optionChain'
+import { capturedExpiry, expiryLabel, istDate } from '../../../lib/optionChain'
+import { replayGapNote, replayMoment, sessionStartUtc } from '../../../lib/chainReplay'
+import { dayLabel } from '../../../lib/straddle'
 import { formatPrice } from '../../../lib/format'
 import { EmptyState, InlineError, Loading, Panel, QueryBoundary } from '../../../components/ui'
+import { ReplayClockControl } from './ReplayClock'
+import { useReplayClock } from './useReplayClock'
 import { useWidth } from './useWidth'
 import './chain-views.css'
 
@@ -181,26 +185,26 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
 
 /**
  * One strike's session, for the underlying the page is on and the expiry the
- * chain view picked. When the Chain tab is rewound (`at` in the URL) the
- * session ends there: the strikes, the money and the curves are the ones
- * that were true at that minute, not the whole day to now.
+ * chain view picked. The session is the replay clock's day (ReplayClock): the
+ * newest, or the recorded day the URL names. Rewound to a minute, it ends
+ * there: the strikes, the money and the curves are the ones that were true
+ * at that minute, not the whole day to now.
  */
 export function OiHistoryView({ underlying }: { underlying: string }) {
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const expiry = params.get('expiry') ?? undefined
-  const replayTime = params.get('at') ?? ''
   const [strike, setStrike] = useState<number | null>(null)
   const [view, setView] = useState<View>('oiChange')
 
-  // The chain view's own query, so switching tabs costs no request.
+  // The chain view's own query, so switching tabs costs no request; its
+  // capture's day is the newest session the replay clock counts from.
   const live = useOptionChainView(underlying, expiry)
-  // The replay clock as the Chain tab reads it: the URL's time on the session
-  // of the newest capture, through the same conversion, so both tabs stop at
-  // the same capture.
   const capturedUtc = live.data?.underlying === underlying ? live.data.header?.snapshotCapturedUtc : null
-  const asOfUtc = replayTime && capturedUtc ? replayAsOfUtc(istDate(Date.parse(capturedUtc)), replayTime) : undefined
-  const replay = useOptionChainView(underlying, expiry, asOfUtc)
-  const chain = asOfUtc ? replay : live
+  // The Chain tab's clock, through the same conversion, so both tabs stop at the same capture.
+  const replay = useReplayClock(underlying, capturedUtc ? istDate(Date.parse(capturedUtc)) : null)
+  const asOfUtc = replay.asOfUtc
+  const rewound = useOptionChainView(underlying, expiry, asOfUtc)
+  const chain = asOfUtc ? rewound : live
   // keepPreviousData must never show one underlying's strikes under another's
   // name, nor the live chain's under the replay clock while the replay loads.
   const data = chain.data && chain.data.underlying === underlying && !(asOfUtc && chain.isPlaceholderData) ? chain.data : undefined
@@ -212,23 +216,32 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
   const selected = (strike != null && strikes.includes(strike) ? strike : null) ?? data?.atTheMoneyStrike ?? strikes[0] ?? null
   const selectedIndex = selected != null ? strikes.indexOf(selected) : -1
 
-  const series = useOptionChainSeries(underlying, selected, data?.expiryDate, asOfUtc)
+  // From the session's start: an expiry is recorded for a week or a month,
+  // and its days laid end to end are not one session's curve.
+  const series = useOptionChainSeries(underlying, selected, data?.expiryDate, asOfUtc, sessionStartUtc(replay.sessionDay))
   // The expiry as the chain's toolbar prints it ("29 Sep 2026 (+2 days)"), not the ISO date.
   const expiryNote = data && capturedExpiry(data.expiryDate)
-
-  const backToLive = () => {
-    const next = new URLSearchParams(params)
-    next.delete('at')
-    setParams(next, { replace: true })
-  }
+  const shownDay = replay.sessionDay ?? istDate(Date.now())
+  const gapNote = asOfUtc && replay.sessionDay ? replayGapNote(replay.sessionDay, replay.clock.time, data?.header?.snapshotCapturedUtc) : null
+  const clock = <ReplayClockControl underlying={underlying} replay={replay} expiry={expiryNote || capturedExpiry(expiry)} />
 
   if (chain.isError && !data) return <InlineError error={chain.error} />
   if (!data) return <Loading label={`Loading the ${underlying} chain…`} />
   if (data.strikes.length === 0) {
+    // The clock stays: a link to a day with nothing recorded must still lead to another day.
     return (
-      <EmptyState>
-        No chain has been captured for {underlying} yet. Open interest is only recorded while the chain recorder runs.
-      </EmptyState>
+      <>
+        <div className="oc-toolbar">
+          <span className="oc-toolbar__spacer" />
+          {clock}
+        </div>
+        <EmptyState>
+          {asOfUtc && replay.sessionDay
+            ? `Nothing of ${underlying}'s chain was captured by ${replayMoment(replay.sessionDay, replay.clock.time)}.`
+            : `No chain has been captured for ${underlying} yet.`}{' '}
+          Open interest is only recorded while the chain recorder runs.
+        </EmptyState>
+      </>
     )
   }
 
@@ -275,15 +288,7 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
           </button>
         )}
         <span className="oc-toolbar__spacer" />
-        {asOfUtc && (
-          <span className="oc-control" title="The Chain tab's replay clock (IST): the curves end at this minute">
-            <span className="oc-control__label">As of</span>
-            <b className="mono">{replayTime}</b>
-            <button type="button" className="btn btn--sm btn--primary" onClick={backToLive}>
-              Back to live
-            </button>
-          </span>
-        )}
+        {clock}
         <div className="oc-seg" role="group" aria-label="Series">
           {VIEWS.map((v) => (
             <button key={v.key} type="button" title={v.hint} aria-pressed={view === v.key} onClick={() => setView(v.key)}>
@@ -292,14 +297,16 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
           ))}
         </div>
       </div>
+      {gapNote && <p className="small-note warn">{gapNote}</p>}
 
       <Panel
         title={`${underlying} ${selected != null ? selected.toLocaleString('en-IN') : '—'}${selected === data.atTheMoneyStrike ? ' · ATM' : ''}`}
         actions={
           <span className="faint small">
-            {data.spotPrice > 0 && `spot ${formatPrice(data.spotPrice)}`}
-            {data.spotPrice > 0 && expiryNote && ' · '}
-            {expiryNote && `expiry ${expiryLabel(expiryNote, istDate(Date.now()))}`}
+            {dayLabel(shownDay)}
+            {data.spotPrice > 0 && ` · spot ${formatPrice(data.spotPrice)}`}
+            {/* Days to expiry as they stood on the day shown. */}
+            {expiryNote && ` · expiry ${expiryLabel(expiryNote, shownDay)}`}
           </span>
         }
       >

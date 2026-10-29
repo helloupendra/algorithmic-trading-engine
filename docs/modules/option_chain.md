@@ -4,7 +4,8 @@ One page, **Markets → Option chain**, with a tab per reading, and one table be
 
 * **Chain** (`/markets/chain`) — every strike of one expiry, priced, with the open
   interest written behind it.
-* **OI history** (`/markets/chain/oi`) — how one strike moved through the session.
+* **OI history** (`/markets/chain/oi`) — how one strike moved through a session: the
+  newest, or the recorded day and minute the Chain tab's **As of** names.
 * **Levels** (`/markets/chain/levels`) — the OI walls, max pain, PCR, IV and the move
   the straddle prices, read off the same chain.
 * **Straddle & IV** (`/markets/chain/straddle`) — the ATM straddle through a session
@@ -122,7 +123,16 @@ and every number on it says where it came from.
   chosen by default. A later expiry is marked with how often it is recorded
   ("every 5 min", or "one capture so far" before its second). Picking the
   nearest clears the choice, so the page follows the nearest into the next week.
-* **As of:** replays any capture of the day.
+* **As of:** a recorded day and a minute on it, shared with the OI history tab.
+  The days offered are the ones the underlying's chain was recorded on
+  (`/days/recorded`, newest first, the newest marked "today" or "latest"); the
+  expiry picker then lists that day's expiries. A past day without a minute
+  shows its last capture. Both travel in the URL, so
+  `/markets/chain?u=NIFTY&d=2026-10-14&at=11:00` opens NIFTY's chain as it
+  stood at 11:00 IST on 14 Oct; a minute is always written with its day, so
+  the link means the same minute tomorrow. With neither, the page is live.
+  Rewound to a minute that expiry has no capture by on that day, the page
+  shows the last capture before it and says so.
 
 **Live and per-minute.** A strike whose live quote is at most 2 minutes old and
 newer than the capture shows the quote's LTP, bid/ask, volume and OI, with its OI
@@ -217,6 +227,7 @@ as soon as anything comes back.
 | GET | `/api/OptionChain/series` | one strike through the session, one expiry a day (`expiry`, or each day's nearest) |
 | GET | `/api/OptionChain/expiries` | which expiries have ever been captured |
 | GET | `/api/OptionChain/expiries/recorded` | the expiries recorded on one IST day (`day`, or the newest capture's), with captures, usual spacing and which is the default |
+| GET | `/api/OptionChain/days/recorded` | the IST days the underlying's chain was recorded on, newest first: a loose walk of the (underlying, expiry, time) index, about one read per day, kept in memory and only its newest end read again every two minutes |
 | GET | `/api/OptionChain/positions` | open legs of running runs on the underlying's contracts, the caller's own (an admin's: every account's); `mode` is `LivePaper` (default: strategy runs and manual books, marked at the newer of the live quote and the stored mark) or `OfflineReplay` (backtests, at their own last mark) — never both |
 | POST | `/api/OptionChain/snapshots` | the poller's write path |
 | POST | `/api/OptionChain/poller/start` · `/stop` | admin only |
