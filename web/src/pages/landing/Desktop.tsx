@@ -308,7 +308,7 @@ export function LandingDesktop() {
             <h2 id="proof-title">The only run we show in full <em>lost money.</em></h2>
             <p>
               A directional strategy replayed over {RUN.underlying} one-minute candles, {RUN.sessions} sessions from January to
-              September 2026, every option leg priced from stored premiums with brokerage and slippage applied. Entries that
+              September 2026, every option leg priced from stored premiums. Entries that
               could not be priced are listed as skipped, never filled at a made-up price.
             </p>
           </div>

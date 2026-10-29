@@ -12,8 +12,8 @@ The two systems communicate entirely via **Redis** (Pub/Sub and Streams), ensuri
 The C# Backend is the backbone of the infrastructure.
 - **Entity Framework Core:** Manages Users, Strategies, Watchlists, and Portfolios.
 - **ReferenceDataSeeder:** Automatically seeds Users and default configurations on startup.
-- **Fyers Ingestor Worker:** Connects to the Fyers API websocket, pulling thousands of ticks per second, batching them, and writing them to TimescaleDB.
-- **Redis Publisher:** Simultaneously pushes raw market ticks to Redis Streams (`market:ticks`) so the Python Engine can react in real-time.
+- **Live data:** The API stores every tick the Python feeds post (in batches) in TimescaleDB. The feeds are Python, not C#: Dhan's on a normal day, FYERS's as the backup, and each also pushes every tick to Redis Streams (`market:ticks`) so the strategies can react in real time. FYERS also serves the history backfills. `AlgoTrading.Worker.MarketData` is optional: it only keeps a second copy of the stream in `market_ticks`. See [Data](modules/data_module.md).
+- **Redis Publisher:** Tells the running feed when the watchlist changes (`watchlist_updates`), so it resubscribes without a restart.
 
 ### B. The TimescaleDB Database (PostgreSQL)
 We use the TimescaleDB extension for PostgreSQL to handle hyper-scale time-series data.
