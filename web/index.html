@@ -61,14 +61,14 @@
          the SEO title is a sentence. -->
     <meta name="apple-mobile-web-app-title" content="OpenFNO" />
     <title>OpenFNO — open-source algo trading desk for Indian F&amp;O</title>
-    <meta name="description" content="OpenFNO is a self-hosted, open-source desk for Indian F&amp;O: live paper runs on real ticks from four vendors, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs." />
+    <meta name="description" content="OpenFNO is a self-hosted, open-source desk for Indian F&amp;O: live paper runs on real ticks, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs." />
     <link rel="canonical" href="https://openfno.com/" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenFNO" />
     <meta property="og:url" content="https://openfno.com/" />
     <meta property="og:title" content="OpenFNO — open-source algo trading desk for Indian F&amp;O" />
-    <meta property="og:description" content="Run it live, replay five years, see every rupee. Four vendor feeds into one store, 25 strategies plus one you write in the console, and backtests priced from stored option premiums." />
+    <meta property="og:description" content="Run it live on paper, replay five years, see every rupee. Live ticks and stored history in one store, 25 strategies plus one you write in the console, and backtests priced from stored option premiums." />
     <meta property="og:image:alt" content="The OpenFNO console: the option chain, with calls left, puts right and the strike ladder down the middle." />
     <meta property="og:locale" content="en_IN" />
     <meta property="og:image" content="https://openfno.com/brand/og-image.png" />
@@ -76,21 +76,36 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="OpenFNO — open-source algo trading desk for Indian F&amp;O" />
-    <meta name="twitter:description" content="Run it live, replay five years, see every rupee. A self-hosted, open-source F&amp;O desk." />
+    <meta name="twitter:description" content="Run it live on paper, replay five years, see every rupee. A self-hosted, open-source F&amp;O desk." />
     <meta name="twitter:image" content="https://openfno.com/brand/og-image.png" />
+    <!-- The licence is the one in the repository's LICENSE file (PolyForm
+         Noncommercial 1.0.0), not MIT: landing/firstPaint.test.ts reads that
+         file and fails if a "license" here names another. -->
     <script type="application/ld+json">
     {"@context":"https://schema.org","@graph":[
       {"@type":"Organization","@id":"https://openfno.com/#org","name":"OpenFNO","url":"https://openfno.com/","logo":"https://openfno.com/brand/openfno-mark-512.png","sameAs":["https://github.com/helloupendra/algorithmic-trading-engine"]},
+      {"@type":"Person","@id":"https://openfno.com/#author","name":"Upendra Singh Chauhan","sameAs":["https://github.com/helloupendra","https://www.linkedin.com/in/upendrasingh12/"]},
       {"@type":"WebSite","@id":"https://openfno.com/#site","url":"https://openfno.com/","name":"OpenFNO","publisher":{"@id":"https://openfno.com/#org"}},
       {"@type":"FAQPage","@id":"https://openfno.com/#faq","mainEntity":[
-        {"@type":"Question","name":"Is OpenFNO free and open source?","acceptedAnswer":{"@type":"Answer","text":"Yes. The source is on GitHub under the MIT licence and the platform is self-hosted: it runs on your machine or your server, with your own broker keys, and no market data or credentials leave it."}},
-        {"@type":"Question","name":"Which brokers and data vendors does it support?","acceptedAnswer":{"@type":"Answer","text":"Dhan, FYERS, Angel One and TrueData feed one store, covering NSE, BSE and MCX instruments: index and stock candles, ticks, quotes and option chain snapshots."}},
+        {"@type":"Question","name":"Is OpenFNO free, and is the source public?","acceptedAnswer":{"@type":"Answer","text":"The whole source is on GitHub under the PolyForm Noncommercial License 1.0.0, free for noncommercial use. It is self-hosted: it runs on your own machine or server, with your own broker keys."}},
+        {"@type":"Question","name":"Which brokers and data vendors does it support?","acceptedAnswer":{"@type":"Answer","text":"Dhan is the main live feed and option chain recorder, FYERS the backup feed and the source of history backfills, and TrueData a third feed. Together they cover NSE, BSE and MCX instruments: index and stock candles, ticks, quotes and option chain snapshots. Angel One is connected read only, for market movers and linked portfolios."}},
         {"@type":"Question","name":"Can I backtest option strategies on Indian indices?","acceptedAnswer":{"@type":"Answer","text":"Yes. Backtests replay stored index candles and price each leg from stored option premiums — minute-level history around the at-the-money strike for NIFTY, BANKNIFTY and SENSEX — with trading windows, trade limits, exits, strike offsets, brokerage and slippage applied. Entries that cannot be priced are listed as skipped rather than filled at a made-up price."}},
         {"@type":"Question","name":"Do I need to write Python to build a strategy?","acceptedAnswer":{"@type":"Answer","text":"No. A strategy can be written in the console as a list of conditions — price against VWAP or an EMA, an EMA pair, RSI levels or a cross, candle body, Supertrend, ADX, an opening-range break, the gap — and the run's own rules decide when it may trade and how it exits."}}
       ]},
-      {"@type":"SoftwareApplication","name":"OpenFNO","applicationCategory":"FinanceApplication","operatingSystem":"Linux, macOS, Windows","url":"https://openfno.com/","description":"Self-hosted, open-source desk for Indian F&O: live paper runs on real ticks from four vendors, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs.","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"codeRepository":"https://github.com/helloupendra/algorithmic-trading-engine","license":"https://opensource.org/licenses/MIT","author":{"@id":"https://openfno.com/#org"}}
+      {"@type":"SoftwareApplication","@id":"https://openfno.com/#app","name":"OpenFNO","applicationCategory":"FinanceApplication","operatingSystem":"Linux, macOS, Windows","url":"https://openfno.com/","description":"Self-hosted, open-source desk for Indian F&O: live paper runs on real ticks, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs.","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"license":"https://polyformproject.org/licenses/noncommercial/1.0.0","author":{"@id":"https://openfno.com/#author"},"publisher":{"@id":"https://openfno.com/#org"}},
+      {"@type":"SoftwareSourceCode","@id":"https://openfno.com/#source","name":"OpenFNO","description":"The OpenFNO desk: a .NET 10 API, a Python engine and a React console, on TimescaleDB and Redis.","codeRepository":"https://github.com/helloupendra/algorithmic-trading-engine","programmingLanguage":["C#","Python","TypeScript"],"runtimePlatform":".NET 10","license":"https://polyformproject.org/licenses/noncommercial/1.0.0","author":{"@id":"https://openfno.com/#author"},"targetProduct":{"@id":"https://openfno.com/#app"}}
     ]}
     </script>
+    <!-- Without JavaScript "/" is the text in #landing-text below, not a loader
+         that never finishes. In the head, the one place a noscript element may
+         hold a style; :root outranks the body's own #boot and #landing-text
+         rules. With scripting on, a browser reads it as text and ignores it. -->
+    <noscript>
+      <style>
+        :root #boot { display: none }
+        :root #landing-text { display: block }
+      </style>
+    </noscript>
   </head>
   <body>
     <!-- The first paint, before any JavaScript has parsed: the same candles the
@@ -122,8 +137,92 @@
       :root[data-theme='light'] #boot p { color: rgba(17,24,39,.5); }
       :root[data-theme='light'] #boot .b span:nth-child(odd) { background: #147951; }
       :root[data-theme='light'] #boot .b span:nth-child(even) { background: #c13833; }
+      /* The homepage as text (#landing-text): never drawn while scripting is
+         on, so a visitor sees the loader and then the page, with nothing in
+         between. The noscript style in the head shows it, and hides the loader,
+         when scripting is off. Its own colours, so it reads with or without
+         the bundle's stylesheet. */
+      #landing-text { display: none; min-height: 100%; padding: 56px max(16px, calc(50% - 23rem)) 72px; background: #030406; color: rgba(233,238,250,.74); font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+      #landing-text h1, #landing-text h2, #landing-text dt { color: #e9eefa; }
+      #landing-text h1, #landing-text h2 { margin: 0 0 12px; line-height: 1.15; letter-spacing: -.01em; }
+      #landing-text h1 { font-size: 44px; }
+      #landing-text h2 { margin-top: 44px; font-size: 21px; }
+      #landing-text a { color: #7096ff; }
+      #landing-text dt { font-weight: 600; }
+      #landing-text dd { margin: 0 0 12px; }
+      #landing-text footer { margin-top: 56px; font-size: 14px; }
     </style>
-    <div id="root"><div id="boot"><div><div class="b"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><p>Loading the console</p></div></div></div>
+    <div id="root"><div id="boot"><div><div class="b"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><p>Loading the console</p></div></div>
+      <!-- What "/" says, in the HTML itself: for a search engine or a link
+           preview that does not run the bundle, and for a reader without
+           JavaScript. The same story as the page, without the engine: the
+           homepage's own words (landing/content.tsx and the run in
+           scene/evidence.ts), held to them by landing/firstPaint.test.ts.
+           Where this says something more exactly than the page (which feeds
+           carry ticks, which strategies are lists of conditions) it is the
+           page that should catch up. React replaces all of #root on mount, so
+           a signed-in console route that is served this file never shows it.
+           No div inside it: the test reads the block up to its first closing div. -->
+      <div id="landing-text">
+        <header>
+          <p><a href="/">OpenFNO</a> · Open-source algo trading desk · Indian F&amp;O · self-hosted</p>
+          <h1>Not a black box.</h1>
+          <p>OpenFNO is a trading engine you can see inside: every tick stored, every rule written down, every rupee accounted for — running on your own machine, with your own broker keys.</p>
+          <p><a href="/docs/">Read the docs</a> · <a href="https://github.com/helloupendra/algorithmic-trading-engine">Read the source on GitHub</a></p>
+        </header>
+        <main>
+          <section>
+            <h2>Data</h2>
+            <p>Dhan is the main live feed and option chain recorder, FYERS the backup feed and the source of history backfills, and TrueData a third feed; Angel One is connected read only, for market movers and linked portfolios. Ticks, minute bars and option-chain snapshots go into one store, compressed after two hours and archived every night. This deployment's store holds five years of index candles, 1 minute to daily, and minute-level option history around the at-the-money strike for NIFTY, BANKNIFTY and SENSEX. Every picker in the console lists what is stored before you choose a range.</p>
+          </section>
+          <section>
+            <h2>Option chain</h2>
+            <p>Calls one side, puts the other, the strike ladder between them. Live, with Greeks, build-up, PCR, max pain and the walls — and the same chain rebuilt for any past minute from stored history, which is what makes an option strategy testable at all.</p>
+          </section>
+          <section>
+            <h2>Strategy</h2>
+            <p>A setup you write in the console is a list of conditions — price against VWAP or an EMA, an EMA pair, RSI, candle body, Supertrend, ADX, the opening range, the gap. Every bar passes through them; if they all hold, there is a signal. Beside it, the catalogue holds 25 strategies, each specified from its own code, and one on_bar contract runs them all, live and in replay.</p>
+          </section>
+          <section>
+            <h2>Risk</h2>
+            <p>A limit on the leg, on the group and on the day — editable while the run is going, measured per trading day — and a kill switch that survives a restart. Every stop says why it stopped: guard, limit, market close, you, or the end of the range. Execution is paper, on real ticks, in lots × lot size.</p>
+          </section>
+          <section>
+            <h2>The console</h2>
+            <p>Six screens, no mock-ups: captures of this deployment, as it ran.</p>
+            <dl>
+              <dt>Market pulse</dt>
+              <dd>Indices, the nearest MCX contracts and the large caps, each with its day range and how old its last price is. A stale price says so.</dd>
+              <dt>Option chain</dt>
+              <dd>Calls left, puts right, strike in the middle; open interest and its change, IV, and what the pair of them means. Stamped with when it was captured and by which vendor.</dd>
+              <dt>History on hand</dt>
+              <dd>What is actually on disk — index, resolution, first and last session, bars, and whether they came from a backfill or the live feed — before you are asked to pick a range.</dd>
+              <dt>Setup editor</dt>
+              <dd>A long setup and a short setup written as conditions, under the history the replay will read: each resolution's stored sessions, the range, the lots and the square-off time.</dd>
+              <dt>Market factors</dt>
+              <dd>Walls, max pain, PCR, ATM IV, participant open interest and flows — each stamped with how fresh it is and with what our own testing found, including "not tested yet".</dd>
+              <dt>A finished run</dt>
+              <dd>Net P&amp;L, win rate, profit factor, drawdown — and the account panel, because a total says nothing about whether the account survived to collect it. Strategy name hidden.</dd>
+            </dl>
+          </section>
+          <section>
+            <h2>The only run we show in full lost money.</h2>
+            <p>A directional strategy replayed over BANKNIFTY one-minute candles, 176 sessions from January to September 2026, every option leg priced from stored premiums. Entries that could not be priced are listed as skipped, never filled at a made-up price.</p>
+            <p>Net −₹1,05,391 on a ₹10,00,000 account: 760 closed trades, 35% winners, −₹139 a trade, 75 of 176 days positive, and a deepest fall of ₹1,58,431.</p>
+            <p>No strategy here has shown an edge after costs, and everything runs on paper.</p>
+          </section>
+          <section>
+            <h2>Your machine. Your keys.</h2>
+            <p>A .NET 10 API, a Python engine, a React console, TimescaleDB and Redis — on hardware you control, with your own broker keys. The whole engine is on GitHub, and the <a href="/docs/deploy/local/">local deployment guide</a> takes it from a fresh clone to a running desk on Windows, macOS or Linux.</p>
+          </section>
+        </main>
+        <footer>
+          <nav aria-label="Documentation"><a href="/docs/">Docs</a> · <a href="/docs/architecture/">Architecture</a> · <a href="/docs/modules/backtesting/">Backtesting</a> · <a href="/docs/strategies/">Strategy specifications</a> · <a href="/docs/status/">Project status</a></nav>
+          <p>Built by Upendra Singh Chauhan · <a href="https://github.com/helloupendra/algorithmic-trading-engine">GitHub</a> · <a href="https://www.linkedin.com/in/upendrasingh12/">LinkedIn</a> · <a href="https://github.com/helloupendra/algorithmic-trading-engine/blob/main/LICENSE">Licence</a></p>
+          <p>Trading involves financial risk. OpenFNO executes on paper against live ticks; validate every strategy before you trust it with money.</p>
+        </footer>
+      </div>
+    </div>
     <!-- A visitor to the homepage, the sign-in or an invitation is not loading
          the console; the same public paths as the theme script above. -->
     <script>
