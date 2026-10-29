@@ -1,0 +1,101 @@
+/* Markets → Option chain → Straddle & IV. The toolbar and freshness line are
+   the chain page's own (.oc-toolbar, .oc-seg, .oc-fresh in styles.css); the
+   tiles are Market factors' (.mf-metric). What is here is the row of days to
+   compare, the line keys, and the two-column IV panel. */
+
+.sv > * + * { margin-top: 12px; }
+
+.sv-day-pick { width: auto; min-width: 180px; }
+
+/* The days to lay over the chosen one; the quick sets sit in the toolbar above. */
+.sv-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sv-compare .oc-control__label { margin-right: 4px; }
+.sv-quick { display: inline-flex; flex-wrap: wrap; gap: 2px; }
+
+.sv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.sv-chip:hover:not(:disabled) { border-color: var(--line-hover); color: var(--text); }
+.sv-chip[aria-pressed='true'] { border-color: var(--line-strong); background: var(--surface2); color: var(--text); }
+.sv-chip:disabled { opacity: 0.45; cursor: default; }
+.sv-chip__flag {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.sv-fallback { margin: 0; }
+
+/* A line's key: the chosen day is the brand's solid 2px line; the compared
+   days share one ink and differ by pattern, as on the chart (solid, long
+   dashes, dots). Drawn 2px here so a 16px key shows its pattern. */
+.sv-key {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--brand);
+}
+.sv-key--1 { border-top-color: var(--text-3); }
+.sv-key--2 {
+  height: 2px;
+  border-top: 0;
+  background: repeating-linear-gradient(90deg, var(--text-3) 0 6px, transparent 6px 10px);
+}
+.sv-key--3 { border-top: 2px dotted var(--text-3); }
+
+.sv-readout { gap: 8px 14px; }
+.sv-readout__item { display: inline-flex; align-items: center; gap: 6px; }
+
+.sv-chart { height: 320px; }
+.sv-chart--short { height: 240px; }
+
+/* Six readings in one row on a desk screen, three at a laptop's width, two on a phone. */
+.sv .sv-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+/* The day's IV and the IV by day, side by side; stacked once they would be narrower than a phone. */
+.sv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sv-standing { margin: 0 0 8px; color: var(--text-2); }
+.sv-standing b { color: var(--text); }
+
+.sv-table { margin-top: 10px; }
+.sv-table summary { cursor: pointer; color: var(--text-2); }
+.sv-table .table { margin-top: 6px; }
+
+@media (max-width: 1200px) {
+  .sv .sv-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 960px) {
+  .sv-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .sv .sv-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .sv .sv-metrics .mf-metric { padding: 8px 10px; }
+  .sv-chart { height: 260px; }
+  .sv-chart--short { height: 220px; }
+  .sv-day-pick { min-width: 0; }
+}

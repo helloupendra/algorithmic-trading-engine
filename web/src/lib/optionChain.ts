@@ -33,16 +33,18 @@ const UNDERLYING_SHAPE = /^[A-Z0-9][A-Z0-9&-]{1,19}$/
 /* ------------------------------------------------------------------ views -- */
 
 /**
- * The three readings of one chain, one page with a tab each: the chain now,
- * how open interest moved at a strike through the session, and the levels
- * (walls, max pain, the straddle's move) desks read off it.
+ * The four readings of one chain, one page with a tab each: the chain now,
+ * how open interest moved at a strike through the session, the levels
+ * (walls, max pain, the straddle's move) desks read off it, and the ATM
+ * straddle and its IV through the day and day by day.
  */
-export type ChainViewKey = 'chain' | 'oi' | 'levels'
+export type ChainViewKey = 'chain' | 'oi' | 'levels' | 'straddle'
 
 export const CHAIN_VIEWS: ReadonlyArray<{ key: ChainViewKey; label: string; path: string }> = [
   { key: 'chain', label: 'Chain', path: '/markets/chain' },
   { key: 'oi', label: 'OI history', path: '/markets/chain/oi' },
   { key: 'levels', label: 'Levels', path: '/markets/chain/levels' },
+  { key: 'straddle', label: 'Straddle & IV', path: '/markets/chain/straddle' },
 ]
 
 /**

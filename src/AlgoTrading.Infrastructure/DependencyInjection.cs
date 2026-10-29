@@ -227,6 +227,8 @@ public static class DependencyInjection
         // verified Drive archive is now the long-term record.
         services.AddScoped<IMarketTickArchiveService, MarketTickArchiveService>();
         services.AddScoped<OptionChainService>();
+        // The ATM straddle and IV history, read off the same chain; its caches are the shared IMemoryCache.
+        services.AddScoped<StraddleService>();
 
         // Raw ticks are a debugging aid, not the record — and nothing was ever
         // deleting them. A full disk stops ingestion, the API and every runner

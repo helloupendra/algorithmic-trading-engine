@@ -130,6 +130,7 @@ export default function App() {
                 <Route path="/markets/chain" element={<OptionChainPage view="chain" />} />
                 <Route path="/markets/chain/oi" element={<OptionChainPage view="oi" />} />
                 <Route path="/markets/chain/levels" element={<OptionChainPage view="levels" />} />
+                <Route path="/markets/chain/straddle" element={<OptionChainPage view="straddle" />} />
                 {/* A position checked against the chain before it is entered: analysis only, no orders. */}
                 <Route path="/markets/builder" element={<StrategyBuilderPage />} />
                 <Route path="/markets/movers" element={<MoversPage />} />
