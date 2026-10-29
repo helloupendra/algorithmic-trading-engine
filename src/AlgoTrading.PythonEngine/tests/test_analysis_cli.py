@@ -13,10 +13,10 @@ import _analysis_fakes as fakes
 from analysis import __main__ as cli
 from analysis import backtest
 from analysis.api import Answer, ApiError, ForecastApi
-from analysis.data import SessionSeries
+from analysis.data import SessionBar, SessionSeries
 from analysis.issue import issue_session
 from analysis.models import MODEL_VERSION, MODELS, build_table, forecast, forecast_payload
-from analysis.score import score_forecasts, unscored
+from analysis.score import GIVE_UP_DAYS, LOST_AFTER_DAYS, score_forecasts, unscored
 from backtest.timeutil import IST
 
 ALL = list(cli.ALL_MODELS)
@@ -172,6 +172,44 @@ class ScoreTests(unittest.TestCase):
         self.assertIn("12:01", result.waiting[0])
         later = score_forecasts(self.forecasts, self.market, at(self.day + timedelta(days=6), 15, 50), self.post())
         self.assertEqual((len(later.errors), later.exit_code), (4, 1))
+        self.assertIn(f"an error until {self.day + timedelta(days=LOST_AFTER_DAYS)}, then lost for good",
+                      later.errors[0])
+
+    def lose_the_session(self, why="41 of 75 bars (candles 5m)"):
+        """14 Oct 2026: no feed until 12:06, so the session's candles will never be complete."""
+        series = self.market.series["NIFTY"]
+        self.market.series["NIFTY"] = SessionSeries(series.symbol, series.sessions[:-1], [(self.day, why)])
+
+    def test_a_session_lost_for_good_is_an_error_for_a_week_then_reported_without_failing(self):
+        self.lose_the_session()
+        for days in (GIVE_UP_DAYS + 1, LOST_AFTER_DAYS):
+            fresh = score_forecasts(self.forecasts, self.market, at(self.day + timedelta(days=days), 15, 50), self.post())
+            self.assertEqual((len(fresh.errors), fresh.lost, fresh.exit_code), (4, [], 1), f"day {days}: noticed")
+        for days in (LOST_AFTER_DAYS + 1, 29):
+            old = score_forecasts(self.forecasts, self.market, at(self.day + timedelta(days=days), 15, 50), self.post())
+            self.assertEqual((old.errors, len(old.lost), old.exit_code), ([], 4, 0), f"day {days}: lost, not failed")
+            self.assertEqual(f"#1 range.har NIFTY {self.day}: no complete session (41 of 75 bars (candles 5m))",
+                             old.lost[0])
+        self.assertEqual([], self.sent)
+
+    def test_a_lost_session_does_not_fail_the_run_that_scores_the_new_ones(self):
+        self.lose_the_session()
+        today = self.day + timedelta(days=14)   # the same weekday, two weeks on
+        bar = self.sessions[-1]
+        self.market.series["NIFTY"].sessions.append(SessionBar(today, bar.open, bar.high, bar.low, bar.close, 375,
+                                                               "live_bars 1m"))
+        new = [dict(f, id=f["id"] + 10, sessionDate=today.isoformat()) for f in self.forecasts]
+        result = score_forecasts(self.forecasts + new, self.market, at(today, 15, 50), self.post())
+        self.assertEqual((result.scored, len(result.lost), result.errors, result.exit_code), (4, 4, [], 0))
+        self.assertEqual({11, 12, 13, 14}, {forecast_id for forecast_id, _ in self.sent})
+
+    def test_a_lost_session_whose_bars_are_filled_in_later_is_scored(self):
+        self.lose_the_session()
+        self.assertEqual(4, len(score_forecasts(self.forecasts, self.market, at(self.day + timedelta(days=20), 15, 50),
+                                                self.post()).lost))
+        self.market = fakes.market(n=400)   # a backfill completed the day
+        result = score_forecasts(self.forecasts, self.market, at(self.day + timedelta(days=21), 15, 50), self.post())
+        self.assertEqual((result.scored, result.lost, result.exit_code), (4, [], 0))
 
     def test_409_is_logged_not_failed(self):
         result = score_forecasts(self.forecasts, self.market, at(self.day, 15, 50), self.post(409))
@@ -270,6 +308,23 @@ class MainTests(unittest.TestCase):
                                     at(date(2026, 1, 20), 18))
         self.assertEqual(code, 0)
         api.register_model.assert_not_called()
+
+    def test_score_reports_a_lost_session_at_warning_and_exits_0(self):
+        market = fakes.market(n=400)
+        series = market.series["NIFTY"]
+        day = series.last
+        market.series["NIFTY"] = SessionSeries(series.symbol, series.sessions[:-1], [(day, "41 of 75 bars (candles 5m)")])
+        api = mock.Mock()
+        api.forecasts.return_value = [{"id": 7, "modelKey": "range.har", "underlying": "NIFTY", "target": "range",
+                                       "sessionDate": day.isoformat(), "prediction": {"prevClose": 20000.0},
+                                       "baseline": {}, "outcome": None, "scores": None}]
+        with self.assertLogs("analysis", level="INFO") as logs:
+            code, _ = self.run_main(["score"], market, api, at(day + timedelta(days=15), 15, 50))
+        self.assertEqual(code, 0)
+        self.assertIn(f"WARNING:analysis:lost for good: #7 range.har NIFTY {day}: no complete session "
+                      f"(41 of 75 bars (candles 5m))", logs.output)
+        self.assertIn("0 scored, 0 refused (409), 0 waiting for bars, 1 lost for good, 0 errors", logs.output[-1])
+        api.post_outcome.assert_not_called()
 
     def test_score_with_nothing_pending_does_not_touch_the_database(self):
         api = mock.Mock()

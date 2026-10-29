@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   useBackfillHistory,
   useDataCoverage,
@@ -30,6 +30,7 @@ import {
   limitHint,
   maxDaysFor,
   rejectionFor,
+  signInPageFor,
 } from '../../lib/fyersLimits'
 import { IconCandles, IconDownload, IconLayers } from '../../components/icons'
 import {
@@ -306,6 +307,8 @@ function BackfillPanel({ selected, initialSymbol }: { selected: CoverageRow | nu
   }
 
   const result = backfill.data
+  // No vendor session today (409): the message says where to sign in, and this links there.
+  const signIn = backfill.isError ? signInPageFor(backfill.error) : null
 
   return (
     <Panel
@@ -377,6 +380,11 @@ function BackfillPanel({ selected, initialSymbol }: { selected: CoverageRow | nu
       {backfill.isError && (
         <div style={{ marginTop: 10 }}>
           <InlineError error={backfill.error} />
+          {signIn && (
+            <p className="field__help" style={{ marginTop: 6 }}>
+              <Link to={signIn}>Open the connector to sign in</Link>
+            </p>
+          )}
         </div>
       )}
 

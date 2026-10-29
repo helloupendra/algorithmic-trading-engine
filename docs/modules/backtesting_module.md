@@ -9,7 +9,7 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 
 ## Architecture Stack
 1. **Python engine (`src/AlgoTrading.PythonEngine`)**
-   - `backtest/engine.py` — the replay loop: loads driver bars, builds `StrategyInput` per bar (spot, ATM strike, ATM CE/PE contracts as of that date, cumulative bars per required resolution), calls `on_bar`, prices legs, updates the ledger, enforces EOD / SL / target, streams results to the API.
+   - `backtest/engine.py` — the replay loop: loads driver bars, builds `StrategyInput` per bar (spot, ATM strike, the contracts the strategy declares in `get_contract_requirements` as of that date, cumulative bars per required resolution), calls `on_bar`, prices legs, updates the ledger, enforces EOD / SL / target, streams results to the API.
    - `backtest/feed.py` — `HistoricalFeed`: index candles from `GET /api/MarketData/history/local`; option candles per contract with an on-demand FYERS sync (`POST /api/MarketData/history/sync`) when the store is empty and the broker is linked; a contract with no history is marked once and never retried.
    - `backtest/contracts.py` — expiry as of a bar date, strike step from the option chain, ATM rounding, exact contract lookup, logical-symbol resolution (`BANKNIFTY_PE_50300`).
    - `backtest/ledger.py` — `PaperLedger`: positions keyed by group + contract, lots × lot size P&L, averaging, reduce-only closes, marks, charges, square-off.
@@ -41,7 +41,7 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 ### 2. Running
 `POST /api/Backtest/runs` validates the request, creates the run (IST dates → UTC bounds, `parametersJson` = strategy defaults ⊕ overrides ⊕ `{lots, stop_loss, target, underlying, resolution, eod_square_off_ist, charges_per_lot}`) and spawns `tools/backtest_runner.py`. The runner:
 1. Logs a `[CONFIG]` line and warms the strategy up on index candles before the range (same as live).
-2. For each driver bar inside 09:15–15:30 IST: resolves expiry/ATM/contracts as of that date, calls `on_bar`, converts bare BUY/SELL signals into one-leg ATM option groups, prices legs at the option candle close of that bar (last known close the same day as fallback), applies the ledger, and posts the signal with its historical timestamp.
+2. For each driver bar inside 09:15–15:30 IST: resolves the expiry, the ATM strike and the contracts the strategy declares as of that date, calls `on_bar`, converts a bare BUY/SELL signal into a one-leg option buy (the ATM call for a BUY, the ATM put for a SELL, or the strike and side the run's `contract` rule picks), prices legs at the option candle close of that bar (last known close the same day as fallback), applies the ledger (with slippage only when the run sets `costs`, see 3b), and posts the signal with its historical timestamp.
 3. After each bar: marks open positions and applies the run's risk rules exactly as the live guard does — per-leg (premium points / % of entry, closes that leg), per-group (₹, closes that group), then overall (₹, ends the backtest) — appends an equity point, and posts progress every two seconds.
 4. Squares off at the EOD time and at the end of the range, then posts the equity curve and a summary (`BACKTEST_SUMMARY` signal: bars, sessions, trades, skipped entries, EOD square-offs, stop reason, data notes).
 
@@ -61,7 +61,7 @@ are enforced in the **backtest only** (the live runner applies `filters`, not th
 | `limits` | Trades a day, per window and open at once; a cooldown after a loss; no repeat of a direction that lost; the day ends after N losses or −₹X realised | `backtest/rules.py` |
 | `exits` | Exit N minutes after entry; the stop moves to entry after a set gain and then steps up with the profit; exit when the index closes against EMA/VWAP/Supertrend | `backtest/rules.py` |
 | `contract` | For a bare BUY/SELL signal: how many strikes in or out of the money, and whether to flip the side | `backtest/rules.py` |
-| `costs` | Slippage a side plus brokerage, STT, exchange, SEBI, stamp duty and GST on every fill (replaces the flat charge per lot). MCX fills take MCX's own rates: CTT 0.05% (options) or 0.01% (futures) on the sell side, MCX's 0.0418% or 0.0021%, stamp 0.003% or 0.002% on the buy side | `core/charges.py`, shared with the research harness and, rate for rate, with the live run history (`ChargeSchedule` in `OptionCharges.cs`) |
+| `costs` | Off unless the run sets it: setting any of its fields turns it on, with the defaults for the rest. On, every fill pays slippage a side, `slippage_percent` of the premium (0.5% by default) and at least ₹0.05 (`min_slippage`), so a buy fills above the bar's price and a sell below it; and brokerage, STT, exchange, SEBI, stamp duty and GST on its turnover. The flat charge per lot is then ignored. Off, fills pay no slippage (see Data honesty). MCX fills take MCX's own rates: CTT 0.05% (options) or 0.01% (futures) on the sell side, MCX's 0.0418% or 0.0021%, stamp 0.003% or 0.002% on the buy side | `core/charges.py` (`CostModel`), applied in `backtest/ledger.py`; shared with the research harness and, rate for rate, with the live run history (`ChargeSchedule` in `OptionCharges.cs`) |
 
 Every blocked entry and every rule-driven exit is counted in the run summary (`limitBlocks`,
 `runExits`, `limitDayCloses`) and explained in its data notes, so "it traded less" is never mistaken
@@ -99,7 +99,7 @@ for "it traded better". The console edits all of this on `/research/backtests/ne
   judging**, and a chain from another minute is refused by its own age check.
 - Index candles for those years come from Dhan's index history (`tools/index_history_import.py`, SourceKey `dhan`); FYERS candles win where both exist.
 - Lot sizes are the current master values; historical lot-size changes are not modelled (noted in the run's data notes).
-- Fills use the signal bar's close with no slippage; a flat per-lot charge can be set in the dialog.
+- Fills are at the option candle's close on the signal bar. Slippage is applied only when the run sets the `costs` block (3b): a buy then fills `slippage_percent` (0.5% by default, at least ₹0.05) above that close and a sell below it, with the statutory charges on the turnover. A run without it, which is the default, fills at the close itself with no slippage, and its only cost is the dialog's flat charge per lot, per fill (₹0 unless set).
 
 ---
 
@@ -126,6 +126,6 @@ cd src/AlgoTrading.PythonEngine
 The wrapper creates the run through the API, follows its progress and prints the ledger.
 
 ## Known limits
-- Only ATM contracts are supplied to strategies (same as live); strangle/butterfly/spread strategies wait for entry until OTM selection ships.
+- A strategy gets the contracts it declares (`get_contract_requirements`: ATM, OTM or ITM, a number of strikes or points from ATM, resolved on the underlying's strike grid as live), so strangles, butterflies and spreads open their OTM legs. A strike the instrument master or the stored premiums cannot supply is skipped and listed; on expired contracts that is anything beyond ATM±5 (see Data honesty).
 - One backtest = one underlying and one driver resolution; multi-symbol portfolios are out of scope.
 - The old C# `OfflineReplay` frame counter (`SimulationRunnerService`) is retained but `POST /api/Simulator/runs/{id}/start` now points callers at `/api/Backtest/runs`.

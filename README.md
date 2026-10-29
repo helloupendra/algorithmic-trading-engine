@@ -396,7 +396,10 @@ instrument masters (~100,000 contracts). Also idempotent.
 
 ## Connecting your broker account
 
-Live data needs a FYERS app and a daily access token.
+FYERS serves the history backfills and is the backup live feed; it needs an app
+and a daily access token. Dhan, the primary live feed and option chain recorder,
+is set up on its own page:
+[docs/modules/dhan_connector.md](docs/modules/dhan_connector.md).
 
 1. Create an app at <https://myapi.fyers.in/dashboard>. Set its redirect URI to
    exactly `http://127.0.0.1:5025/api/auth/callback`.
@@ -435,7 +438,7 @@ writing on 15 Sep (see `docs/modules/data_module.md`, "When a tick does not
 arrive").
 
 Day-to-day operation is designed to happen **from the web console**: sign in as
-admin, connect FYERS under *Broker*, then use the **Data module** —
+admin, sign in to Dhan and FYERS under *System → Connectors*, then use the **Data module** —
 *Live feeds* starts/stops the ingestor and manages the watchlist,
 *Historical* browses coverage and backfills candles from FYERS,
 *Instruments & F&O* explores the contract universe. The `algo.py` menu remains

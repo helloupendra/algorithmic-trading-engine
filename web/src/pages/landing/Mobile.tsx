@@ -334,7 +334,7 @@ export function LandingMobile() {
           <h2 id="proof-title">The only run we show in full <em>lost money.</em></h2>
           <p className="lpm-band__lead">
             A directional strategy replayed over {RUN.underlying} one-minute candles, {RUN.sessions} sessions from January to
-            September 2026, every option leg priced from stored premiums with brokerage and slippage applied.
+            September 2026, every option leg priced from stored premiums.
           </p>
           <p className="lpm-figure"><b>−{rupees(RUN.netPnl)}</b><span>net, on a {rupees(RUN.initialCapital)} account</span></p>
           <EquityCurve />

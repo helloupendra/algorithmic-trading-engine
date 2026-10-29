@@ -300,6 +300,20 @@ body sits at the 0.6 trend threshold or near zero that can decide `trendDay`
 or `up`. A session whose bars are not complete waits for the next run and
 becomes an error after four days, so no forecast stays unscored quietly.
 
+An error lasts a week, not for ever (`LOST_AFTER_DAYS` in `analysis/score.py`,
+eleven days after the session). Some sessions will never be complete: on
+14 Oct 2026 no feed ran from 09:15 to 12:06, its 5-minute candles hold 41 of
+75 bars, and its 12 forecasts cannot be scored. As errors they failed every
+evening's run from 19 Oct, and each failure was an incident ("Analysis job
+exited with code 1"), although every new forecast was scored. Now, for a week
+after the give-up the run still fails on such a forecast, so someone looks;
+after that it is **lost for good**: every run logs it at WARNING as `lost for
+good: #id model underlying day: no complete session (why)`, counts it in its
+summary line (`… waiting for bars, N lost for good, N errors`), and exits 0
+for it. It is listed for as long as it is in the 30-day scoring window, and if
+its bars are filled in meanwhile the next run scores it. No outcome is written
+for it otherwise.
+
 ## Version 2
 
 Version 1 reads only the index's own sessions and India VIX. Version 2
@@ -535,8 +549,9 @@ cd src/AlgoTrading.PythonEngine
 - Exit status: 0 when everything was done or refused by the API as already
   done / too late (409); 1 when anything failed — stale inputs (the last
   complete session is not the previous trading day, or India VIX lacks it), an
-  API error, a session still unscored after four days; 2 for bad arguments.
-  The log line names what and why.
+  API error, a session still unscored after four days (for a week; after
+  that it is lost for good, reported at WARNING, and exits 0 for it: see
+  Scoring); 2 for bad arguments. The log line names what and why.
 - It is light: one aggregate query per symbol and source, then seconds of numpy
   (~5 s for the full backtest on a laptop). Safe on the production server.
 - `backtest-v2` needs the MarketIntelligence tables and their backfill, and

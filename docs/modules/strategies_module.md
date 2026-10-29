@@ -212,7 +212,7 @@ Rules that hold for every kind: nothing is sent for a write that did not happen 
 4. No API or web change is needed — the catalog picks the class up on the next request.
 
 ## Known limits
-- The runner supplies only ATM contracts today, so strategies that need OTM legs (strangle, butterfly, spreads) wait for entry until OTM contract selection ships; their descriptions say so.
+- A strategy gets only the contracts it declares in `get_contract_requirements` (ATM, OTM or ITM, a number of strikes or points from ATM, on the underlying's strike grid; the ATM call and put when it declares none), resolved by the runner as the underlying moves and by the backtest the same way. Strangles, butterflies and spreads open their OTM legs. A contract the instrument master cannot supply is left out, and the strategy does not enter until it can.
 - Runner state lives in the API process. An API restart cannot stop an orphaned runner from the console; the live view still rebuilds from the database.
 - Live mode against a broker is not wired — every run is paper.
 - A leg carried forward into the manual book leaves its run's leg, group and overall rules behind, and the book has no way yet to give an existing position a stop-loss or target (only the ticket sets one, at order time). Overnight, a carried leg is guarded by nothing but its owner.

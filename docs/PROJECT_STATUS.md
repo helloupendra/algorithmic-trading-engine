@@ -1,9 +1,10 @@
 # AlgoTrading Platform — Progress Summary
 
-> **Current status — 2 October 2026**
+> **Current status — 29 October 2026**
 >
-> The sections after this note are the historical progress log from mid-2026. This is what runs today. Every figure
-> the desk shows is a paper result after charges, and nothing in these pages claims a profit.
+> The sections after this note are the historical progress log from mid-2026; where one of them reads as a statement
+> about today, it says what came after. This note is what runs today. Every figure the desk shows is a paper result
+> after charges, and nothing in these pages claims a profit.
 >
 > - **Live paper desk.** Strategy runs trade index options and futures on NSE, BSE and MCX. Fills are at the bid or
 >   ask, with the desk's charges. Risk rules apply per run, per group and per leg, and can be changed while a run is
@@ -18,18 +19,28 @@
 > - **Market replay.** Any recorded day can be played again through the live strategy runners at 1×, 2×, 5× or 10×,
 >   with its prices kept apart from the live ones. A queue plays many days in a row, only when no market the desk
 >   trades is open. See [Market replay](modules/market_replay.md).
-> - **AI workspace.** The agents are:
->   - a Desk Assistant with read-only tools and memory;
->   - a Trade Reviewer that checks each run against its written specification;
->   - a News Analyst that turns headlines and filings into structured events;
->   - an Incident Explainer.
+> - **AI workspace.** Fifteen agents are built, each on a hosted model:
+>   - the Desk Assistant, which the owner asks: read-only tools and memory, and five actions that code carries out
+>     only after the owner's PIN;
+>   - the Trade Reviewer, which checks each run against its written specification, the News Analyst, which turns
+>     headlines and filings into structured events, and the Incident Explainer;
+>   - four desk analysts: Technical, Options/OI, Macro and Fundamental;
+>   - the Data Curator, the Compliance Triage and the Strategy Researcher, which put into words what code measured;
+>   - the AI Trader, and the three checks around its paper orders: the Validator, the Risk Memo and the Execution
+>     Reporter.
 >
 >   A daily check and a weekly exam with held-out questions grade the Assistant, and one Telegram digest a day
 >   summarises the agents' work. A lesson is kept only when a test shows it helps. See
 >   [AI workspace & agents](modules/ai.md).
-> - **AI Trader, in shadow.** Every ten minutes it reads a market brief built by code and proposes one action. Code
->   enforces every limit, and nothing is placed yet. A shadow book scores its buys after charges against a fixed rule
->   and against doing nothing, day by day, live and in replays. See [AI Trader](modules/ai_trader.md).
+> - **AI Trader, on paper.** While it is switched on, every ten minutes from 09:20 to 15:00 IST on trading days it
+>   reads a market brief built by code and proposes one action, and code checks the plan against fixed limits. Since
+>   10 Oct 2026 (`Ai:AiTraderExecute`, on by default) what the limits allow is placed as paper orders in its own
+>   ₹5 lakh paper account, never another's: an exit or a strategy stop at once; a buy or a strategy start only after
+>   the Validator, asked three times, has accepted it (two rejections, or no majority, block it), the Risk Memo has
+>   read it (it may only tighten the plan), and the limits have judged it again on the fresh book. It never sends an
+>   order to a broker. With the switch off, and always in a market replay, it places nothing and a shadow book keeps
+>   its allowed buys as if placed. Every day it decided on, live or replayed, is scored after charges against a fixed
+>   rule and against doing nothing. See [AI Trader](modules/ai_trader.md).
 > - **Forecasts and market intelligence.** Daily range and trend forecasts are judged on live results only, never on
 >   their backtests. News, exchange filings, global markets, breadth and FII/DII flows are recorded. See
 >   [Forecasts & analysis](modules/analysis.md) and [Market intelligence](modules/market_intelligence.md).
@@ -45,7 +56,7 @@
 > - **Backtesting.** Backtests check coverage first, can price expired contracts from the exchange expiry calendar,
 >   replay the historical option chain, and take per-run rules. See [Backtesting](modules/backtesting_module.md).
 
-## Overview
+## Overview, mid-2026
 This project has evolved from a basic broker integration into a working market data and simulator platform foundation. 
 At this stage, the system supports:
 - Broker authentication and token/session handling
@@ -318,7 +329,7 @@ At this stage, the system supports:
 
 ---
 
-## Current System Architecture
+## System Architecture, mid-2026
 
 ### Historical Side
 `FYERS History API` → `API / Worker` → `PostgreSQL candles` → `Local read / backfill / replay support`
@@ -329,9 +340,14 @@ At this stage, the system supports:
 ### Simulator Side
 `SimulationRun` → `Market session validation` → `Replay feed provider` → `Simulation runner` → `Offline replay execution skeleton`
 
+**Since then:** vendors sit behind connectors, and Dhan is the primary live feed and records the option chain every
+minute. FYERS is the backup feed and the history backfill source. Backtests replay strategies in the Python engine
+(`backtest/engine.py`), not in the C# replay skeleton. See [Data](modules/data_module.md),
+[Connectors](modules/connectors_module.md) and [Backtesting](modules/backtesting_module.md).
+
 ---
 
-## What is Working Right Now
+## What Was Working, mid-2026
 
 ### Data Ingestion
 - [x] Historical data
@@ -357,26 +373,35 @@ At this stage, the system supports:
 
 ---
 
-## What is NOT Built Yet (Major Next Steps)
+## What Was Not Built Yet, mid-2026, and What Came After
 
 **1. Strategy Execution Hook**  
-The replay runner currently iterates bars, but it does not yet call a strategy engine.
+Then: the replay runner iterated bars but did not call a strategy engine.  
+Since: a backtest replays any catalogue strategy bar by bar through the same `BaseStrategy.on_bar` contract the live
+runner uses ([Backtesting](modules/backtesting_module.md)).
 
 **2. Signal Generation + Signal Storage**  
-No `SimulationSignal` or `StrategySignal` table exists yet.
+Then: no signal table existed.  
+Since: every signal a run or a backtest sends is stored in `simulation_signals`.
 
 **3. Paper Trading Layer**  
-Missing paper orders, paper positions, paper PnL, and simulated trade lifecycle.
+Then: no paper orders, positions, P&L or trade lifecycle.  
+Since: `paper_orders` and `paper_positions`, fills at the bid or ask with the desk's charges, and risk rules per run,
+group and leg ([Strategies & live runner](modules/strategies_module.md)).
 
 **4. Full Live Session-Aware Bar Finalization**  
-Market hours service exists, but live bar processing is not yet fully session-aware in all edge cases.
+Then: live bar processing was not session-aware in every case.  
+Since: a minute its exchange was not open gets no live bar, and a holiday calendar covers NSE, BSE and MCX.
 
 **5. Segment Expansion**  
-Current session logic is still basic and focused on NSE/CM. No full futures/options timing model yet.
+Then: session logic covered NSE cash only.  
+Since: index options and futures trade on NSE, BSE and MCX, each squared off at its own exchange's close.
 
 ---
 
-## Suggested Roadmap Forward
+## The Roadmap, mid-2026
+
+Every phase below is built. Phase 3 is live on paper only: no run sends an order to a broker.
 
 ### Phase 1 — Strategy-Ready Replay
 - Add strategy execution interface
@@ -399,13 +424,12 @@ Current session logic is still basic and focused on NSE/CM. No full futures/opti
 
 ---
 
-## Summary
-So far, the project has successfully evolved into a real market data and replay simulator backend foundation.  
-You now have:
+## Summary, mid-2026
+By mid-2026 the project had become a market data and replay simulator backend:
 - A historical data platform
 - A live data platform
 - Session-aware mode validation
 - A simulator run model
 - An offline replay execution skeleton
 
-**That is a strong and serious base to continue from.**
+What it became is the note at the top of this page.

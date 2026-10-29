@@ -520,10 +520,15 @@ class SignatureTests(LogsAgentTestCase):
     # 13 Oct 2026, logs/market-open-2026-10-13.log: the morning job asked the API to refresh FYERS's token.
     SEBI_REFUSAL = ('09:05:41    refresh unavailable: {"connected":false,"message":"FYERS declined the refresh: Refresh '
                     'token API is currently disabled to comply with SEBI regulations"}\n')
+    # A refusal citing SEBI that the desk does not follow yet (made up: FYERS has not said this).
+    ORDER_REFUSAL = ("[FYERS feed] [fyers] {'code': -397, 'message': 'Market orders are no longer allowed for API "
+                     "clients to comply with SEBI regulations'}")
 
     def test_a_broker_refusing_something_under_sebi_s_rules_opens_one_held_incident(self):
         self.start_watching("api.log")
-        self.write("market-open-2026-09-24.log", self.SEBI_REFUSAL)
+        self.write("market-open-2026-09-24.log", '09:16:02    order refused: {"message":"FYERS declined the order: '
+                                                 'Market orders are no longer allowed for API clients to comply with '
+                                                 'SEBI regulations"}\n')
         found = self.check()
         self.assertEqual(["logs:vendor-regulatory:fyers"], list(found))
         finding = found["logs:vendor-regulatory:fyers"]
@@ -531,13 +536,41 @@ class SignatureTests(LogsAgentTestCase):
         self.assertEqual("A broker changed something under SEBI's rules", finding.title)
         self.assertIn("FYERS refused something and cited SEBI", finding.summary)
         self.assertIn("acknowledge this incident", finding.suggestion)
+        self.assertIn("KNOWN_REGULATORY", finding.suggestion)
         # The same refusal from the feed, in api.log, is the same incident.
-        self.append("api.log", info(FEEDS, "[FYERS feed] [fyers] {'code': -50, 'message': 'Refresh token API is currently "
-                                           "disabled to comply with SEBI regulations'}"))
+        self.append("api.log", info(FEEDS, self.ORDER_REFUSAL))
         self.assertEqual(["logs:vendor-regulatory:fyers"], list(self.check()))
         # It comes back every trading morning: held open across a long weekend, not raised again each day.
         self.assertIn("logs:vendor-regulatory:fyers", self.idle(4 * 24 * 3600, step=3600))
         self.assertEqual({}, self.idle(4 * 24 * 3600, step=3600))
+
+    def test_fyers_refresh_switched_off_under_sebi_s_rules_is_known_and_opens_nothing(self):
+        # 13–29 Oct: resolved every evening, opened again at every open. The checkup's
+        # fyers-backup item already says each day that FYERS needs a morning sign-in.
+        self.start_watching("api.log", "desk.log")
+        self.write("market-open-2026-09-24.log", self.SEBI_REFUSAL)
+        self.append("desk.log", "2026-09-24 09:05:41  " + self.SEBI_REFUSAL.split("    ", 1)[1])
+        self.append("api.log", info(FEEDS, "[FYERS feed] [fyers] {'code': -50, 'message': 'Refresh token API is currently "
+                                           "disabled to comply with SEBI regulations'}"))
+        self.assertEqual({}, self.check())
+        # The next trading morning, and the one after a weekend, with Sentinel watching: still nothing.
+        for day in ("2026-09-25", "2026-09-28"):
+            self.idle(24 * 3600 if day == "2026-09-25" else 3 * 24 * 3600, step=3600)
+            self.append("desk.log", f"{day} 09:05:41  " + self.SEBI_REFUSAL.split("    ", 1)[1])
+            self.assertEqual({}, self.check())
+
+    def test_any_other_refusal_citing_sebi_still_opens_one_known_or_not(self):
+        self.start_watching("api.log")
+        # FYERS's refresh is known; FYERS refusing anything else under SEBI's rules is not.
+        self.append("api.log", info(FEEDS, "[FYERS feed] [fyers] {'code': -50, 'message': 'Refresh token API is currently "
+                                           "disabled to comply with SEBI regulations'}"))
+        self.append("api.log", info(FEEDS, self.ORDER_REFUSAL))
+        # The same words from another broker are that broker's rule, not a known one.
+        self.write("engine/angel-feed-41.log", "[angel] login refused: Refresh token API is currently disabled to "
+                                               "comply with SEBI regulations\n")
+        found = self.check()
+        self.assertEqual({"logs:vendor-regulatory:fyers", "logs:vendor-regulatory:angel"}, set(found))
+        self.assertIn("Market orders are no longer allowed", found["logs:vendor-regulatory:fyers"].summary)
 
     def test_iras_relay_and_the_desks_own_words_about_circulars_open_nothing(self):
         self.start_watching("api.log")

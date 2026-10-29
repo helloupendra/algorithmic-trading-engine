@@ -25,7 +25,9 @@ Run the Analysis module (from src/AlgoTrading.PythonEngine, as the API does).
     python -m analysis score [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run]
         Score every unscored forecast in the window (default: the last 30
         days) whose session has closed, of either version. --dry-run prints the
-        scores instead.
+        scores instead. A session still incomplete four days on is an error
+        for a week, then lost for good: listed at WARNING by every run, not
+        failed (analysis/score.py).
 
     python -m analysis news-score [--limit N] [--dry-run]
         Score up to N unscored headlines and announcements, oldest first
@@ -361,11 +363,13 @@ def cmd_score(args) -> int:
         print(json.dumps(payload))
     for line in result.waiting:
         log.info("waiting: %s", line)
+    for line in result.lost:
+        log.warning("lost for good: %s", line)
     for line in result.errors:
         log.error("%s", line)
-    log.info("%d scored%s, %d refused (409), %d waiting for bars, %d errors", result.scored,
+    log.info("%d scored%s, %d refused (409), %d waiting for bars, %d lost for good, %d errors", result.scored,
              " (dry run, nothing sent)" if args.dry_run else "", result.refused, len(result.waiting),
-             len(result.errors))
+             len(result.lost), len(result.errors))
     return result.exit_code
 
 

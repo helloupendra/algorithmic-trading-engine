@@ -1,17 +1,27 @@
 # Data Module Architecture & Documentation
 
 ## Overview
-The Data Module is the foundational component of the Algorithmic Trading Engine. It is responsible for subscribing to live market data streams (via broker WebSockets), persisting raw ticks and aggregated bars into the PostgreSQL database, and broadcasting real-time updates to the web frontend using SignalR.
+The Data Module is the foundational component of the Algorithmic Trading Engine. It is responsible for subscribing to live market data streams (via the vendors' WebSockets), persisting raw ticks and aggregated bars into the PostgreSQL database, and broadcasting real-time updates to the web frontend using SignalR.
 
 Everything the trading strategies rely on—live pricing, historical data, and order execution signals—is fueled by this module.
 
+**Which vendor serves what.** Each vendor is a connector ([Connectors](connectors_module.md)), and the desk uses two:
+
+| Job | Vendor |
+| :--- | :--- |
+| Live ticks on a normal day | **Dhan** ([Dhan connector](dhan_connector.md)), whose daily token can be taken without a person (PIN and TOTP) |
+| Option chain recording | **Dhan**, once a minute (the FYERS chain poller when FYERS is the feed); see [Option chain](option_chain.md) |
+| Live ticks when Dhan is silent | **FYERS**, the backup: the morning job switches to it when Dhan delivers nothing after the open (`scripts/market-open.sh`), and `FeedFailoverService` during the NSE session. It needs a sign-in every morning: its token ends at 06:00 IST and its refresh is switched off under SEBI's rules |
+| History backfills (candles) | **FYERS**, the history router's first vendor; Dhan's index history fills older years by import (`tools/index_history_import.py`) |
+| Instrument masters | FYERS's public symbol files; Dhan's security ids are mapped onto them |
+
 ## Architecture Stack
 The Data Module spans across all layers of the trading engine:
-1. **Python Ingestor (`fyers_streamer.py`)**: A standalone Python process that connects to the Fyers WebSocket API. It handles high-frequency data ingestion, manages subscriptions dynamically, and writes data directly to the database.
-2. **.NET API (`AlgoTrading.Api`)**: Serves as the middle layer. It provides REST endpoints for managing the watchlist and a SignalR Hub (`LiveFeedHub`) for broadcasting real-time data to connected clients.
+1. **Python feeds (`market_data/live/run_feed.py --vendor dhan|fyers|truedata`)**: one process per vendor, started and supervised by the API (`FeedSupervisor`). The vendor's socket is an adapter (`market_data/live/vendors/`); everything else is the runner every vendor shares, `core/live/feed_runner.py`: subscriptions, every tick posted to the API in batches and published to the Redis stream the strategies read, greeks, the heartbeat and the watchdogs. The feeds never write to the database themselves; the API stores what they post. `fyers_streamer.py` is the FYERS feed by its old name.
+2. **.NET API (`AlgoTrading.Api`)**: Serves as the middle layer. It stores the ticks the feeds post, provides REST endpoints for managing the watchlist and a SignalR Hub (`LiveFeedHub`) for broadcasting real-time data to connected clients.
 3. **React Frontend (`web`)**: Provides a user interface to visualize data health, manage the database recording list (watchlist), and view real-time incoming ticks and bars.
-4. **PostgreSQL Database**: Persistent storage for `live_ticks`, `live_bars`, `ingestor_statuses`, and `watchlists`.
-5. **Redis Pub/Sub**: Acts as the communication bridge between the .NET API and the Python Ingestor.
+4. **PostgreSQL Database**: Persistent storage for `live_ticks`, `live_bars`, `live_ingestor_status`, and `live_watchlist`.
+5. **Redis Pub/Sub**: Acts as the communication bridge between the .NET API and the Python feeds.
 
 ---
 
@@ -20,14 +30,14 @@ The Data Module spans across all layers of the trading engine:
 ### 1. Database Recording List (Watchlist)
 The core logic of the data module revolves around the "Database Recording List" (formerly known as the Watchlist).
 - Users add symbols (Equities, Indices, F&O) from the UI.
-- The `.NET API` saves the symbol to the `watchlists` table in PostgreSQL.
+- The `.NET API` saves the symbol to the `live_watchlist` table in PostgreSQL.
 - The `.NET API` immediately publishes a `watchlist_updates` message to a Redis channel.
-- The running `Python Ingestor` listens to this Redis channel, detects the signal, and resyncs its Fyers WebSocket subscriptions without needing a full restart.
+- The running feed (Dhan's, or FYERS's when it is the backup) listens to this Redis channel, detects the signal, and resyncs its vendor WebSocket subscriptions without needing a full restart; it also reconciles with the list periodically.
 
 ### 2. High-Frequency Data Ingestion
-Once subscribed, the `Python Ingestor` receives a continuous stream of market ticks. For every tick:
-- **Raw Ticks**: It saves the raw tick data into the `live_ticks` table.
-- **1-Minute Bars**: It aggregates ticks into continuous 1-minute OHLCV (Open, High, Low, Close, Volume) bars in the `live_bars` table. It uses an `UPSERT` logic—creating a new bar if the minute has rolled over, or updating the existing bar's High, Low, Close, and Volume if it's within the same minute.
+Once subscribed, the feed receives a continuous stream of market ticks and posts them to the API in batches (`POST /api/LiveData/ticks/upsert-batch`) as well as to the Redis stream the strategies read. For every tick the API stores:
+- **Raw Ticks**: the raw tick data, in the `live_ticks` table.
+- **1-Minute Bars**: ticks folded into continuous 1-minute OHLCV (Open, High, Low, Close, Volume) bars in the `live_bars` table, with an `UPSERT`—creating a new bar if the minute has rolled over, or updating the existing bar's High, Low, Close, and Volume if it's within the same minute. A minute its exchange was not open gets no bar.
 
 ### 3. Real-Time UI Broadcasting (SignalR)
 The console's websocket is the hub at `/hubs/livefeed` (`LiveFeedHub`), signed-in callers only; the browser sends its token as `?access_token=`. A connection is closed when that token expires (`CloseOnAuthenticationExpiration`), and the console reconnects with a fresh one; admin, and whether the account is active at all, are read from the account row at each connect, not from the token. Until 28 Sep a demoted or disabled admin's open socket kept every account's desk events for as long as it stayed up. Each connection is sent the prices it asked for and nothing else. Until 28 Sep every tick batch went to every signed-in browser, so a page following three contracts was sent every strike of every chain on the feed.
@@ -54,12 +64,12 @@ The React frontend keeps one connection to `/hubs/livefeed?v=2` (`web/src/lib/li
 ### 4. Automatic Expired Contract Cleanup
 Since F&O (Futures & Options) contracts expire frequently, leaving them in the database can bloat storage and cause subscription failures.
 - The Data Module includes a dynamic regex-based parsing mechanism in `LiveDataService.cs`.
-- Whenever the watchlist is fetched or synced, the system identifies expired derivative contracts based on their symbol nomenclature and automatically deletes them from the `watchlists` table.
+- Whenever the watchlist is fetched or synced, the system identifies expired derivative contracts based on their symbol nomenclature and automatically deletes them from the `live_watchlist` table.
 
 ### 5. Ingestor Health & State Management
-Because the Ingestor is a standalone Python process, its health must be tracked carefully:
-- **Heartbeats**: The `fyers_streamer.py` script writes a "heartbeat" to the `ingestor_statuses` table every 5 seconds.
-- **Dynamic Status Detection**: The `.NET API` checks the last heartbeat timestamp. If the heartbeat is less than **15 seconds** old, the ingestor is considered `Healthy` and `Running`.
+Because each feed is a standalone Python process, its health must be tracked carefully:
+- **Heartbeats**: Every feed posts a heartbeat to the API every 15 seconds (`HEARTBEAT_SECONDS`, `POST /api/LiveData/heartbeat`), which keeps it in the `live_ingestor_status` table, one row per feed.
+- **Dynamic Status Detection**: The `.NET API` checks the last heartbeat timestamp. If the heartbeat is at most **15 seconds** old and its status is `Running`, the feed is considered `Healthy`.
 - **External Runs vs API Runs**: 
   - If the ingestor is started via the Web UI, the API tracks its internal OS Process ID and captures its `stdout`/`stderr` logs.
   - If started externally via the terminal (`python3 start-engine.py`), the UI smartly detects it via heartbeats, labels it as "Running externally", and disables the "Stop" button in the UI to prevent zombie processes.
@@ -88,8 +98,8 @@ Everything the platform sees during a session is written down; the only thing wi
 | :--- | :--- | :--- |
 | Every tick (price, bid/ask, sizes, OHLC, volume, raw payload) | `live_ticks` hypertable | 90 days, compressed after 2 (`LiveTicksRetention90Days` migration) |
 | 1-minute bars folded from ticks | `live_bars` | Permanent |
-| 1/5/15-minute candles | `candles` | Permanent. Broker backfills carry source `fyers`; the nightly archive writes source `live` and never overwrites a broker row |
-| Option chain every ~5 s: price, bid/ask, volume, OI, previous-day OI, IV, delta/gamma/theta/vega | `option_chain_snapshots` | Permanent |
+| 1/5/15-minute candles | `candles` | Permanent. Backfills carry their vendor's source (`fyers` from FYERS, `dhan` from Dhan's index history import); the nightly archive writes source `live` and never overwrites a broker row |
+| Option chain, every strike: price, bid/ask, volume, OI, previous-day OI, IV, delta/gamma/theta/vega. Dhan's recorder once a minute; the FYERS poller every ~5 s when FYERS is the feed | `option_chain_snapshots`, with the vendor's source | Permanent |
 | Latest quote per symbol with IV and greeks | `live_quotes_latest` | Overwritten on every tick (the history is in the chain snapshots) |
 
 **The nightly candle archive** (`NightlyArchiveService`) runs once the day's last session has closed: at 23:50 IST (`Archive:RunAtIst`), or 20 minutes after the last exchange that traded that day closed, whichever is later, with the closes from the session service (`ArchiveSchedule.DueAtIst`). MCX closes at 23:30 while New York is on daylight saving and at 23:55 while it is on standard time, so from November to March a day is archived at 00:15 the next morning; until 1 Oct 2026 it ran at 23:50 all year, and MCX's last five minutes of a winter day stayed in `live_bars` only. It turns the day's live 1-minute bars into 1, 5 and 15-minute candles for every symbol that ticked, and asks the broker for its own candles of the index symbols (`Archive:BrokerSymbols`, default NIFTY 50, BANKNIFTY, SENSEX, FINNIFTY). The last archived day is kept in `system_settings` (`archive.candles.lastDay`), so a night the API was down is caught up on its next tick, up to seven days back. Options are the reason this matters: the broker serves no history for an expired contract, so the bars captured live are the only record of what a strike did.
@@ -97,6 +107,8 @@ Everything the platform sees during a session is written down; the only thing wi
 A day whose archive fails (its `live_bars` query timing out on the small server, say) is tried again after 5 minutes, then 15, then every hour (`ArchiveSchedule.RetryAfter`); the days after it wait behind it, because the marker is the last day done in order. Until 1 Oct 2026 a failing day was retried every minute, so a query that timed out ran every minute, with an error each time. Now the first failure is an error in `logs/api.log`, and later ones are a warning at most once an hour (the tries in between are information lines). The waits are kept in memory: a restart tries the day at once and logs a new error, and a success clears them. Each day is archived in a database context of its own, and the archive clears the context's change tracker after each symbol is saved, so a save never scans the thousands of candles of the symbols before it, and one symbol whose save failed cannot fail the saves of the symbols after it.
 
 Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (admin; add `&broker=false` to skip the broker calls). The response lists what was inserted, updated, or left to the broker.
+
+**Backfilling one symbol** (`POST /api/Backfill/history`, admin; the backfill panel on Data → Historical) asks the history router's first vendor, FYERS, for the trading days the symbol's stored candles miss, and only those. FYERS needs a sign-in every morning: its token ends at 06:00 IST and its refresh is switched off under SEBI's rules. With no FYERS session the endpoint answers **409** with `{ message, provider: "fyers" }`, the message "No valid FYERS session: FYERS serves history only after today's sign-in. Sign in on Connectors → FYERS, then try again.", and the panel shows that line with a link to the connector (`VendorNotConnectedException`). Until 29 Oct 2026 it was a 500, "An unexpected error occurred".
 
 #### India VIX
 
@@ -126,7 +138,7 @@ python tools/index_history_import.py candles --names INDIAVIX --root /tmp/vix-fi
 
 The download fetches every index in its list for those days (twelve small requests for three days); the import takes only VIX. It needs a live Dhan token in `DHAN_CLIENT_ID` and `DHAN_ACCESS_TOKEN`; on 1 Oct the saved ones were stale and the token came from the API's Dhan session. The import adds only rows that are not there (source `dhan`).
 
-**Not kept yet:** a live run's equity curve (the `equity-snapshots` endpoint is backtest-only; live P&L is reconstructed from positions and ticks), and OI for underlyings the chain poller is not configured for (FINNIFTY, MCX).
+**Not kept yet:** a live run's equity curve (the `equity-snapshots` endpoint is backtest-only; live P&L is reconstructed from positions and ticks), and OI for underlyings no chain recorder covers ([Option chain](option_chain.md) lists the ones each covers).
 
 ### 7. When a Tick Does Not Arrive
 
@@ -159,7 +171,10 @@ The heartbeat counts are the feed's own, since it started. The API used to drop 
 ## Module Components
 
 ### Python Scripts
-- `src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py`: The main entry point for data ingestion.
+- `src/AlgoTrading.PythonEngine/market_data/live/run_feed.py`: The entry point of every live feed (`--vendor dhan`, `fyers` or `truedata`); the API's `FeedSupervisor` starts it. `fyers_streamer.py` runs it for FYERS, under the old name.
+- `src/AlgoTrading.PythonEngine/core/live/feed_runner.py`: What every feed does besides its vendor's socket (batches to the API, the Redis stream, greeks, the watchlist, the heartbeat, the watchdogs).
+- `src/AlgoTrading.PythonEngine/market_data/live/vendors/`: One adapter per vendor (`dhan.py`, `fyers.py`, `truedata.py`).
+- `src/AlgoTrading.PythonEngine/market_data/live/option_chain_poller.py`: The FYERS chain poller, for when FYERS is the feed (Dhan's chain recorder runs in the API).
 
 ### .NET C# Services & Controllers
 - `src/AlgoTrading.Api/Controllers/LiveDataController.cs`: Handles REST endpoints for live data.

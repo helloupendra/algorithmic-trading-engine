@@ -12,8 +12,14 @@
 
 > **Author:** Upendra Singh Chauhan
 > **Domain:** NSE / BSE — Index Options (BankNifty, Nifty, Sensex), Equity Cash, Derivatives
-> **Broker Integration:** FYERS API v3
+> **Broker Integration:** FYERS API v3 (as first built; see the note below)
 > **Document Type:** Technical Architecture & Design Rationale
+
+> **Note, 29 October 2026.** This report gives the design as it was first built, on FYERS alone, and its FYERS
+> sections still describe that. The vendors now sit behind connectors: Dhan is the primary live feed and records the
+> option chain every minute, and FYERS is the backup feed and the history backfill source. Every order is a paper
+> order. See [Data](modules/data_module.md), [Connectors](modules/connectors_module.md) and the
+> [project status](PROJECT_STATUS.md).
 
 ---
 
