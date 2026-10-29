@@ -32,7 +32,7 @@ export const SITE = {
 }
 
 /** The navigation, in reading order. `src` is repo-relative; `slug` is the URL under /docs/. */
-const NAV = [
+export const NAV = [
   {
     section: 'Start here',
     items: [
@@ -132,9 +132,10 @@ function slugify(text) {
     .slice(0, 80)
 }
 
-function gitDate(file) {
+/** The day of the last commit that touched any of these repo-relative paths. */
+function gitDate(...files) {
   try {
-    const out = execFileSync('git', ['log', '-1', '--format=%cI', '--', file], { cwd: repo, encoding: 'utf8' }).trim()
+    const out = execFileSync('git', ['log', '-1', '--format=%cI', '--', ...files], { cwd: repo, encoding: 'utf8' }).trim()
     if (out) return out.slice(0, 10)
   } catch {
     /* not a git checkout: fall back to today */
@@ -292,7 +293,7 @@ function navHtml(current) {
   ).join('')
 }
 
-const urlFor = (slug) => (slug ? `/docs/${slug}/` : '/docs/')
+export const urlFor = (slug) => (slug ? `/docs/${slug}/` : '/docs/')
 
 function layout({ page, body, toc, prev, next, description, dateModified }) {
   const url = `${SITE.url}${urlFor(page.slug)}`
@@ -513,19 +514,32 @@ export async function buildDocs({ outDir }) {
 
   // Site-wide: robots and the sitemap. The console itself is behind a sign-in
   // and is asked not to be indexed; the landing page and the docs are.
-  await fs.writeFile(
-    path.join(outDir, 'robots.txt'),
-    `User-agent: *\nAllow: /\nDisallow: /desk\nDisallow: /admin\nDisallow: /trader\nDisallow: /login\nDisallow: /invite/\nDisallow: /api/\nDisallow: /hubs/\n\nSitemap: ${SITE.url}/sitemap.xml\n`,
-  )
-  const today = new Date().toISOString().slice(0, 10)
-  const urls = [{ url: `${SITE.url}/`, lastmod: today, priority: '1.0' }, ...pages.map((p) => ({ ...p, priority: p.url.endsWith('/docs/') ? '0.9' : '0.7' }))]
-  await fs.writeFile(
-    path.join(outDir, 'sitemap.xml'),
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
-      .map((u) => `  <url><loc>${u.url}</loc><lastmod>${u.lastmod}</lastmod><priority>${u.priority}</priority></url>`)
-      .join('\n')}\n</urlset>\n`,
-  )
+  await fs.writeFile(path.join(outDir, 'robots.txt'), robotsTxt())
+  // The homepage's words live in index.html and landing/, so its date is
+  // theirs rather than the build's: a lastmod that moves on every deploy
+  // tells a crawler nothing.
+  await fs.writeFile(path.join(outDir, 'sitemap.xml'), sitemapXml(pages, gitDate('web/index.html', 'web/src/pages/landing')))
   return pages.length
+}
+
+/**
+ * Paths a crawler is asked not to fetch: the sign-in, the busiest console
+ * pages, the API and the hubs. Every console route also answers with
+ * X-Robots-Tag: noindex (Program.cs); this list only spares the crawl.
+ */
+const CRAWL_DISALLOW = ['/desk', '/admin', '/trader', '/login', '/invite/', '/api/', '/hubs/']
+
+/** robots.txt for the whole site: the homepage and the docs open, the console's paths above closed. */
+export function robotsTxt() {
+  return `User-agent: *\nAllow: /\n${CRAWL_DISALLOW.map((p) => `Disallow: ${p}\n`).join('')}\nSitemap: ${SITE.url}/sitemap.xml\n`
+}
+
+/** sitemap.xml: the homepage first, then every docs page as buildDocs collected them ({ url, lastmod }). */
+export function sitemapXml(pages, homeLastmod) {
+  const urls = [{ url: `${SITE.url}/`, lastmod: homeLastmod, priority: '1.0' }, ...pages.map((p) => ({ ...p, priority: p.url.endsWith('/docs/') ? '0.9' : '0.7' }))]
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+    .map((u) => `  <url><loc>${u.url}</loc><lastmod>${u.lastmod}</lastmod><priority>${u.priority}</priority></url>`)
+    .join('\n')}\n</urlset>\n`
 }
 
 // Direct run: node docs-site/build.mjs [outDir]
