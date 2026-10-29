@@ -2132,9 +2132,26 @@ a.pill:hover { border-color: var(--line-strong); }
 .bt-progress__pct { font-size: 15px; font-weight: 700; color: var(--text); }
 .progress--lg { height: 7px; margin-top: 0; }
 
-/* Coverage table on the overview: index × resolution rows. */
+/* Coverage table on the overview: a line per index, opening onto its stored ranges. */
 .coverage-table td.coverage-table__none { color: var(--text-3); }
 .coverage-table__underlying { font-weight: 650; }
+.coverage-table__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.coverage-table__toggle svg { width: 13px; height: 13px; color: var(--text-3); }
+.coverage-table__toggle:hover svg { color: var(--text); }
+/* The ranges sit under their index's name, indented past its chevron. */
+.coverage-table .coverage-table__detail > td { padding: 0 12px 10px 31px; }
+.coverage-table .coverage-table__detail:hover > td { background: none; }
+.coverage-table__detail .table th { position: static; background: none; }
 .coverage-chip {
   display: inline-flex;
   align-items: center;

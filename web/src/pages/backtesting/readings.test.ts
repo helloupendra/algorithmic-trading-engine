@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { estimateSessions, sessionsOnHand } from './readings'
+import { estimateSessions, foldIndexCoverage, resolutionSpan, sessionsOnHand } from './readings'
 
 describe('estimateSessions', () => {
   it('divides a bar count by a full session at that resolution', () => {
@@ -111,5 +111,52 @@ describe('sessionsOnHand', () => {
   it('is zero with nothing stored, and an empty range is not an index on hand', () => {
     expect(sessionsOnHand([])).toEqual({ total: 0, indices: 0, longest: 0 })
     expect(sessionsOnHand(rows([['NSE:NIFTY50-INDEX', '5', 0]]))).toEqual({ total: 0, indices: 0, longest: 0 })
+  })
+})
+
+describe('resolutionSpan', () => {
+  it('names the finest and the coarsest resolution, in either spelling', () => {
+    expect(resolutionSpan(['5', 'D', '1', '15'])).toBe('1m to daily')
+    expect(resolutionSpan(['1D', '15m', '5m'])).toBe('5m to daily')
+    expect(resolutionSpan(['1', '5'])).toBe('1m to 5m')
+  })
+
+  it('reads the stored and the live minute bars as one resolution', () => {
+    expect(resolutionSpan(['1', '1m'])).toBe('1m only')
+    expect(resolutionSpan(['D'])).toBe('daily only')
+    expect(resolutionSpan([])).toBe('')
+  })
+})
+
+describe('foldIndexCoverage', () => {
+  const span = (resolution: string, barCount: number, fromUtc: string, toUtc: string) =>
+    ({ symbol: 'NSE:NIFTY50-INDEX', resolution, barCount, fromUtc, toUtc })
+
+  it("folds NIFTY's five ranges into one line: its best-covered sessions, its resolutions and its whole reach", () => {
+    // NIFTY as recorded on 27 Sep 2026 (1, 15, 1m, 5, D): the stored one-minute range holds the most
+    // sessions, the five-minute one starts earliest and the live recorder's ends latest.
+    const nifty = RECORDED.filter(([s]) => s === 'NSE:NIFTY50-INDEX').map(([, resolution, bars]) =>
+      span(resolution, bars, '2020-06-01T03:45:00Z', '2026-09-26T10:00:00Z'),
+    )
+    nifty[2] = span('1m', 6_687, '2026-08-10T03:45:00Z', '2026-09-27T10:00:00Z')
+    nifty[3] = span('5', 114_524, '2020-01-01T03:45:00Z', '2026-09-26T10:00:00Z')
+    expect(foldIndexCoverage(nifty)).toEqual({
+      sessions: 1_528,
+      resolutions: '1m to daily',
+      fromUtc: '2020-01-01T03:45:00Z',
+      toUtc: '2026-09-27T10:00:00Z',
+    })
+  })
+
+  it('compares the days as instants, not as text', () => {
+    // As text 2025-12-31 sorts first; as an instant it is 01:00 UTC on 1 Jan, an hour after the other.
+    const rows = [span('D', 10, '2026-01-01T00:00:00.000Z', '2026-01-10T00:00:00Z'), span('5', 750, '2025-12-31T23:00:00-02:00', '2026-01-09T00:00:00Z')]
+    expect(foldIndexCoverage(rows).fromUtc).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('leaves out a range that holds no bars, and has nothing to say with none stored', () => {
+    const rows = [span('1', 0, '2019-01-01T00:00:00Z', '2027-01-01T00:00:00Z'), span('D', 20, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z')]
+    expect(foldIndexCoverage(rows)).toEqual({ sessions: 20, resolutions: 'daily only', fromUtc: '2026-01-01T00:00:00Z', toUtc: '2026-02-01T00:00:00Z' })
+    expect(foldIndexCoverage([])).toEqual({ sessions: 0, resolutions: '', fromUtc: null, toUtc: null })
   })
 })
