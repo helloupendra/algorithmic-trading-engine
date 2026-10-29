@@ -46,6 +46,7 @@ import {
   istStamp,
   istTime,
   price,
+  replayAsOfUtc,
   sidePeak,
   signedPercent,
   sourceLabel,
@@ -663,13 +664,6 @@ function BuildUpLegend() {
   )
 }
 
-/** "10:41" IST on the session day → ISO UTC at the end of that minute. */
-function asOfFor(sessionDate: string, time: string): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || !/^\d{2}:\d{2}$/.test(time)) return undefined
-  const ms = Date.parse(`${sessionDate}T${time}:59+05:30`)
-  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
-}
-
 // --- page -----------------------------------------------------------------------
 
 /**
@@ -704,7 +698,7 @@ export function ChainView({ underlying }: { underlying: string }) {
   const [toggles, setToggles] = useState<Toggles>({ greeks: false, bidAsk: false, perLot: false })
   const [sessionDate, setSessionDate] = useState<string>('')
 
-  const asOfUtc = replayTime && sessionDate ? asOfFor(sessionDate, replayTime) : undefined
+  const asOfUtc = replayTime && sessionDate ? replayAsOfUtc(sessionDate, replayTime) : undefined
 
   const expiries = useOptionChainExpiries(underlying)
   const view = useOptionChainView(underlying, expiry, asOfUtc)

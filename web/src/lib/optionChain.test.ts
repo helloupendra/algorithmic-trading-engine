@@ -16,6 +16,7 @@ import {
   pointsVsSpot,
   positionMarker,
   positionsBySymbol,
+  replayAsOfUtc,
   signedPercent,
   spotMarkerIndex,
   strikeWindow,
@@ -336,10 +337,16 @@ describe('the chain page views', () => {
     expect(chainUnderlying('<script>')).toBe('NIFTY')
   })
 
-  it('carries the underlying and expiry between views, and leaves the replay clock behind', () => {
-    expect(chainViewUrl('oi', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/oi?u=SENSEX&expiry=2026-10-01')
+  it('carries the underlying and expiry between views', () => {
     expect(chainViewUrl('chain', new URLSearchParams('u=BANKNIFTY'))).toBe('/markets/chain?u=BANKNIFTY')
     expect(chainViewUrl('levels', '')).toBe('/markets/chain/levels')
+  })
+
+  it('carries the replay clock to OI history and back, and leaves it behind on Levels', () => {
+    // A chain rewound to 10:41 must open OI history ending at 10:41, not at now.
+    expect(chainViewUrl('oi', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/oi?u=SENSEX&expiry=2026-10-01&at=10%3A41')
+    expect(chainViewUrl('chain', '?u=SENSEX&at=10:41')).toBe('/markets/chain?u=SENSEX&at=10%3A41')
+    expect(chainViewUrl('levels', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/levels?u=SENSEX&expiry=2026-10-01')
   })
 
   it('has one path per view, all under the chain tab', () => {
@@ -347,3 +354,20 @@ describe('the chain page views', () => {
   })
 })
 
+
+describe('replayAsOfUtc', () => {
+  it('reads the clock as IST on the session day, to the end of the minute', () => {
+    // 11:00 IST is 05:30 UTC; the capture taken during 11:00 is in, 11:01's is not.
+    expect(replayAsOfUtc('2026-10-29', '11:00')).toBe('2026-10-29T05:30:59.000Z')
+    // Before 05:30 IST is the previous UTC day.
+    expect(replayAsOfUtc('2026-10-29', '05:15')).toBe('2026-10-28T23:45:59.000Z')
+  })
+
+  it('reads anything that is not a day and an hh:mm as live', () => {
+    expect(replayAsOfUtc('', '11:00')).toBeUndefined()
+    expect(replayAsOfUtc('2026-10-29', '')).toBeUndefined()
+    expect(replayAsOfUtc('2026-10-29', '11:00:30')).toBeUndefined()
+    expect(replayAsOfUtc('29/10/2026', '11:00')).toBeUndefined()
+    expect(replayAsOfUtc('2026-13-45', '11:00')).toBeUndefined()
+  })
+})

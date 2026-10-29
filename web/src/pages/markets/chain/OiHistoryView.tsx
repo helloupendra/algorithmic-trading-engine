@@ -23,7 +23,7 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useOptionChainSeries, useOptionChainView } from '../../../lib/queries'
 import type { OptionChainSeries, OptionChainSeriesPoint } from '../../../lib/types'
-import { capturedExpiry, expiryLabel, istDate } from '../../../lib/optionChain'
+import { capturedExpiry, expiryLabel, istDate, replayAsOfUtc } from '../../../lib/optionChain'
 import { formatPrice } from '../../../lib/format'
 import { EmptyState, InlineError, Loading, Panel, QueryBoundary } from '../../../components/ui'
 import { useWidth } from './useWidth'
@@ -179,17 +179,31 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
   )
 }
 
-/** One strike's session, for the underlying the page is on and the expiry the chain view picked. */
+/**
+ * One strike's session, for the underlying the page is on and the expiry the
+ * chain view picked. When the Chain tab is rewound (`at` in the URL) the
+ * session ends there: the strikes, the money and the curves are the ones
+ * that were true at that minute, not the whole day to now.
+ */
 export function OiHistoryView({ underlying }: { underlying: string }) {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const expiry = params.get('expiry') ?? undefined
+  const replayTime = params.get('at') ?? ''
   const [strike, setStrike] = useState<number | null>(null)
   const [view, setView] = useState<View>('oiChange')
 
   // The chain view's own query, so switching tabs costs no request.
-  const chain = useOptionChainView(underlying, expiry)
-  // keepPreviousData must never show one underlying's strikes under another's name.
-  const data = chain.data && chain.data.underlying === underlying ? chain.data : undefined
+  const live = useOptionChainView(underlying, expiry)
+  // The replay clock as the Chain tab reads it: the URL's time on the session
+  // of the newest capture, through the same conversion, so both tabs stop at
+  // the same capture.
+  const capturedUtc = live.data?.underlying === underlying ? live.data.header?.snapshotCapturedUtc : null
+  const asOfUtc = replayTime && capturedUtc ? replayAsOfUtc(istDate(Date.parse(capturedUtc)), replayTime) : undefined
+  const replay = useOptionChainView(underlying, expiry, asOfUtc)
+  const chain = asOfUtc ? replay : live
+  // keepPreviousData must never show one underlying's strikes under another's
+  // name, nor the live chain's under the replay clock while the replay loads.
+  const data = chain.data && chain.data.underlying === underlying && !(asOfUtc && chain.isPlaceholderData) ? chain.data : undefined
 
   // Default to the money: it is the strike anyone opens this view to look at.
   // A strike picked earlier that is no longer listed (the chain moved on, or
@@ -198,9 +212,15 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
   const selected = (strike != null && strikes.includes(strike) ? strike : null) ?? data?.atTheMoneyStrike ?? strikes[0] ?? null
   const selectedIndex = selected != null ? strikes.indexOf(selected) : -1
 
-  const series = useOptionChainSeries(underlying, selected, data?.expiryDate)
+  const series = useOptionChainSeries(underlying, selected, data?.expiryDate, asOfUtc)
   // The expiry as the chain's toolbar prints it ("29 Sep 2026 (+2 days)"), not the ISO date.
   const expiryNote = data && capturedExpiry(data.expiryDate)
+
+  const backToLive = () => {
+    const next = new URLSearchParams(params)
+    next.delete('at')
+    setParams(next, { replace: true })
+  }
 
   if (chain.isError && !data) return <InlineError error={chain.error} />
   if (!data) return <Loading label={`Loading the ${underlying} chain…`} />
@@ -255,6 +275,15 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
           </button>
         )}
         <span className="oc-toolbar__spacer" />
+        {asOfUtc && (
+          <span className="oc-control" title="The Chain tab's replay clock (IST): the curves end at this minute">
+            <span className="oc-control__label">As of</span>
+            <b className="mono">{replayTime}</b>
+            <button type="button" className="btn btn--sm btn--primary" onClick={backToLive}>
+              Back to live
+            </button>
+          </span>
+        )}
         <div className="oc-seg" role="group" aria-label="Series">
           {VIEWS.map((v) => (
             <button key={v.key} type="button" title={v.hint} aria-pressed={view === v.key} onClick={() => setView(v.key)}>

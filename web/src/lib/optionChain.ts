@@ -59,13 +59,16 @@ export function chainUnderlying(requested: string | null | undefined, known?: re
 }
 
 /**
- * A view's URL, carrying what the views share: the underlying and the expiry.
- * The replay clock (`at`) belongs to the chain alone and is left behind.
+ * A view's URL, carrying what the views share: the underlying and the expiry,
+ * and the replay clock (`at`) to the views that read it. The Chain and OI
+ * history both stop at it, so a chain rewound to 11:00 opens OI history
+ * ending at 11:00 rather than at now; Levels reads the live chain and leaves
+ * it behind.
  */
 export function chainViewUrl(view: ChainViewKey, search: string | URLSearchParams): string {
   const from = new URLSearchParams(search)
   const next = new URLSearchParams()
-  for (const key of ['u', 'expiry']) {
+  for (const key of view === 'levels' ? ['u', 'expiry'] : ['u', 'expiry', 'at']) {
     const value = from.get(key)
     if (value) next.set(key, value)
   }
@@ -250,6 +253,19 @@ export function istStamp(iso: string | null | undefined): string {
   if (Number.isNaN(ms)) return '—'
   const d = new Date(ms + IST_OFFSET_MS).toISOString()
   return `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(11, 16)}`
+}
+
+/**
+ * The replay clock as an instant: "10:41" IST on the session day, to the end
+ * of that minute, so the capture taken during 10:41 is in and 10:42's is not.
+ * Undefined for anything that is not a day and an hh:mm, which reads as live.
+ * The Chain and OI history tabs both turn the URL's `at` into the moment they
+ * ask for through this, so the two always stop at the same capture.
+ */
+export function replayAsOfUtc(sessionDate: string, time: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || !/^\d{2}:\d{2}$/.test(time)) return undefined
+  const ms = Date.parse(`${sessionDate}T${time}:59+05:30`)
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
 }
 
 /** Whole days between two "yyyy-mm-dd" dates. */
