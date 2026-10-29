@@ -31,6 +31,10 @@ Each signature is one of this desk's own failures:
   "Refresh token API is currently disabled to comply with SEBI regulations".
   A broker that refuses something and cites the regulator has changed a rule
   the desk must follow; it had been on FYERS's notice board since 10 Mar.
+  A refusal the desk now lives with for good is known (``KNOWN_REGULATORY``)
+  and opens nothing: FYERS's refresh is switched off, the morning job still
+  tries it every trading day, and the checkup's ``fyers-backup`` item tells the
+  owner every day that FYERS needs a sign-in each morning.
 * ``job-failed`` / ``desk-warning`` / ``desk-relaunched`` — what desk.sh, the
   morning job and the archive say went wrong; desk.sh started several times
   in seconds.
@@ -130,9 +134,10 @@ HOLD_SECONDS = {
     "rate-limited": 900,
     "vendor-auth": 3600,       # a dead token stays dead until someone renews it
     "vendor-plan": 3600,       # and a lapsed data plan until someone pays for it
-    # A broker's rule change citing SEBI does not go away: FYERS refuses the
-    # refresh every trading morning. Held a week, so a long weekend or a
-    # holiday between two mornings is still the one incident.
+    # A broker's rule change citing SEBI does not go away until the desk
+    # follows it: a refusal can come back every trading morning, as FYERS's
+    # refresh did before it was known (KNOWN_REGULATORY). Held a week, so a
+    # long weekend or a holiday between two mornings is still the one incident.
     "vendor-regulatory": 7 * 24 * 3600,
     "order-rate-limit": 3600,  # a churning strategy hits the limit in bursts all day
     "desk-warning": 3600,
@@ -324,6 +329,23 @@ REGULATION_WRITERS = frozenset({
     "AlgoTrading.Api.Services.AiTelegram.TelegramAssistant",
 })
 _REGULATION_WRITERS_SHORT = frozenset(c.rsplit(".", 1)[-1] for c in REGULATION_WRITERS)
+#: Regulatory refusals the desk follows for good and reports elsewhere, by
+#: vendor: they open nothing. Each must be a state, not an event, and something
+#: else must still tell the owner about it every day.
+#:
+#: * FYERS's token refresh, switched off under SEBI's retail algo framework
+#:   (13 Oct 2026): "Refresh token API is currently disabled to comply with SEBI
+#:   regulations". The morning job tries the refresh anyway (it costs one call,
+#:   and it works the day FYERS turns it back on) and logs the refusal every
+#:   trading day; the checkup's ``fyers-backup`` item says each day that FYERS
+#:   needs a morning sign-in. As an incident it was resolved and opened again at
+#:   every open.
+#:
+#: Any other refusal that cites the regulator, from FYERS or anyone else, is
+#: still a ``vendor-regulatory`` incident.
+KNOWN_REGULATORY: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("fyers", re.compile(r"(?i)\brefresh token api is (?:currently )?disabled\b")),
+)
 _LOCALHOST = re.compile(r"(?i)localhost|127\.0\.0\.1")
 _FAILED_WORD = re.compile(r"\bFAILED\b")
 _DESK_START = re.compile(r"^=== desk started \(pid \d+")
@@ -1419,7 +1441,8 @@ class LogsAgent(Agent):
         A broker or vendor refusing something and citing SEBI or its rules as the
         reason: one incident per vendor, held a week (it comes back every
         morning). The API's own words count only when they name the vendor, and
-        never from a logger that writes about circulars itself.
+        never from a logger that writes about circulars itself. A refusal in
+        KNOWN_REGULATORY is claimed and opens nothing.
         """
         if not (_REFUSED.search(text) and _CITES_REGULATOR.search(text)):
             return False
@@ -1429,6 +1452,8 @@ class LogsAgent(Agent):
         if vendor is None and o.kind == "api":
             return False
         vendor = vendor or "broker"
+        if any(vendor.lower() == known and pattern.search(text) for known, pattern in KNOWN_REGULATORY):
+            return True
         name = _vendor_name(vendor) if vendor != "broker" else "A broker"
         scan.add(
             fingerprint=f"{AGENT}:vendor-regulatory:{vendor.lower()}",
@@ -1441,8 +1466,10 @@ class LogsAgent(Agent):
             suggestion=("13 Oct 2026: FYERS refused a token refresh \"to comply with SEBI regulations\", the retail algo "
                         "framework on its notice board since 10 Mar (daily 2FA, no refresh tokens, static IP for "
                         "orders). Read the broker's notice and the Compliance Triage's reports (AI → Reports), change "
-                        "the desk to follow it, then acknowledge this incident: it comes back every morning, and a "
-                        "resolved one opens again on the next refusal."),
+                        "the desk to follow it, then acknowledge this incident: a refusal that comes back every "
+                        "morning opens a resolved one again. Once the desk follows the rule for good and something "
+                        "else reports it daily (the checkup's fyers-backup item does for FYERS's refresh), add the "
+                        "refusal to KNOWN_REGULATORY in sentinel/agents/logs.py."),
             raw=raw, file=o.file, hold=scan.hold("vendor-regulatory", text), line_time=t)
         return True
 
