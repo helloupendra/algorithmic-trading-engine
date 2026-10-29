@@ -1680,6 +1680,7 @@ const DOCS_PAGES: Readonly<Record<string, string>> = {
   'docs/modules/backtesting_module.md': 'modules/backtesting',
   'docs/modules/option_chain.md': 'modules/option-chain',
   'docs/modules/pattern_alerts.md': 'modules/pattern-alerts',
+  'docs/modules/level_alerts.md': 'modules/level-alerts',
   'docs/modules/connectors_module.md': 'modules/connectors',
   'docs/modules/dhan_connector.md': 'modules/dhan',
   'docs/modules/users_module.md': 'modules/users',

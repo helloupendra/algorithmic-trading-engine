@@ -5,7 +5,10 @@ on BANKNIFTY's 15-minute chart, an engulfing candle on a stock on the recording
 list, a morning star on CRUDEOIL. Alerts appear on **Markets → Patterns**
 (`/markets/patterns`) and, for rules that ask for it, on Telegram. Indicator
 crosses (RSI, EMA, Supertrend, VWAP) are watched beside them; see
-[Indicator alerts](#indicator-alerts).
+[Indicator alerts](#indicator-alerts). A price or a chain's PCR crossing a level
+of your own choosing is a [level alert](level_alerts.md), on **Markets →
+Alerts**, for every user with the market-data grant (built 29 Oct 2026, its own
+module because a level is a number crossing a number, not a closed candle).
 
 ## What it reads
 
@@ -289,5 +292,3 @@ Admin-only, under `/api/PatternAlerts`.
 
 * **Chart patterns** such as head and shoulders. They need swing-point detection
   and a template matcher on top of these same candles.
-* **Price-level alerts** (a breakout above a level of your choosing). They can
-  reuse the indicator scanner and its config file.
