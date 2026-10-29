@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { STALE_AFTER_S, ageText, groupPositions, markState, positionAccounts, totalSums } from './openPositions'
+import { STALE_AFTER_S, ageText, groupPositions, markState, positionAccounts, positionsCsv, positionsCsvName, totalSums } from './openPositions'
 import { openPosition } from './openPositions.fixture'
 import type { PositionGreeks } from './types'
 
@@ -76,5 +76,52 @@ describe('groupPositions', () => {
       { id: 1, name: 'admin' },
       { id: 7, name: 'coderforchange' },
     ])
+  })
+})
+
+describe('positionsCsv', () => {
+  const legs = [
+    openPosition(),
+    openPosition({
+      positionId: 9002, runId: 600, strategyName: 'Manual', isManualBook: true, symbol: 'NSE:NIFTY2692923500CE',
+      label: 'NIFTY 23500 CE · 29 Sep', direction: 'SHORT', markPrice: null, markUtc: null, markAgeSeconds: null,
+      unrealizedPnl: null, carryForward: true, carriedFromRunId: 598, stopLossPrice: 120, targetPrice: 40,
+      greeks: greeks(-1_240),
+    }),
+    openPosition({ positionId: 9003, userId: 2, userName: 'coderforchange', runId: 640, unrealizedPnl: -2_210.5 }),
+  ]
+  const lines = positionsCsv(groupPositions(legs)).split('\r\n')
+  const header = lines[0].split(',')
+  const row = (i: number) => Object.fromEntries(lines[i].split(',').map((v, n) => [header[n], v]))
+
+  it("writes a line per leg in the page's order: account, then the manual book, then the runs", () => {
+    expect(lines).toHaveLength(5)
+    expect(lines.slice(1, 4).map((l) => l.split(',').slice(0, 3).join(' '))).toEqual([
+      'admin Manual book 600',
+      'admin GhostTangentCrossings 612',
+      'coderforchange GhostTangentCrossings 640',
+    ])
+  })
+
+  it('writes the mark and its time in IST, the P&L as a number, and the greeks when priced', () => {
+    expect(row(2)).toMatchObject({
+      Symbol: 'NSE:NIFTY2692923300PE', Side: 'Long', Lots: '2', 'Lot size': '65', Quantity: '130', Entry: '64.8',
+      Mark: '69.57', 'Mark time (IST)': '2026-09-28T11:42:04+05:30', 'Open P&L (₹)': '620', Delta: '',
+      'Carry forward': 'false', 'Opened (IST)': '2026-09-28T11:12:00+05:30',
+    })
+    expect(row(3)['Open P&L (₹)']).toBe('-2210.5')
+  })
+
+  it('leaves a leg with no mark without a P&L, never 0, and keeps its levels, greeks and carry', () => {
+    expect(row(1)).toMatchObject({
+      Side: 'Short', Mark: '', 'Mark time (IST)': '', 'Open P&L (₹)': '', 'Stop loss': '120', Target: '40',
+      Delta: '0.5', 'IV %': '12.4', 'Theta (₹/day)': '-1240', 'Vega (₹ per IV point)': '962',
+      'Carry forward': 'true', 'Carried from run': '598',
+    })
+  })
+
+  it('names the file by the account picked and the time the legs were read', () => {
+    expect(positionsCsvName(null, '2026-10-29T09:02:10Z')).toBe('positions-2026-10-29-1432.csv')
+    expect(positionsCsvName('coderforchange', '2026-10-29T09:02:10Z')).toBe('positions-coderforchange-2026-10-29-1432.csv')
   })
 })

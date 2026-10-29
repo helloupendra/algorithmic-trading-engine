@@ -13,7 +13,7 @@
 
 import { useMemo } from 'react'
 import type { AccountTotals, DeskGrid } from '../../lib/desk'
-import { compactInr, dayLabel, liveAccountNets } from '../../lib/desk'
+import { columnUnit, compactInr, dayLabel, liveAccountNets } from '../../lib/desk'
 import { dayCurves, dayStartMs, gapText, withLiveTips } from '../../lib/pnlSeries'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
 import { useDeskRiskLimits, useRunPnlSeries } from '../../lib/queries'
@@ -43,6 +43,8 @@ function AccountRow({ totals, multi }: { totals: AccountTotals; multi: boolean }
 function ByStrategy({ grid }: { grid: DeskGrid }) {
   const rows = grid.rows
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.figures.net)))
+  // The figures down the right are one column: one unit for all of them.
+  const unit = columnUnit(rows.map((r) => r.figures.net))
   return (
     <div className="dk-bystrat">
       <div className="dk-hd" style={{ marginBottom: 4 }}>
@@ -63,7 +65,7 @@ function ByStrategy({ grid }: { grid: DeskGrid }) {
               />
             </span>
             <span className={`dk-n ${toneClass(r.figures.net)}`} style={{ textAlign: 'right' }}>
-              {compactInr(r.figures.net)}
+              {compactInr(r.figures.net, true, unit)}
             </span>
           </div>
         )

@@ -1,7 +1,9 @@
 /**
- * Backtesting module — Overview. The data that exists comes first (which
- * index has candles at which resolution, and for how many sessions), then
- * the most recent runs; "New backtest" leads to the strategy grid.
+ * Backtesting module — Overview. The most recent runs come first, then the
+ * data there is to replay: one line per index (how many sessions, at which
+ * resolutions, over which days), each opening onto its stored ranges. It
+ * opened with every range of every index, 37 rows with ditto marks, and the
+ * results under them. "New backtest" leads to the strategy grid.
  */
 
 import { useMemo, useState } from 'react'
@@ -13,14 +15,14 @@ import {
   useFnoUnderlyings,
   type CoverageRow,
 } from '../../lib/queries'
-import { formatNumber, formatPercent, shortSymbol } from '../../lib/format'
-import { classifySymbol, resolutionLabel, resolutionRank } from '../../lib/symbols'
+import { formatNumber, formatPercent } from '../../lib/format'
+import { classifySymbol, instrumentName, resolutionLabel, resolutionRank } from '../../lib/symbols'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
-import { IconArrowRight, IconDatabase, IconFlask, IconPlus } from '../../components/icons'
+import { IconArrowRight, IconChevronDown, IconChevronRight, IconDatabase, IconFlask, IconPlus } from '../../components/icons'
 import type { BacktestRunSummary, FnoUnderlying } from '../../lib/types'
 import { PnlValue } from '../strategies/shared'
 import { BackfillDialog } from './BackfillDialog'
-import { estimateSessions, sessionsOnHand } from './readings'
+import { estimateSessions, foldIndexCoverage, sessionsOnHand } from './readings'
 import {
   BacktestStatusBadge,
   formatDayRange,
@@ -28,20 +30,22 @@ import {
   runSpecLabel,
 } from './shared'
 
-interface CoverageLine {
+interface IndexLine {
   underlying: string | null
   spotSymbol: string
-  row: CoverageRow | null
+  /** Its stored ranges, finest first; none when nothing is stored. */
+  rows: CoverageRow[]
 }
 
 /**
- * One line per index × resolution that has data, plus one "no data" line per
- * F&O index underlying that has none — so the backfill button exists for it.
+ * One line per index that has data, plus one per F&O index underlying that
+ * has none — so the backfill button exists for it.
  */
-function buildLines(rows: CoverageRow[], fno: FnoUnderlying[]): CoverageLine[] {
+function buildLines(rows: CoverageRow[], fno: FnoUnderlying[]): IndexLine[] {
   const bySpot = new Map<string, FnoUnderlying>()
   for (const u of fno) bySpot.set(u.spotSymbol.toUpperCase(), u)
 
+  const byIndex = new Map<string, IndexLine>()
   const indexRows = rows
     .filter((r) => classifySymbol(r.symbol) === 'Index')
     .sort(
@@ -50,20 +54,134 @@ function buildLines(rows: CoverageRow[], fno: FnoUnderlying[]): CoverageLine[] {
         resolutionRank(a.resolution) - resolutionRank(b.resolution) ||
         a.source.localeCompare(b.source),
     )
+  for (const r of indexRows) {
+    const key = r.symbol.toUpperCase()
+    const line = byIndex.get(key) ?? { underlying: bySpot.get(key)?.underlying ?? null, spotSymbol: r.symbol, rows: [] }
+    line.rows.push(r)
+    byIndex.set(key, line)
+  }
 
-  const lines: CoverageLine[] = indexRows.map((r) => ({
-    underlying: bySpot.get(r.symbol.toUpperCase())?.underlying ?? null,
-    spotSymbol: r.symbol,
-    row: r,
-  }))
-
-  const covered = new Set(indexRows.map((r) => r.symbol.toUpperCase()))
+  const lines = [...byIndex.values()]
   for (const u of fno) {
-    if (!u.spotSymbol.toUpperCase().endsWith('-INDEX')) continue
-    if (covered.has(u.spotSymbol.toUpperCase())) continue
-    lines.push({ underlying: u.underlying, spotSymbol: u.spotSymbol, row: null })
+    const key = u.spotSymbol.toUpperCase()
+    if (!key.endsWith('-INDEX') || byIndex.has(key)) continue
+    lines.push({ underlying: u.underlying, spotSymbol: u.spotSymbol, rows: [] })
   }
   return lines
+}
+
+/** "03 Aug 2020": a stored range spans years, so its days carry theirs. */
+function dayWithYear(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+}
+
+const yearRange = (from: string | null, to: string | null) => `${dayWithYear(from)} → ${dayWithYear(to)}`
+
+/**
+ * An index in one line — "NIFTY ≈ 1,528 days · 1m to daily" and the days it
+ * reaches — that opens onto a row per stored range: the resolution, its
+ * days, sessions and bars, and whether it was backfilled or recorded live.
+ */
+function IndexCoverageRows({
+  line,
+  open,
+  onToggle,
+  onBackfill,
+}: {
+  line: IndexLine
+  open: boolean
+  onToggle: () => void
+  onBackfill: () => void
+}) {
+  // An index that is no F&O underlying (India VIX) by its name, not its symbol.
+  const name = line.underlying ?? instrumentName({ symbol: line.spotSymbol })
+  const fold = foldIndexCoverage(line.rows)
+  const backfill = (
+    <td className="r">
+      <button
+        type="button"
+        className="btn btn--sm"
+        disabled={!line.underlying}
+        title={line.underlying ? `Fetch ${name} index candles from FYERS` : 'Not an F&O underlying in the instrument master'}
+        onClick={onBackfill}
+      >
+        Backfill…
+      </button>
+    </td>
+  )
+
+  if (line.rows.length === 0) {
+    return (
+      <tr>
+        <td className="mono">
+          <span className="coverage-table__underlying" title={line.spotSymbol}>
+            {name}
+          </span>
+        </td>
+        <td colSpan={3} className="coverage-table__none">
+          No index candles stored — backfill to make {name} backtestable.
+        </td>
+        {backfill}
+      </tr>
+    )
+  }
+
+  return (
+    <>
+      <tr>
+        <td className="mono">
+          <button
+            type="button"
+            className="coverage-table__toggle"
+            aria-expanded={open}
+            title={`${line.spotSymbol}: ${open ? 'hide' : 'show'} its ${line.rows.length} stored ranges`}
+            onClick={onToggle}
+          >
+            {open ? <IconChevronDown /> : <IconChevronRight />}
+            <span className="coverage-table__underlying">{name}</span>
+          </button>
+        </td>
+        <td className="r">≈ {formatNumber(fold.sessions)} days</td>
+        <td>{fold.resolutions}</td>
+        <td className="muted">{yearRange(fold.fromUtc, fold.toUtc)}</td>
+        {backfill}
+      </tr>
+      {open && (
+        <tr className="coverage-table__detail">
+          <td colSpan={5}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Resolution</th>
+                  <th>From → To</th>
+                  <th className="r">Sessions</th>
+                  <th className="r">Bars</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {line.rows.map((r) => (
+                  <tr key={`${r.resolution}|${r.source}`}>
+                    <td>
+                      <Badge tone="neutral">{resolutionLabel(r.resolution)}</Badge>
+                    </td>
+                    <td className="muted">{yearRange(r.fromUtc, r.toUtc)}</td>
+                    <td className="r">≈ {formatNumber(estimateSessions(r.resolution, r.barCount))}</td>
+                    <td className="r">{formatNumber(r.barCount)}</td>
+                    <td>
+                      <Badge tone={r.source === 'live' ? 'live' : 'accent'}>{r.source}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  )
 }
 
 function RecentRunRow({ run }: { run: BacktestRunSummary }) {
@@ -98,6 +216,13 @@ export function BacktestOverviewPage() {
   const fno = useFnoUnderlyings()
   const broker = useBrokerSession()
   const [backfillFor, setBackfillFor] = useState<{ underlying: string; spotSymbol: string } | null>(null)
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+  const toggle = (spotSymbol: string) =>
+    setOpened((was) => {
+      const next = new Set(was)
+      if (!next.delete(spotSymbol)) next.add(spotSymbol)
+      return next
+    })
 
   const runList = useMemo(() => runs.data ?? [], [runs.data])
   const running = runList.filter((r) => isActiveStatus(r.status))
@@ -110,7 +235,7 @@ export function BacktestOverviewPage() {
   // at 1m, 5m, 15m and 1D, and adding every range up counted them four times.
   // The total adds the indices, so it is index-days; the sub line says so and
   // names the longest single history, which is what one replay can reach.
-  const onHand = useMemo(() => sessionsOnHand(lines.flatMap((l) => (l.row ? [l.row] : []))), [lines])
+  const onHand = useMemo(() => sessionsOnHand(lines.flatMap((l) => l.rows)), [lines])
   const brokerLinked = broker.data?.isAuthenticated ?? false
   const recent = runList.slice(0, 8)
 
@@ -179,108 +304,6 @@ export function BacktestOverviewPage() {
       <Panel
         title={
           <>
-            <IconDatabase /> Historical data on hand
-          </>
-        }
-        actions={
-          <Link className="btn btn--ghost btn--sm" to="/data/historical">
-            All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
-          </Link>
-        }
-      >
-        <QueryBoundary query={coverage}>
-          {() =>
-            lines.length === 0 ? (
-              <p className="empty">
-                No index candles are stored yet, and no F&O index underlying is loaded to backfill
-                for. Import the instrument master on{' '}
-                <Link to="/data/instruments">Data › Instruments</Link> first.
-              </p>
-            ) : (
-              <div className="tablewrap">
-                <table className="table coverage-table">
-                  <thead>
-                    <tr>
-                      <th>Index</th>
-                      <th>Resolution</th>
-                      <th>From → To</th>
-                      <th className="r">Sessions</th>
-                      <th className="r">Bars</th>
-                      <th>Source</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lines.map((l, i) => {
-                      const firstOfGroup = i === 0 || lines[i - 1].spotSymbol !== l.spotSymbol
-                      const name = l.underlying ?? shortSymbol(l.spotSymbol)
-                      return (
-                        <tr key={`${l.spotSymbol}|${l.row?.resolution ?? 'none'}|${l.row?.source ?? 'none'}`}>
-                          <td className="mono">
-                            {firstOfGroup ? (
-                              <span className="coverage-table__underlying" title={l.spotSymbol}>
-                                {name}
-                              </span>
-                            ) : (
-                              <span className="faint">〃</span>
-                            )}
-                          </td>
-                          {l.row ? (
-                            <>
-                              <td>
-                                <Badge tone="neutral">{resolutionLabel(l.row.resolution)}</Badge>
-                              </td>
-                              <td className="muted">{formatDayRange(l.row.fromUtc, l.row.toUtc)}</td>
-                              <td className="r">≈ {formatNumber(estimateSessions(l.row.resolution, l.row.barCount))}</td>
-                              <td className="r">{formatNumber(l.row.barCount)}</td>
-                              <td>
-                                <Badge tone={l.row.source === 'live' ? 'live' : 'accent'}>{l.row.source}</Badge>
-                              </td>
-                            </>
-                          ) : (
-                            <td colSpan={5} className="coverage-table__none">
-                              No index candles stored — backfill to make {name} backtestable.
-                            </td>
-                          )}
-                          <td className="r">
-                            {firstOfGroup && (
-                              <button
-                                type="button"
-                                className="btn btn--sm"
-                                disabled={!l.underlying}
-                                title={
-                                  l.underlying
-                                    ? `Fetch ${name} index candles from FYERS`
-                                    : 'Not an F&O underlying in the instrument master'
-                                }
-                                onClick={() =>
-                                  l.underlying &&
-                                  setBackfillFor({ underlying: l.underlying, spotSymbol: l.spotSymbol })
-                                }
-                              >
-                                Backfill…
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
-          }
-        </QueryBoundary>
-        <p className="small-note">
-          Sessions are estimated from bar counts (75 × 5m or 375 × 1m bars per full NSE day); the
-          launch dialog shows the exact count per underlying. Backtests read backfilled candles; live
-          1m bars only cover the hours the ingestor ran.
-        </p>
-      </Panel>
-
-      <Panel
-        title={
-          <>
             <IconFlask /> Recent backtests
           </>
         }
@@ -327,6 +350,61 @@ export function BacktestOverviewPage() {
             Latest: {runSpecLabel(recent[0])} · {recent[0].strategyName}.
           </p>
         )}
+      </Panel>
+
+      <Panel
+        title={
+          <>
+            <IconDatabase /> Historical data on hand
+          </>
+        }
+        actions={
+          <Link className="btn btn--ghost btn--sm" to="/data/historical">
+            All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
+          </Link>
+        }
+      >
+        <QueryBoundary query={coverage}>
+          {() =>
+            lines.length === 0 ? (
+              <p className="empty">
+                No index candles are stored yet, and no F&O index underlying is loaded to backfill
+                for. Import the instrument master on{' '}
+                <Link to="/data/instruments">Data › Instruments</Link> first.
+              </p>
+            ) : (
+              <div className="tablewrap">
+                <table className="table coverage-table">
+                  <thead>
+                    <tr>
+                      <th>Index</th>
+                      <th className="r">On hand</th>
+                      <th>Resolutions</th>
+                      <th>From → To</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l) => (
+                      <IndexCoverageRows
+                        key={l.spotSymbol}
+                        line={l}
+                        open={opened.has(l.spotSymbol)}
+                        onToggle={() => toggle(l.spotSymbol)}
+                        onBackfill={() => l.underlying && setBackfillFor({ underlying: l.underlying, spotSymbol: l.spotSymbol })}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </QueryBoundary>
+        <p className="small-note">
+          Sessions are estimated from bar counts (75 × 5m or 375 × 1m bars per full NSE day); the
+          launch dialog shows the exact count per underlying. Backtests read backfilled candles; live
+          1m bars only cover the hours the ingestor ran.
+        </p>
       </Panel>
 
       {backfillFor && (

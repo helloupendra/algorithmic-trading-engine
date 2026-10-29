@@ -6,7 +6,9 @@
  * a screen must never show "—" for a number it can compute from the row.
  */
 
-import type { PositionStatus } from './types'
+import { csvFileName, istIsoTime, toCsv } from './csv'
+import { formatContract } from './symbols'
+import type { BacktestPosition, PositionStatus } from './types'
 
 interface PositionLike {
   side: 'BUY' | 'SELL'
@@ -79,4 +81,39 @@ export function formatPnlMove(v: PositionValues): string | null {
   if (v.pnlPercent == null) return pts
   const pct = `${sign(v.pnlPercent)}${Math.abs(v.pnlPercent).toFixed(1)}%`
   return `${pts} · ${pct}`
+}
+
+/**
+ * A backtest's positions as a CSV, a line per leg as the run's table lists
+ * them: the contract, side and size, entry and exit, the values and the move
+ * the table derives (positionValues), the P&L, why it closed and when it
+ * opened and closed, in IST. An open leg's exit is its last mark.
+ */
+export function backtestPositionsCsv(positions: readonly BacktestPosition[]): string {
+  const rows = positions.map((p) => ({ p, v: positionValues({ ...p, mark: p.exitPrice }) }))
+  return toCsv(rows, [
+    { header: 'Contract', value: ({ p }) => p.contract?.label || formatContract(p.symbol) },
+    { header: 'Symbol', value: ({ p }) => p.symbol },
+    { header: 'Group', value: ({ p }) => p.groupId },
+    { header: 'Side', value: ({ p }) => p.side },
+    { header: 'Lots', value: ({ p }) => p.lots },
+    { header: 'Lot size', value: ({ p }) => p.lotSize },
+    { header: 'Quantity', value: ({ p }) => p.quantity },
+    { header: 'Entry', value: ({ p }) => p.entryPrice },
+    { header: 'Exit', value: ({ p }) => p.exitPrice },
+    { header: 'Entry value (₹)', value: ({ v }) => v.entryValue },
+    { header: 'Value at mark (₹)', value: ({ v }) => v.currentValue },
+    { header: 'P&L (₹)', value: ({ p }) => p.pnl },
+    { header: 'P&L points', value: ({ v }) => v.pnlPoints },
+    { header: 'P&L %', value: ({ v }) => v.pnlPercent },
+    { header: 'Exit reason', value: ({ p }) => p.exitReason },
+    { header: 'Status', value: ({ p }) => p.status },
+    { header: 'Opened (IST)', value: ({ p }) => istIsoTime(p.openedUtc) },
+    { header: 'Closed (IST)', value: ({ p }) => istIsoTime(p.closedUtc) },
+  ])
+}
+
+/** "backtest-412-GhostTangentCrossings-NIFTY-2026-01-01-2026-10-28.csv": the run, its strategy, underlying and days. */
+export function backtestPositionsCsvName(run: { runId: number; strategyName: string; underlying: string; fromDate: string; toDate: string }): string {
+  return csvFileName('backtest', String(run.runId), run.strategyName, run.underlying, run.fromDate.slice(0, 10), run.toDate.slice(0, 10))
 }

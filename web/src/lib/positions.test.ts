@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { positionRowClass, positionValues } from './positions'
+import { backtestPositionsCsv, backtestPositionsCsvName, positionRowClass, positionValues } from './positions'
+import type { BacktestPosition } from './types'
 
 /**
  * A strategy leg carried forward at the close leaves its run without being
@@ -45,5 +46,42 @@ describe('positionRowClass', () => {
 
   it('dims nothing once the run is over with no row open: a finished backtest, a run stopped and squared off', () => {
     expect(positionRowClass(false, false, false)).toBe('')
+  })
+})
+
+describe('backtestPositionsCsv', () => {
+  const leg = (over: Partial<BacktestPosition>): BacktestPosition => ({
+    id: 1, groupId: 'g1', symbol: 'NSE:NIFTY26N1024500CE', contract: null, side: 'SELL', lots: 2, lotSize: 75, quantity: 150,
+    status: 'Closed', entryPrice: 100, exitPrice: 90, pnl: 1_500, openedUtc: '2026-10-28T04:00:00Z', closedUtc: '2026-10-28T09:45:00Z',
+    exitReason: 'Target hit, 10 points', ...over,
+  })
+  const csv = backtestPositionsCsv([
+    leg({}),
+    leg({ id: 2, side: 'BUY', status: 'Open', exitPrice: 104.5, pnl: 675, closedUtc: null, exitReason: null, contract: { underlying: 'NIFTY', strike: 24500, optionType: 'PE', expiryDate: '2026-11-10', label: 'NIFTY 24500 PE · 10 Nov' } }),
+  ])
+  const [head, closed, open] = csv.split('\r\n')
+
+  it('heads every column the run table shows, and the times in IST', () => {
+    expect(head).toBe(
+      'Contract,Symbol,Group,Side,Lots,Lot size,Quantity,Entry,Exit,Entry value (₹),Value at mark (₹),P&L (₹),P&L points,P&L %,Exit reason,Status,Opened (IST),Closed (IST)',
+    )
+  })
+
+  it("writes a closed leg with the table's own derived values, and its reason quoted for its comma", () => {
+    expect(closed).toBe(
+      'NIFTY 24500 CE · 10 Nov,NSE:NIFTY26N1024500CE,g1,SELL,2,75,150,100,90,15000,,1500,10,10,"Target hit, 10 points",Closed,2026-10-28T09:30:00+05:30,2026-10-28T15:15:00+05:30',
+    )
+  })
+
+  it("writes an open leg at its last mark, by the API's contract label, with no close", () => {
+    expect(open).toBe(
+      'NIFTY 24500 PE · 10 Nov,NSE:NIFTY26N1024500CE,g1,BUY,2,75,150,100,104.5,15000,15675,675,4.5,4.5,,Open,2026-10-28T09:30:00+05:30,',
+    )
+  })
+
+  it('names the file by the run, its strategy, its underlying and its days', () => {
+    expect(
+      backtestPositionsCsvName({ runId: 412, strategyName: 'GhostTangentCrossings', underlying: 'NIFTY', fromDate: '2026-01-01', toDate: '2026-10-28T00:00:00' }),
+    ).toBe('backtest-412-GhostTangentCrossings-NIFTY-2026-01-01-2026-10-28.csv')
   })
 })

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CHAIN_VIEWS,
+  chainCsv,
+  chainCsvName,
   chainUnderlying,
   chainViewUrl,
   compactIndian,
@@ -17,6 +19,7 @@ import {
   positionMarker,
   positionsBySymbol,
   recordedCadence,
+  replayAsOfUtc,
   signedPercent,
   spotMarkerIndex,
   strikeWindow,
@@ -348,10 +351,16 @@ describe('the chain page views', () => {
     expect(chainUnderlying('<script>')).toBe('NIFTY')
   })
 
-  it('carries the underlying and expiry between views, and leaves the replay clock behind', () => {
-    expect(chainViewUrl('oi', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/oi?u=SENSEX&expiry=2026-10-01')
+  it('carries the underlying and expiry between views', () => {
     expect(chainViewUrl('chain', new URLSearchParams('u=BANKNIFTY'))).toBe('/markets/chain?u=BANKNIFTY')
     expect(chainViewUrl('levels', '')).toBe('/markets/chain/levels')
+  })
+
+  it('carries the replay clock to OI history and back, and leaves it behind on Levels', () => {
+    // A chain rewound to 10:41 must open OI history ending at 10:41, not at now.
+    expect(chainViewUrl('oi', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/oi?u=SENSEX&expiry=2026-10-01&at=10%3A41')
+    expect(chainViewUrl('chain', '?u=SENSEX&at=10:41')).toBe('/markets/chain?u=SENSEX&at=10%3A41')
+    expect(chainViewUrl('levels', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/levels?u=SENSEX&expiry=2026-10-01')
   })
 
   it('has one path per view, all under the chain tab', () => {
@@ -359,3 +368,73 @@ describe('the chain page views', () => {
   })
 })
 
+
+describe('replayAsOfUtc', () => {
+  it('reads the clock as IST on the session day, to the end of the minute', () => {
+    // 11:00 IST is 05:30 UTC; the capture taken during 11:00 is in, 11:01's is not.
+    expect(replayAsOfUtc('2026-10-29', '11:00')).toBe('2026-10-29T05:30:59.000Z')
+    // Before 05:30 IST is the previous UTC day.
+    expect(replayAsOfUtc('2026-10-29', '05:15')).toBe('2026-10-28T23:45:59.000Z')
+  })
+
+  it('reads anything that is not a day and an hh:mm as live', () => {
+    expect(replayAsOfUtc('', '11:00')).toBeUndefined()
+    expect(replayAsOfUtc('2026-10-29', '')).toBeUndefined()
+    expect(replayAsOfUtc('2026-10-29', '11:00:30')).toBeUndefined()
+    expect(replayAsOfUtc('29/10/2026', '11:00')).toBeUndefined()
+    expect(replayAsOfUtc('2026-13-45', '11:00')).toBeUndefined()
+  })
+})
+
+describe('chainCsv', () => {
+  const leg = (symbol: string, ltp: number, oi: number) => ({
+    symbol, lastTradedPrice: ltp, priceChange: 4, priceChangePercent: 4.17, bidPrice: ltp - 0.5, askPrice: ltp + 0.5,
+    volume: 1_200, openInterest: oi, openInterestChange: -7_000, openInterestChangePercent: -3.5,
+    impliedVolatility: 13.2, delta: 0.52, gamma: 0.0011, theta: -11.4, vega: 12.9, buildUp: 'ShortCovering',
+    isLive: true, quoteUpdatedUtc: '2026-10-29T05:29:58Z',
+  })
+  const strike = (strikePrice: number, atm = false) => ({
+    strikePrice, isAtTheMoney: atm, putCallRatio: 1.25, putCallRatioOfChange: null,
+    call: leg(`NSE:NIFTY26N10${strikePrice}CE`, 100, 194_000), put: null,
+  })
+  const chain = {
+    underlying: 'NIFTY', expiryDate: '2026-11-10', asOfUtc: '2026-10-29T05:30:59Z', spotPrice: 24510, atTheMoneyStrike: 24500,
+    maxPainStrike: null, putCallRatio: null, totalCallOpenInterest: 0, totalPutOpenInterest: 0,
+    heaviestCallStrike: null, heaviestPutStrike: null, openInterestUnavailable: false,
+    // Sixty strikes: more than any window the table shows.
+    strikes: Array.from({ length: 60 }, (_, i) => strike(23_000 + i * 50, 23_000 + i * 50 === 24_500)),
+  } as OptionChain
+
+  const lines = chainCsv(chain).split('\r\n')
+
+  it('writes every strike the chain holds, not the window on screen', () => {
+    // A header, sixty strikes and the empty string after the last CRLF.
+    expect(lines).toHaveLength(62)
+    expect(lines[61]).toBe('')
+  })
+
+  it('heads the columns for a spreadsheet: the strike first, then each side in the same order', () => {
+    const header = lines[0].split(',')
+    expect(header.slice(0, 6)).toEqual(['Underlying', 'Expiry', 'As of (IST)', 'Strike', 'ATM', 'PCR'])
+    const call = header.filter((h) => h.startsWith('Call ')).map((h) => h.slice(5))
+    const put = header.filter((h) => h.startsWith('Put ')).map((h) => h.slice(4))
+    expect(call).toEqual(put)
+    expect(call.slice(0, 3)).toEqual(['symbol', 'LTP', 'change %'])
+  })
+
+  it('writes numbers as numbers, times in IST, the build-up by its name and a missing leg as empty', () => {
+    const atm = lines.find((l) => l.includes(',24500,'))!.split(',')
+    expect(atm.slice(0, 6)).toEqual(['NIFTY', '2026-11-10', '2026-10-29T11:00:59+05:30', '24500', 'ATM', '1.25'])
+    expect(atm.slice(6, 22)).toEqual([
+      'NSE:NIFTY26N1024500CE', '100', '4.17', '99.5', '100.5', '1200', '194000', '-7000', '-3.5',
+      '13.2', '0.52', '0.0011', '-11.4', '12.9', 'Short cover', '2026-10-29T10:59:58+05:30',
+    ])
+    expect(atm.slice(22)).toEqual(Array(16).fill(''))
+  })
+
+  it('names the file by the underlying, the expiry and the moment', () => {
+    expect(chainCsvName(chain)).toBe('NIFTY-chain-2026-11-10-2026-10-29-1100.csv')
+    // An empty chain names .NET's default date as its expiry: there is none.
+    expect(chainCsvName({ ...chain, expiryDate: '0001-01-01' })).toBe('NIFTY-chain-2026-10-29-1100.csv')
+  })
+})

@@ -615,6 +615,33 @@ export interface DeskGrid {
   figures: Figures
 }
 
+/** The unit each money column of the grid is written in (columnUnit): an underlying's, the charges' and the net's. */
+export interface GridUnits {
+  byUnderlying: Record<string, InrUnit>
+  charges: InrUnit
+  net: InrUnit
+}
+
+/**
+ * The grid's column units, each from every figure down that column: the
+ * strategies' rows and the accounts' totals beneath them, and in an
+ * underlying's column every account's line in every cell.
+ */
+export function gridUnits(grid: Pick<DeskGrid, 'underlyings' | 'rows' | 'totals'>): GridUnits {
+  const byUnderlying: Record<string, InrUnit> = {}
+  for (const u of grid.underlyings) {
+    byUnderlying[u] = columnUnit([
+      ...grid.rows.flatMap((r) => (r.cells[u] ?? []).map((c) => c?.figures.net)),
+      ...grid.totals.map((t) => t.byUnderlying[u]?.net),
+    ])
+  }
+  return {
+    byUnderlying,
+    charges: columnUnit([...grid.rows.map((r) => r.figures.charges), ...grid.totals.map((t) => t.figures.charges)]),
+    net: columnUnit([...grid.rows.map((r) => r.figures.net), ...grid.totals.map((t) => t.figures.net)]),
+  }
+}
+
 function cellMarks(runs: LiveRunSummary[], carried: ReadonlySet<number>): CellMark[] {
   const marks: CellMark[] = []
   const last = runs[runs.length - 1]
@@ -1562,17 +1589,42 @@ export function figureTone(value: number | null | undefined): FigureTone | null 
 
 const MINUS = '−'
 
+/** What a dense rupee figure is written in: lakhs ("1.36L"), thousands ("8.2k") or whole rupees ("482"). */
+export type InrUnit = 'lakh' | 'thousand' | 'rupee'
+
+/** The unit a figure takes on its own: lakhs from ₹1,00,000, thousands from ₹1,000, else rupees. */
+export function inrUnit(value: number): InrUnit {
+  const a = Math.abs(Math.round(value))
+  return a >= 100_000 ? 'lakh' : a >= 1_000 ? 'thousand' : 'rupee'
+}
+
+/**
+ * The one unit for a column of rupee figures: the unit its largest figure
+ * takes. Each figure in its own unit put +70.2k, −45.1k and −1.51L under one
+ * another, and the eye compared the digits rather than the amounts; in the
+ * column's unit they read +0.70L, −0.45L, −1.51L. A figure too small for the
+ * unit reads +0.00L, its exact amount in the title as for every dense figure.
+ * Blank cells (null) have no say.
+ */
+export function columnUnit(values: Iterable<number | null | undefined>): InrUnit {
+  let largest = 0
+  for (const v of values) if (v != null && Number.isFinite(v)) largest = Math.max(largest, Math.abs(v))
+  return inrUnit(largest)
+}
+
 /**
  * A rupee figure in a dense cell: whole below a thousand, then thousands and
  * lakhs as the desk writes them ("+482", "−8.2k", "+1.36L"); the exact figure
  * goes in the cell's title. `signed` false prints a charge as a plain amount.
+ * In a column, pass the column's `unit` (columnUnit) so every figure in it is
+ * written in the same one.
  */
-export function compactInr(value: number, signed = true): string {
+export function compactInr(value: number, signed = true, unit: InrUnit = inrUnit(value)): string {
   const r = Math.round(value)
   const a = Math.abs(r)
   const sign = signed ? (r > 0 ? '+' : r < 0 ? MINUS : '') : r < 0 ? MINUS : ''
-  if (a >= 100_000) return `${sign}${(a / 100_000).toFixed(2)}L`
-  if (a >= 1_000) return `${sign}${(a / 1_000).toFixed(1)}k`
+  if (unit === 'lakh') return `${sign}${(a / 100_000).toFixed(2)}L`
+  if (unit === 'thousand') return `${sign}${(a / 1_000).toFixed(1)}k`
   return `${sign}${a}`
 }
 

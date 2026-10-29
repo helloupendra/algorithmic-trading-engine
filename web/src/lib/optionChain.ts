@@ -6,6 +6,8 @@
  */
 
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainRecordedExpiry, OptionChainStrike } from './types'
+import { csvFileName, fileStamp, istIsoTime, toCsv } from './csv'
+import type { CsvColumn } from './csv'
 
 /**
  * The underlyings the chain recorder captures: the picker's row. The API has
@@ -59,13 +61,16 @@ export function chainUnderlying(requested: string | null | undefined, known?: re
 }
 
 /**
- * A view's URL, carrying what the views share: the underlying and the expiry.
- * The replay clock (`at`) belongs to the chain alone and is left behind.
+ * A view's URL, carrying what the views share: the underlying and the expiry,
+ * and the replay clock (`at`) to the views that read it. The Chain and OI
+ * history both stop at it, so a chain rewound to 11:00 opens OI history
+ * ending at 11:00 rather than at now; Levels reads the live chain and leaves
+ * it behind.
  */
 export function chainViewUrl(view: ChainViewKey, search: string | URLSearchParams): string {
   const from = new URLSearchParams(search)
   const next = new URLSearchParams()
-  for (const key of ['u', 'expiry']) {
+  for (const key of view === 'levels' ? ['u', 'expiry'] : ['u', 'expiry', 'at']) {
     const value = from.get(key)
     if (value) next.set(key, value)
   }
@@ -250,6 +255,19 @@ export function istStamp(iso: string | null | undefined): string {
   if (Number.isNaN(ms)) return '—'
   const d = new Date(ms + IST_OFFSET_MS).toISOString()
   return `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(11, 16)}`
+}
+
+/**
+ * The replay clock as an instant: "10:41" IST on the session day, to the end
+ * of that minute, so the capture taken during 10:41 is in and 10:42's is not.
+ * Undefined for anything that is not a day and an hh:mm, which reads as live.
+ * The Chain and OI history tabs both turn the URL's `at` into the moment they
+ * ask for through this, so the two always stop at the same capture.
+ */
+export function replayAsOfUtc(sessionDate: string, time: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || !/^\d{2}:\d{2}$/.test(time)) return undefined
+  const ms = Date.parse(`${sessionDate}T${time}:59+05:30`)
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
 }
 
 /** Whole days between two "yyyy-mm-dd" dates. */
@@ -542,3 +560,60 @@ export function applyTicksToChain(chain: OptionChain, ticks: readonly PushedTick
   }
 }
 
+// --- export ---------------------------------------------------------------------
+
+/** One side's columns in the CSV, the call's and the put's in the same order. */
+function legColumns(side: 'Call' | 'Put', legOf: (s: OptionChainStrike) => OptionChainLeg | null): CsvColumn<OptionChainStrike>[] {
+  // A field of the side's leg, empty where the strike has no such leg.
+  const of = <K extends keyof OptionChainLeg>(key: K) => (s: OptionChainStrike) => legOf(s)?.[key]
+  const buildUp = (s: OptionChainStrike) => {
+    const key = legOf(s)?.buildUp
+    return key ? (BUILD_UP[key]?.label ?? key) : undefined
+  }
+  return [
+    { header: `${side} symbol`, value: of('symbol') },
+    { header: `${side} LTP`, value: of('lastTradedPrice') },
+    { header: `${side} change %`, value: of('priceChangePercent') },
+    { header: `${side} bid`, value: of('bidPrice') },
+    { header: `${side} ask`, value: of('askPrice') },
+    { header: `${side} volume`, value: of('volume') },
+    { header: `${side} OI`, value: of('openInterest') },
+    { header: `${side} OI change`, value: of('openInterestChange') },
+    { header: `${side} OI change %`, value: of('openInterestChangePercent') },
+    { header: `${side} IV %`, value: of('impliedVolatility') },
+    { header: `${side} delta`, value: of('delta') },
+    { header: `${side} gamma`, value: of('gamma') },
+    { header: `${side} theta`, value: of('theta') },
+    { header: `${side} vega`, value: of('vega') },
+    { header: `${side} build-up`, value: buildUp },
+    { header: `${side} quote time (IST)`, value: (s) => istIsoTime(legOf(s)?.quoteUpdatedUtc) },
+  ]
+}
+
+/**
+ * The chain as a CSV: a line per strike, every strike the answer holds (the
+ * table shows a window of them around the money), the strike and its PCR
+ * first, then the call's columns and the put's in the same order. Prices per
+ * unit whatever the table's per-lot toggle, OI and volume in contracts, and
+ * the moment the chain describes (now, or the replay clock) on every line, so
+ * two exports pasted together still say which is which.
+ */
+export function chainCsv(chain: OptionChain): string {
+  const expiry = capturedExpiry(chain.expiryDate) ?? ''
+  const asOf = istIsoTime(chain.asOfUtc)
+  return toCsv(chain.strikes, [
+    { header: 'Underlying', value: () => chain.underlying },
+    { header: 'Expiry', value: () => expiry },
+    { header: 'As of (IST)', value: () => asOf },
+    { header: 'Strike', value: (s) => s.strikePrice },
+    { header: 'ATM', value: (s) => (s.isAtTheMoney ? 'ATM' : '') },
+    { header: 'PCR', value: (s) => s.putCallRatio },
+    ...legColumns('Call', (s) => s.call),
+    ...legColumns('Put', (s) => s.put),
+  ])
+}
+
+/** "NIFTY-chain-2026-11-04-2026-10-29-1100.csv": the underlying, the expiry and the moment. */
+export function chainCsvName(chain: Pick<OptionChain, 'underlying' | 'expiryDate' | 'asOfUtc'>): string {
+  return csvFileName(chain.underlying, 'chain', capturedExpiry(chain.expiryDate), fileStamp(chain.asOfUtc))
+}
