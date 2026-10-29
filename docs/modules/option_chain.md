@@ -7,6 +7,9 @@ One page, **Markets → Option chain**, with a tab per reading, and one table be
 * **OI history** (`/markets/chain/oi`) — how one strike moved through the session.
 * **Levels** (`/markets/chain/levels`) — the OI walls, max pain, PCR, IV and the move
   the straddle prices, read off the same chain.
+* **Straddle & IV** (`/markets/chain/straddle`) — the ATM straddle through a session
+  with up to three other days laid over it by the time of day, the ATM IV through the
+  day, and the ATM IV by day with the IV rank and percentile of the value now.
 
 ## Where open interest comes from
 
@@ -100,6 +103,34 @@ calls are written here" is not a signal at all.
 **Max pain** — the settlement at which option writers pay out least, computed
 across every strike. Null on an empty chain rather than the lowest strike.
 
+`AtmStraddle` does the same for the Straddle & IV tab, which `StraddleService`
+reads one expiry a day: the nearest on or after the day with captures on it, the
+contract the recorder writes every minute. Later expiries recorded beside it never
+enter a straddle.
+
+**The ATM straddle** — in each capture, the strike nearest the spot (the lower on
+an exact tie, as the chain marks it). Each leg is read at the mid of its bid and
+ask when both are quoted and not crossed, otherwise at its last trade, and the
+answer says which. A leg missing at that strike leaves the minute without a
+straddle rather than borrowing a strike further out.
+
+**ATM IV** — the mean of the call's and put's IV at that strike (either alone when
+the other is unpriced), in percent whichever recorder stored it. The history reads
+it at the first priced capture five minutes after the open and the last five
+minutes before the close (09:20 and 15:25 on NSE; the session's own hours on MCX).
+
+**IV rank and percentile** — of the current value (today's newest capture, or the
+newest session's close before the open) against the closes of the sessions before
+it in the last year: rank is where it sits between their lowest and highest, the
+value included; percentile is the share that closed below it. Both come with the
+number of sessions used, and the page says "over N days only" until there are
+about 250.
+
+Nothing here scans the table: expiries come from a loose index scan (three seeks
+each), a day is one range on `(Underlying, ExpiryDate, CapturedUtc)` with only
+strikes within 3% of the spot, an IV reading is one capture, closed sessions are
+kept in memory once read, and today is read from its newest capture onward.
+
 ## Operating it
 
 Start and stop from **Data → Feeds**, beside the ingestor's control. The
@@ -127,3 +158,5 @@ as soon as anything comes back.
 | POST | `/api/OptionChain/snapshots` | the poller's write path |
 | POST | `/api/OptionChain/poller/start` · `/stop` | admin only |
 | GET | `/api/OptionChain/poller/status` · `/logs` | process state and output |
+| GET | `/api/Straddle` | one session's ATM straddle and IV, a point per capture minute; `date` (IST), default today; market-data grant |
+| GET | `/api/Straddle/iv-history` | the last year's ATM IV near each session's open and close, and the IV rank and percentile of the value now with the sessions used; market-data grant |

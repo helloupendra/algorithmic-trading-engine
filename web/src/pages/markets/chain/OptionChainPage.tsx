@@ -2,7 +2,8 @@
  * Markets → Option chain: one page for everything read off an underlying's
  * option chain, with a tab per reading. Chain is the strikes now; OI history
  * is how open interest moved at one strike through the session; Levels is
- * the walls, max pain and the straddle's move.
+ * the walls, max pain and the straddle's move; Straddle & IV is the ATM
+ * straddle through the day against other days, and whether its IV is high.
  *
  * These were three pages (the chain, the open-interest page and a section of
  * Market factors), each with its own underlying picker, so looking at
@@ -26,6 +27,7 @@ import type { ChainViewKey } from '../../../lib/optionChain'
 import { ChainView } from './ChainView'
 import { OiHistoryView } from './OiHistoryView'
 import { LevelsView } from './LevelsView'
+import { StraddleView } from './StraddleView'
 import './chain.css'
 
 export function OptionChainPage({ view }: { view: ChainViewKey }) {
@@ -77,6 +79,8 @@ export function OptionChainPage({ view }: { view: ChainViewKey }) {
       {/* Keyed by the underlying: a strike picked on one chain means nothing on another. */}
       {view === 'oi' && <OiHistoryView key={underlying} underlying={underlying} />}
       {view === 'levels' && <LevelsView underlying={underlying} />}
+      {/* Keyed too: the days laid over one underlying's straddle are its own. */}
+      {view === 'straddle' && <StraddleView key={underlying} underlying={underlying} />}
     </div>
   )
 }

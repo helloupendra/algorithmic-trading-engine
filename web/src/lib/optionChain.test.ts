@@ -343,7 +343,7 @@ describe('the chain page views', () => {
   })
 
   it('has one path per view, all under the chain tab', () => {
-    expect(CHAIN_VIEWS.map((v) => v.path)).toEqual(['/markets/chain', '/markets/chain/oi', '/markets/chain/levels'])
+    expect(CHAIN_VIEWS.map((v) => v.path)).toEqual(['/markets/chain', '/markets/chain/oi', '/markets/chain/levels', '/markets/chain/straddle'])
   })
 })
 

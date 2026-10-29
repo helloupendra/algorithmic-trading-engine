@@ -159,7 +159,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
           {
             label: 'Option chain',
             to: '/markets/chain',
-            keywords: ['strikes', 'greeks', 'open interest', 'oi history', 'levels', 'max pain', 'walls'],
+            keywords: [
+              'strikes', 'greeks', 'open interest', 'oi history', 'levels', 'max pain', 'walls',
+              'straddle', 'iv rank', 'iv percentile', 'implied volatility',
+            ],
           },
         ],
       },

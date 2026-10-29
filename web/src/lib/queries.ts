@@ -64,6 +64,7 @@ import {
   readAiTraderStatus,
 } from './aiTrader'
 import type { AiTraderDecisionFilter, AiTraderDecisionsPage, AiTraderPoll } from './aiTrader'
+import type { IvHistory, StraddleSeries } from './straddle'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -2242,6 +2243,59 @@ export function useOptionChainTrend(underlying: string, expiry?: string, toUtc?:
     // Captures arrive once a minute; asking more often only repeats the answer.
     refetchInterval: toUtc ? false : marketOpen ? 30_000 : 120_000,
     placeholderData: keepPreviousData,
+  })
+}
+
+// --- straddle & IV -------------------------------------------------------------
+
+function straddleQuery(underlying: string, date: string | null) {
+  return {
+    queryKey: ['straddle', underlying, date] as const,
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying })
+      if (date) params.set('date', date)
+      return api.get<StraddleSeries>(`/api/Straddle?${params}`)
+    },
+    enabled: Boolean(underlying),
+  }
+}
+
+/**
+ * One session's ATM straddle; no date is today (or the newest recorded day
+ * before today's first capture). A past session cannot change and is read
+ * once. Today's is asked for twice a minute while the market is open (the
+ * recorder captures once a minute) and every two minutes after.
+ */
+export function useStraddleSeries(underlying: string, date: string | null) {
+  return useQuery({
+    ...straddleQuery(underlying, date),
+    staleTime: (query) => (query.state.data && !query.state.data.isToday ? Infinity : 0),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (data && !data.isToday) return false
+      return data?.marketOpen ? 30_000 : 120_000
+    },
+  })
+}
+
+/** Module-level, so the combined list is the same array until an answer changes. */
+const sessionAnswers = (results: UseQueryResult<StraddleSeries>[]) => results.map((r) => r.data)
+
+/** Past sessions laid over the chosen one, in the order asked: closed days, each read once. */
+export function useStraddleSessions(underlying: string, dates: readonly string[]): (StraddleSeries | undefined)[] {
+  return useQueries({
+    queries: dates.map((date) => ({ ...straddleQuery(underlying, date), staleTime: Infinity })),
+    combine: sessionAnswers,
+  })
+}
+
+/** The ATM IV by day and the current value's rank: a minute apart in the session, ten after it. */
+export function useIvHistory(underlying: string, marketOpen: boolean) {
+  return useQuery({
+    queryKey: ['straddleIvHistory', underlying],
+    queryFn: () => api.get<IvHistory>(`/api/Straddle/iv-history?underlying=${encodeURIComponent(underlying)}`),
+    enabled: Boolean(underlying),
+    refetchInterval: marketOpen ? 60_000 : 600_000,
   })
 }
 
