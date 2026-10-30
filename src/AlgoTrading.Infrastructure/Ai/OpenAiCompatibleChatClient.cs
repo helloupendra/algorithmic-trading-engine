@@ -151,6 +151,7 @@ public abstract class OpenAiCompatibleChatClient : IAiChatProvider
             bool done = false;
             bool answered = false;
             var calls = new SortedDictionary<int, (string? Id, StringBuilder Name, StringBuilder Args)>();
+            var markup = new ToolMarkupFilter();
 
             try
             {
@@ -184,8 +185,9 @@ public abstract class OpenAiCompatibleChatClient : IAiChatProvider
                     if (chunk.Content is { Length: > 0 })
                     {
                         started = true;
-                        answered |= !string.IsNullOrWhiteSpace(chunk.Content);
-                        await Deliver(onPiece, new AiStreamPiece.Content(chunk.Content));
+                        string shown = markup.Feed(chunk.Content);
+                        answered |= !string.IsNullOrWhiteSpace(shown);
+                        if (shown.Length > 0) await Deliver(onPiece, new AiStreamPiece.Content(shown));
                     }
 
                     // A tool call arrives in pieces by index: the id and name
@@ -219,6 +221,14 @@ public abstract class OpenAiCompatibleChatClient : IAiChatProvider
             }
 
             if (!done && finish.Length == 0) throw new AiAttemptFailedException("stream broke off before the end");
+
+            // A held-back "<" that never became tool markup is the answer's own text.
+            string held = markup.Flush();
+            if (held.Length > 0)
+            {
+                answered |= !string.IsNullOrWhiteSpace(held);
+                await Deliver(onPiece, new AiStreamPiece.Content(held));
+            }
 
             var toolCalls = calls
                 .Where(c => c.Value.Name.Length > 0)
