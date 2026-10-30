@@ -490,7 +490,10 @@ public sealed class DhanChainRecorder
     /// slot as the nearest ones, one chain every three seconds for the process.
     /// A capture is started only with <see cref="DhanLaterExpirySchedule.Reserve"/>
     /// left, and one still running at the deadline is cancelled; whatever did not
-    /// fit is still due next round, longest-waiting first.
+    /// fit is still due next round, longest-waiting first. So is one beyond
+    /// <paramref name="maxCalls"/>: what the round's budget of chain calls
+    /// (<see cref="DhanChainPollerSettings.ChainCallsPerRound"/>) leaves after
+    /// the nearest ones.
     /// </para>
     /// <para>
     /// Only for an underlying whose nearest expiry <paramref name="nearest"/>
@@ -506,7 +509,8 @@ public sealed class DhanChainRecorder
         DateTime roundStartedUtc,
         DateTime deadlineUtc,
         TimeSpan every,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxCalls = int.MaxValue)
     {
         var today = IstTime.DateOf(roundStartedUtc);
         var recordedNearest = nearest.Where(o => o.State == "recorded")
@@ -527,6 +531,7 @@ public sealed class DhanChainRecorder
         var outcomes = new List<DhanChainOutcome>();
         foreach (var (name, expiry, _) in due.OrderBy(d => d.AskedInRound ?? DateTime.MinValue))
         {
+            if (outcomes.Count >= maxCalls) break;
             if (!DhanLaterExpirySchedule.CanStart(DateTime.UtcNow, deadlineUtc, LaterReserve)) break;
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -813,12 +818,18 @@ public sealed class DhanChainPoller : BackgroundService
         var underlyings = _settings.ChainPoller.LaterExpiryUnderlyingList;
         if (underlyings.Count == 0 || !nearest.Any(o => o.State == "recorded")) return;
 
+        // Every nearest that was not idle is counted as a chain asked of Dhan,
+        // even one that failed before asking: over-counting only leaves a later
+        // expiry for the next round, while under-counting earns an 805.
+        int budget = _settings.ChainPoller.ChainCallsPerRound - nearest.Count(o => o.State != "idle");
+        if (budget <= 0) return;
+
         try
         {
             await using var scope = _scopes.CreateAsyncScope();
             var recorder = scope.ServiceProvider.GetRequiredService<DhanChainRecorder>();
             var outcomes = await recorder.RecordLaterExpiriesAsync(
-                underlyings, nearest, started, DhanLaterExpirySchedule.Deadline(started, interval), every, stoppingToken);
+                underlyings, nearest, started, DhanLaterExpirySchedule.Deadline(started, interval), every, stoppingToken, budget);
 
             if (outcomes.Count > 0)
             {

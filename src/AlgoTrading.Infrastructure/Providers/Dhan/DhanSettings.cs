@@ -119,6 +119,19 @@ public class DhanChainPollerSettings
     /// three-second slot of Dhan's budget and a few hundred rows.
     /// </summary>
     public int LaterExpiryIntervalSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// The most option-chain calls one round may make, the nearest expiries'
+    /// included; later expiries get only what the nearest ones leave.
+    /// </summary>
+    /// <remarks>
+    /// Dhan counts more than the three-second spacing the rate gate keeps. On
+    /// 30 Oct 2026 every round that asked for an eleventh chain had it refused
+    /// (805, "Too many requests. Further requests may result in the user being
+    /// blocked"), 75 rounds out of 75, while every round of ten was answered.
+    /// A later expiry that does not fit stays due and goes first next round.
+    /// </remarks>
+    public int ChainCallsPerRound { get; set; } = 10;
 }
 
 /// <summary>"Dhan:AutoSignIn" in configuration.</summary>

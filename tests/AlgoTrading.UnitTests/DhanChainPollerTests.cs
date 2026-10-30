@@ -341,6 +341,36 @@ public class DhanChainPollerTests
     }
 
     [Fact]
+    public async Task Later_expiries_beyond_the_rounds_chain_budget_wait_for_the_next_round()
+    {
+        var (db, handler, today, expiries) = await NiftyWeekliesAsync();
+        await using var _ = db;
+        var state = State();
+        var recorder = Recorder(db, handler, state, marketOpen: true, QuickGate());
+        var every = TimeSpan.FromMinutes(5);
+        var round = DateTime.UtcNow;
+        var expected = DhanChainRows.LaterExpiries(expiries, today);
+        Assert.NotEmpty(expected);
+
+        var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
+        int chains = handler.Chains.Count;
+
+        // The nearest ones used the round's whole budget: nothing more is asked of
+        // Dhan, and nothing is marked asked, so it is all still due.
+        Assert.Empty(await recorder.RecordLaterExpiriesAsync(
+            new[] { "NIFTY" }, nearest, round, round.AddMinutes(1), every, CancellationToken.None, maxCalls: 0));
+        Assert.Equal(chains, handler.Chains.Count);
+        Assert.All(expected, e => Assert.Null(state.LaterAskedInRound("NIFTY", e)));
+
+        // Next round, with room for one chain, exactly one is asked for.
+        var next = await recorder.RecordLaterExpiriesAsync(
+            new[] { "NIFTY" }, nearest, round.AddMinutes(1), round.AddMinutes(2), every, CancellationToken.None, maxCalls: 1);
+        Assert.Equal(expected[0], Assert.Single(next).Expiry);
+        Assert.Equal(chains + 1, handler.Chains.Count);
+        Assert.Equal(10, new DhanChainPollerSettings().ChainCallsPerRound);
+    }
+
+    [Fact]
     public async Task No_later_expiry_is_asked_for_when_the_nearest_was_not_recorded_or_the_underlying_is_not_listed()
     {
         var (db, handler, _, _) = await NiftyWeekliesAsync();
