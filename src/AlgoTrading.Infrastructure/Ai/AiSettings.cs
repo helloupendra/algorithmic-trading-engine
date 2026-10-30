@@ -94,6 +94,12 @@ public sealed class AiSettings
     /// </summary>
     public int NewsBatchSize { get; set; } = 8;
 
+    /// <summary>
+    /// Batches the News Analyst may read in one turn while full batches keep coming (1 to 4): the
+    /// backlog clears faster without a bigger batch, which overruns the answer limit.
+    /// </summary>
+    public int NewsBatchesPerTurn { get; set; } = 2;
+
     /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
     public int NewsLookbackHours { get; set; } = 24;
 

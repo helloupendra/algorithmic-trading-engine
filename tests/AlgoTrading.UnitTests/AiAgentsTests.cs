@@ -325,6 +325,21 @@ public class AiAgentsTests
     }
 
     [Fact]
+    public async Task A_full_batch_means_a_backlog_so_a_second_batch_is_read_in_the_same_turn()
+    {
+        var ai = BuildOn();
+        var now = DateTime.UtcNow;
+        ai.Db.NewsItems.AddRange(Enumerable.Range(1, 10).Select(i => News(i, $"Headline {i}", now.AddMinutes(-i))));
+        await ai.Db.SaveChangesAsync();
+        ai.Provider.On(Extract1, Answer("""{"items":[]}"""), Answer("""{"items":[]}"""));
+
+        Assert.True(await News(ai).RunOnceAsync(now, CancellationToken.None));
+
+        // Eight in the first batch, the two left in a second: every item has its report.
+        Assert.Equal(10, await ai.Db.AiReports.CountAsync());
+    }
+
+    [Fact]
     public async Task An_answer_cut_off_at_the_token_limit_keeps_its_whole_records_and_reads_the_rest_again()
     {
         var ai = BuildOn();

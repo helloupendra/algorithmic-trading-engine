@@ -73,6 +73,20 @@ public sealed class NewsAnalystAgent(
         if (batch.Count == 0) return false;
 
         await AnalyseAsync(batch, cancellationToken);
+
+        // A full batch means more is waiting. On 29-30 Oct about 800 items a day came
+        // in and one batch a turn left ~490 unread at a time, which age out of the
+        // lookback unread. More batches a turn, never bigger ones: a batch of 12 ran
+        // past the answer limit on 1 Oct.
+        int size = Math.Clamp(settings.CurrentValue.NewsBatchSize, 1, 25);
+        int turns = Math.Clamp(settings.CurrentValue.NewsBatchesPerTurn, 1, 4);
+        for (int more = 1; more < turns && batch.Count >= size; more++)
+        {
+            batch = await NextBatchAsync(_time.GetUtcNow().UtcDateTime, cancellationToken);
+            if (batch.Count == 0) break;
+            await AnalyseAsync(batch, cancellationToken);
+        }
+
         return true;
     }
 
