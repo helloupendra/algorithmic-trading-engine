@@ -34,7 +34,6 @@ import {
   readPin,
   scopeRuns,
   shownPhase,
-  validScope,
   writePin,
 } from '../../lib/desk'
 import { deskLegsPoll, useMarketSession, useOpenPositions } from '../../lib/queries'
@@ -101,12 +100,11 @@ function Updated({ at }: { at: number }) {
   return <span className="dk-updated">updated {s < 60 ? `${s} s` : `${Math.round(s / 60)} min`} ago</span>
 }
 
-function DeskBar({ view, pin, onPick, onPin, onScope, updatedAt }: {
+function DeskBar({ view, pin, onPick, onPin, updatedAt }: {
   view: DeskView
   pin: boolean
   onPick: (phase: DeskView['phase']) => void
   onPin: () => void
-  onScope: (scope: Scope) => void
   updatedAt: number
 }) {
   return (
@@ -136,19 +134,6 @@ function DeskBar({ view, pin, onPick, onPin, onScope, updatedAt }: {
       >
         <IconPin />
       </button>
-      {view.isAdmin && view.allAccounts.length > 1 && (
-        <span className="dk-seg" role="group" aria-label="Accounts">
-          <button type="button" aria-pressed={view.scope === 'all'} onClick={() => onScope('all')}>
-            <span className="dk-long">All accounts</span>
-            <span className="dk-short">All</span>
-          </button>
-          {view.allAccounts.map((a) => (
-            <button key={a.id} type="button" aria-pressed={view.scope === a.id} onClick={() => onScope(a.id)}>
-              {a.name}
-            </button>
-          ))}
-        </span>
-      )}
       <span className="dk-grow" />
       <Updated at={updatedAt} />
     </div>
@@ -194,8 +179,9 @@ export function DeskPage() {
   const dayRuns = shownDay.runs
   const trading = useMemo(() => dayRuns?.filter(isTradingRun), [dayRuns])
   const allAccounts = useMemo(() => deskAccounts(trading ?? []), [trading])
-  const [scopeWanted, setScope] = useState<Scope>('all')
-  const scope = access.isAdmin ? validScope(scopeWanted, allAccounts) : 'all'
+  // The Desk is the signed-in person's own: their account only, an admin's
+  // included. Other accounts' runs are on Trade → Runs and Positions.
+  const scope: Scope = user ? user.id : 'all'
   const accounts = useMemo(() => (scope === 'all' ? allAccounts : allAccounts.filter((a) => a.id === scope)), [scope, allAccounts])
   const runs = useMemo(() => (trading ? scopeRuns(trading, scope) : undefined), [trading, scope])
 
@@ -256,7 +242,6 @@ export function DeskPage() {
       pin={shown.how === 'pinned'}
       onPick={pickPhase}
       onPin={togglePin}
-      onScope={setScope}
       updatedAt={shownDay.updatedAt}
     />
   )
