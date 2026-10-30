@@ -150,17 +150,31 @@ public class MarketIntelService : IMarketIntelService
             .Where(m => m.ChangePercent is not null)
             .ToList();
 
+        var (gainers, losers) = RankMovers(withChange, top);
         var response = new MoversResponse(
             group.Name,
             string.IsNullOrWhiteSpace(group.DisplayName) ? group.Name : group.DisplayName,
             DateTime.UtcNow,
-            withChange.OrderByDescending(m => m.ChangePercent).Take(top).ToList(),
-            withChange.OrderBy(m => m.ChangePercent).Take(top).ToList(),
+            gainers,
+            losers,
             withChange.Count,
             failed);
 
         _cache.Set(cacheKey, response, MoversCacheTtl);
         return response;
+    }
+
+    /// <summary>
+    /// The day's gainers (up, biggest first) and losers (down, biggest fall first).
+    /// A share that is down is never a gainer: with one member in a group, the
+    /// same falling share used to head both lists. Unchanged ones are in neither.
+    /// </summary>
+    public static (List<MoverDto> Gainers, List<MoverDto> Losers) RankMovers(IEnumerable<MoverDto> movers, int top)
+    {
+        var known = movers.Where(m => m.ChangePercent is not null).ToList();
+        return (
+            known.Where(m => m.ChangePercent > 0).OrderByDescending(m => m.ChangePercent).Take(top).ToList(),
+            known.Where(m => m.ChangePercent < 0).OrderBy(m => m.ChangePercent).Take(top).ToList());
     }
 
     // ---------- helpers ----------

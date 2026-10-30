@@ -1,6 +1,46 @@
 [
   {
     "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:AUBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:AXISBANK-EQ",
+    "weight": 10.28,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:BANKBARODA-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:CANBK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:FEDERALBNK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
     "symbol": "NSE:HDFCBANK-EQ",
     "weight": 17.93,
     "effectiveFrom": "2026-01-01",
@@ -17,16 +57,351 @@
   },
   {
     "groupName": "BANKNIFTY_CONSTITUENTS",
-    "symbol": "NSE:AXISBANK-EQ",
-    "weight": 10.28,
+    "symbol": "NSE:IDFCFIRSTB-EQ",
+    "weight": null,
     "effectiveFrom": "2026-01-01",
     "effectiveTo": null,
     "isEnabled": true
   },
-
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:INDUSINDBK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:KOTAKBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:PNB-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:SBIN-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:UNIONBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:YESBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ADANIENT-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ADANIPORTS-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:APOLLOHOSP-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ASIANPAINT-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:AXISBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BAJAJ-AUTO-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BAJAJFINSV-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BAJFINANCE-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BEL-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BHARTIARTL-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:BSE-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:CIPLA-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:COALINDIA-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:DRREDDY-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:EICHERMOT-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ETERNAL-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:GRASIM-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:HCLTECH-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
   {
     "groupName": "NIFTY50_CONSTITUENTS",
     "symbol": "NSE:HDFCBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:HDFCLIFE-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:HINDALCO-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:HINDUNILVR-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ICICIBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:INDIGO-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:INFY-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ITC-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:JIOFIN-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:JSWSTEEL-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:KOTAKBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:LT-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:M&M-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:MARUTI-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:MAXHEALTH-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:NESTLEIND-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:NTPC-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ONGC-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:POWERGRID-EQ",
     "weight": null,
     "effectiveFrom": "2026-01-01",
     "effectiveTo": null,
@@ -40,7 +415,102 @@
     "effectiveTo": null,
     "isEnabled": true
   },
-
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:SBILIFE-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:SBIN-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:SHRIRAMFIN-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:SUNPHARMA-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TATACONSUM-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TATASTEEL-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TCS-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TECHM-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TITAN-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TMPV-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:TRENT-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:ULTRACEMCO-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
   {
     "groupName": "SENSEX_CONSTITUENTS",
     "symbol": "BSE:RELIANCE",

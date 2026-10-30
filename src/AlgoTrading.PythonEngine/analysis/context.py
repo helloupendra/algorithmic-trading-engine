@@ -88,15 +88,17 @@ MIN_HEAVYWEIGHTS = 7
 #: return: that stock sits the day out.
 MAX_STOCK_MOVE_PCT = 20.0
 
-#: NIFTY 50 as NSE listed it on 2026-09-17 (ind_nifty50list.csv). For the
-#: live-only earnings count; refresh it after each March and September rebalance.
+#: NIFTY 50 as NSE listed it on 2026-10-31 (ind_nifty50list.csv: BSE in, WIPRO out at the
+#: September rebalance). For the live-only earnings count; refresh it after each March and
+#: September rebalance, with web/src/lib/desk.ts NIFTY50 and the equity group seed.
 NIFTY50: Tuple[str, ...] = (
-    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV",
-    "BEL", "BHARTIARTL", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL", "GRASIM", "HCLTECH", "HDFCBANK",
-    "HDFCLIFE", "HINDALCO", "HINDUNILVR", "ICICIBANK", "ITC", "INFY", "INDIGO", "JSWSTEEL", "JIOFIN", "KOTAKBANK",
-    "LT", "M&M", "MARUTI", "MAXHEALTH", "NTPC", "NESTLEIND", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE",
-    "SHRIRAMFIN", "SBIN", "SUNPHARMA", "TCS", "TATACONSUM", "TMPV", "TATASTEEL", "TECHM", "TITAN", "TRENT",
-    "ULTRACEMCO", "WIPRO",
+    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BSE", "BAJAJ-AUTO", "BAJFINANCE",
+    "BAJAJFINSV", "BEL", "BHARTIARTL", "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL",
+    "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HINDALCO", "HINDUNILVR", "ICICIBANK", "ITC",
+    "INFY", "INDIGO", "JSWSTEEL", "JIOFIN", "KOTAKBANK", "LT", "M&M", "MARUTI",
+    "MAXHEALTH", "NTPC", "NESTLEIND", "ONGC", "POWERGRID", "RELIANCE", "SBILIFE", "SHRIRAMFIN",
+    "SBIN", "SUNPHARMA", "TCS", "TATACONSUM", "TMPV", "TATASTEEL", "TECHM", "TITAN",
+    "TRENT", "ULTRACEMCO",
 )
 
 #: market_events categories the models read, by the short key the inputs use.
