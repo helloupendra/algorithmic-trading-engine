@@ -513,7 +513,239 @@
   },
   {
     "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ADANIPORTS",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ASIANPAINT",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:AXISBANK",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:BAJAJFINSV",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:BAJFINANCE",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:BEL",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:BHARTIARTL",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ETERNAL",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:HCLTECH",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:HDFCBANK",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:HINDUNILVR",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ICICIBANK",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:INDIGO",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:INFY",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ITC",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:KOTAKBANK",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:LT",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:M&M",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:MARUTI",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:NTPC",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:POWERGRID",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
     "symbol": "BSE:RELIANCE",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:SBIN",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:SUNPHARMA",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:TATASTEEL",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:TCS",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:TECHM",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:TITAN",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:TRENT",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:ULTRACEMCO",
     "weight": null,
     "effectiveFrom": "2026-01-01",
     "effectiveTo": null,
