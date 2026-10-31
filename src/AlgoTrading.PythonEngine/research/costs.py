@@ -8,9 +8,9 @@ Two separate things, kept separate so the report can show each:
   - **Slippage** moves the fill price against the trader: a buy fills above
     the bar price, a sell below it. It is `slippage_pct` of the premium with a
     floor of `min_slippage` rupees of premium (one or two ticks), which stands
-    in for half the bid-ask spread plus impact. ATM NIFTY weekly spreads are
-    usually a tick or two; far-OTM, expiry-day and fast-market spreads are much
-    wider, so 0.5% is a middle estimate, not a best case.
+    in for half the bid-ask spread plus impact. The measured half-spread at the
+    money is 0.12% to 0.15% of the premium (see core/charges.py), so 0.5% is a
+    cautious default, about four times the quoted spread.
   - **Charges** are computed on the filled turnover:
       brokerage   flat per executed order (discount brokers: Rs 20)
       STT         on the SELL side's premium turnover

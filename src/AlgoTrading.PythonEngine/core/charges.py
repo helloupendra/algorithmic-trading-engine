@@ -8,9 +8,16 @@ Two separate things, kept separate so a report can show each:
 
   - **Slippage** is `slippage_pct` of the premium with a floor of `min_slippage`
     rupees (a tick or two), standing in for half the spread plus impact. A buy
-    fills above the bar price, a sell below it. ATM index weekly spreads are
-    usually a tick or two; far-OTM, expiry-day and fast-market spreads are much
-    wider, so 0.5% is a middle estimate, not a best case.
+    fills above the bar price, a sell below it. Measured from the desk's own
+    bid and ask (Dhan, 34 sessions, 10 Sep to 30 Oct 2026, nearest expiry,
+    minute snapshots), half the spread at the money was 0.12% of the premium
+    for NIFTY (Rs 0.125 on Rs 116), 0.15% for BANKNIFTY and 0.12% for SENSEX,
+    about the same at every time of day and on expiry day; options under
+    Rs 10 were one tick wide. So the default 0.5% is about four times the
+    quoted half-spread: the rest stands for latency and a fast market, which
+    that study could not see. It is a cautious default, not a measurement.
+    The best ask held about 11 lots of NIFTY at the money but only 2 of
+    BANKNIFTY, so a bigger BANKNIFTY order walks the book.
   - **Charges** are computed on filled turnover (premium × quantity):
       brokerage   flat per executed order (discount brokers: Rs 20)
       STT         on the SELL side's turnover
