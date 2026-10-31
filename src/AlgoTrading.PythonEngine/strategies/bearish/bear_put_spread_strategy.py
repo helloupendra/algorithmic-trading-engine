@@ -43,6 +43,7 @@ class BearPutSpreadStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             # Using ATM put as the long leg and OTM put as the short leg
             if "atm_pe" in inp.contracts and "otm_pe" in inp.contracts:

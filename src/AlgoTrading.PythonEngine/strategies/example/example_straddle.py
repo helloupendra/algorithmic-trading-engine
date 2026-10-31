@@ -33,7 +33,8 @@ class ExampleStraddleStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
-        # Simple example: just enter once and hold
+        # Simple example: enter once a session and hold.
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             if "atm_ce" in inp.contracts and "atm_pe" in inp.contracts:
                 ce = inp.contracts["atm_ce"]

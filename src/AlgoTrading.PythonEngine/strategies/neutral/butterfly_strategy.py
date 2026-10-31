@@ -47,6 +47,7 @@ class IronButterflyStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             # Requires both ATM and OTM contracts for the 4 wings
             req_keys = ["atm_ce", "atm_pe", "otm_ce", "otm_pe"]

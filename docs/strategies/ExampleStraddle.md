@@ -111,10 +111,15 @@ None — this is the point of the example. `state` is `{is_invested, group_id}`
 and nothing after the entry changes it:
 
 - no adjustment, no roll, no addition, no re-entry — after the one
-  `OPEN_GROUP` the method returns `[]` on every later call;
+  `OPEN_GROUP` the method returns `[]` for the rest of the session;
 - it does not know whether the group is still open: a leg closed by a risk
   rule, a group closed at 15:30 or a manual square-off leaves
-  `is_invested = True`, so the run never enters again;
+  `is_invested = True`, so the run does not enter again that session. A
+  backtest runs many sessions: on the first bar of a new one,
+  `new_session_frees_closed_group` forgets a group the run has closed
+  (`metadata.open_groups` no longer lists it), and the strategy enters again.
+  Live passes no `open_groups` and a live run is one session, so nothing
+  changes there. Until 31 Oct 2026 a backtest of many days was one trade;
 - a refused entry (no quote within 10 s → the API rejects the unpriced
   group; or a run filter such as `filters.trade_window_ist` blocking it)
   leaves the flag set too, because it is written inside `on_bar` before the
@@ -264,9 +269,10 @@ leg has no usable price, which is what those two were testing.
 - **It is an example.** The class exists to show the plumbing; `ShortStraddle`
   is the same trade under a catalog name. Nothing in the repository tests
   its profitability and no run has exercised its `on_bar`.
-- **No exit and no position awareness.** One signal per run. A leg closed
+- **No exit and no position awareness.** One signal per session. A leg closed
   by a `leg` rule leaves the other side naked and the strategy does not
-  know; after any close the run is idle, since `is_invested` stays true.
+  know; after any close the run is idle until the next session, since
+  `is_invested` stays true until then.
 - **A refused entry idles the run.** The flag is set before the signal is
   posted; an API rejection (no quote for either contract within 10 s) or a
   run filter block means the run never trades. Do not pair with

@@ -120,10 +120,15 @@ None. `state` is `{is_invested, group_id}` and nothing after the entry
 changes it:
 
 - no adjustment, no roll, no addition, no re-entry — after the one
-  `OPEN_GROUP` the method returns `[]` on every later call;
+  `OPEN_GROUP` the method returns `[]` for the rest of the session;
 - it does not know whether the group is still open: a leg closed by a risk
   rule, a group closed at 15:30 or a manual square-off leaves
-  `is_invested = True`, so the run never enters again;
+  `is_invested = True`, so the run does not enter again that session. A
+  backtest runs many sessions: on the first bar of a new one,
+  `new_session_frees_closed_group` forgets a group the run has closed
+  (`metadata.open_groups` no longer lists it), and the strategy enters again.
+  Live passes no `open_groups` and a live run is one session, so nothing
+  changes there. Until 31 Oct 2026 a backtest of many days was one trade;
 - a refused entry (no quote for either call within 10 s → the API rejects
   the unpriced group; or a run filter such as `filters.trade_window_ist`
   blocking it) leaves the flag set too, because it is written inside
@@ -281,9 +286,10 @@ No charges, no slippage.
 - **Docstring versus code.** The docstring says "Buys an At-The-Money (ATM)
   or In-The-Money (ITM) Call"; `get_contract_requirements` declares only the
   ATM call (`moneyness` `atm`) and there is no parameter to make it ITM.
-- **No exit and no position awareness.** One signal per run. A leg closed
+- **No exit and no position awareness.** One signal per session. A leg closed
   by a `leg` rule leaves a naked long or short call and the strategy does
-  not know; after any close the run is idle, since `is_invested` stays true.
+  not know; after any close the run is idle until the next session, since
+  `is_invested` stays true until then.
 - **A refused entry idles the run.** The flag is set before the signal is
   posted; an API rejection (no quote for either call within 10 s) or a run
   filter block means the run never trades. Do not pair with

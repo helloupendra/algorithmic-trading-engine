@@ -213,6 +213,28 @@ class BaseStrategy:
         """
         return {}
 
+    @staticmethod
+    def new_session_frees_closed_group(state: Dict[str, Any], inp: "StrategyInput") -> None:
+        """
+        For a strategy that enters once a session and keeps `is_invested` and
+        `group_id` in its state: on the first bar of a new session, forget a group
+        that is no longer open, so the strategy can enter again.
+
+        The runner calls `initialize_state` once a run. A live run is one session,
+        but a backtest runs many: without this, the end-of-day square-off closed
+        the group on day one and `is_invested` kept the strategy out of every day
+        after it. The backtest says which groups are open (`open_groups`); live
+        says nothing, and the group is kept. A group carried overnight (daily
+        candles) is still open, so it is kept too.
+        """
+        day = str(inp.timestamp_utc)[:10]
+        if state.get("session") == day:
+            return
+        open_groups = (inp.metadata or {}).get("open_groups")
+        if state.get("is_invested") and open_groups is not None and state.get("group_id") not in open_groups:
+            state["is_invested"], state["group_id"] = False, None
+        state["session"] = day
+
     def state_to_json(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         The state in plain JSON values, for the live runner's saved copy.

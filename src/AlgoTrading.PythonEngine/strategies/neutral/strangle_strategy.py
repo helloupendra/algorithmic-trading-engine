@@ -44,6 +44,7 @@ class StrangleStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             # Assuming runner provides OTM contracts identified by 'otm_ce' and 'otm_pe'
             if "otm_ce" in inp.contracts and "otm_pe" in inp.contracts:

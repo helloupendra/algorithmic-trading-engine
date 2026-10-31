@@ -44,6 +44,7 @@ class BullCallSpreadStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             # Using ATM call as the long leg and OTM call as the short leg
             if "atm_ce" in inp.contracts and "otm_ce" in inp.contracts:

@@ -34,7 +34,8 @@ class StraddleStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
-        # We only want to enter once in this basic implementation
+        # Once a session: a new session frees a group the run has closed.
+        self.new_session_frees_closed_group(state, inp)
         if not state.get("is_invested"):
             if "atm_ce" in inp.contracts and "atm_pe" in inp.contracts:
                 ce = inp.contracts["atm_ce"]
