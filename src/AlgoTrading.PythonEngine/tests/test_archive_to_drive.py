@@ -62,10 +62,11 @@ class ArchiveRuleTests(unittest.TestCase):
         self.assertEqual([], ad.droppable_days([date(2026, 9, 29)], verified, ad.TABLES))
 
     def test_freeing_a_day_of_pnl_minutes_deletes_that_utc_day_only(self):
+        # Kept by default since 31 Oct 2026; freed only when ARCHIVE_DROP_TABLES names it.
         sql = []
         with mock.patch.object(ad, "psql", side_effect=lambda q: sql.append(q) or "0"), \
                 mock.patch.object(ad, "say"):
-            ad.drop_local([date(2026, 9, 29)], dry_run=False)
+            ad.drop_local([date(2026, 9, 29)], dry_run=False, tables=["run_pnl_minutes"])
         statement = [q for q in sql if "run_pnl_minutes" in q]
         self.assertEqual(
             ['delete from run_pnl_minutes where "AtUtc" >= \'2026-09-29T00:00:00+00:00\' '
@@ -92,6 +93,23 @@ class ArchiveRuleTests(unittest.TestCase):
         # It is a second copy of live_ticks; one copy on Drive is enough.
         self.assertNotIn("market_ticks", ad.TABLES)
         self.assertIn("market_ticks", ad.HYPERTABLES)
+
+    def test_freeing_a_day_drops_only_the_raw_ticks_by_default(self):
+        # The console reads the chain, the bars and the runs' minutes for any past day: they stay.
+        sql = []
+        with mock.patch.object(ad, "psql", side_effect=lambda q: sql.append(q) or "1"):
+            ad.drop_local([date(2026, 9, 15)], dry_run=False)
+        self.assertEqual(["live_ticks", "market_ticks"], ad.DROP_TABLES)
+        self.assertEqual(2, len(sql))
+        self.assertTrue(all("drop_chunks" in q for q in sql))
+        self.assertFalse(any("option_chain_snapshots" in q or "live_bars" in q or "run_pnl_minutes" in q for q in sql))
+
+    def test_tables_named_for_freeing_are_the_only_ones_freed(self):
+        sql = []
+        with mock.patch.object(ad, "psql", side_effect=lambda q: sql.append(q) or "1"):
+            ad.drop_local([date(2026, 9, 15)], dry_run=False, tables=["option_chain_snapshots", "live_bars"])
+        self.assertIn("drop_chunks('option_chain_snapshots'", sql[0])  # a hypertable since 31 Oct 2026
+        self.assertIn('delete from live_bars where "BarStartUtc"', sql[1])
 
 
 if __name__ == "__main__":

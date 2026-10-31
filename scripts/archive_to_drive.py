@@ -18,7 +18,8 @@ For every (table, day) not yet archived:
   4. record the result in a manifest (on the server and on Drive).
 
 Nothing is deleted unless `--drop-older-than N` is given, and then only days
-whose every table is in the manifest as verified.
+whose every table is in the manifest as verified, and only the tables in
+ARCHIVE_DROP_TABLES (the raw ticks, by default).
 
 A day is the UTC date, which is also the IST trading date: NSE (03:45-10:00
 UTC) and MCX (03:30-18:25 UTC) both sit inside one UTC day. A day is archived
@@ -86,8 +87,15 @@ TABLES: Dict[str, str] = {
 }
 
 #: Tables that are TimescaleDB hypertables, freed with drop_chunks; the rest
-#: with a DELETE of the day.
-HYPERTABLES = {"live_ticks", "market_ticks"}
+#: with a DELETE of the day. option_chain_snapshots became one, with one-day
+#: chunks, on 31 Oct 2026 (scripts/compress_option_chain.py).
+HYPERTABLES = {"live_ticks", "market_ticks", "option_chain_snapshots"}
+
+#: What --drop-older-than frees, once a day is verified on Drive: the raw ticks
+#: only, by default. The chain, the bars and the runs' P&L minutes stay on the
+#: server, because the console reads them for any past day (the chain's As of,
+#: straddle and IV history, a run's equity curve); compressed they are small.
+DROP_TABLES = [t.strip() for t in os.environ.get("ARCHIVE_DROP_TABLES", "live_ticks,market_ticks").split(",") if t.strip()]
 
 
 # ------------------------------------------------------------------- pure --
@@ -294,10 +302,11 @@ def retire_market_ticks(live_ticks_verified: set) -> None:
         say(f"market_ticks {text}: dropped the legacy copy ({market:,} rows; live_ticks holds {live:,}, verified on Drive)")
 
 
-def drop_local(days: List[date], dry_run: bool) -> None:
+def drop_local(days: List[date], dry_run: bool, tables: Iterable[str] = ()) -> None:
+    tables = list(tables) or DROP_TABLES
     for day in days:
         lo, hi = day_bounds(day)
-        for table in list(TABLES) + ["market_ticks"]:
+        for table in tables:
             column = TABLES.get(table, "ReceivedUtc")
             if table in HYPERTABLES:
                 # A chunk is one UTC day, so dropping the chunks that end by the
