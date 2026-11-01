@@ -2,13 +2,21 @@
 # The trading desk: one long-running loop that keeps the platform up.
 #
 #   - keeps the API healthy: after three failed health checks, 30 s apart, it
-#     checks the database and Redis, then restarts the API;
-#   - every two minutes checks GitHub. When origin/main has moved it pulls at
-#     once, but builds and restarts only on a quiet desk: weekends, weekdays
-#     before 08:40 or after the evening close, and no live run (deploy_allowed
-#     in lib/desk-common.sh; `touch "$DESK_STATE_DIR/deploy-now"` overrides it
-#     for an hour). The commit last built is kept in DESK_STATE_DIR/deployed-sha,
-#     so a restart between a pull and its build still builds it;
+#     checks the database and Redis, then restarts the API. A restart builds
+#     first and stops the old API only when the build passed; an API that is
+#     down when the build fails starts from the last good build
+#     (DESK_STATE_DIR/api-last-good, lib/desk-common.sh);
+#   - every two minutes fetches from GitHub. A commit that changes the console,
+#     the API or docker-compose goes out only on a quiet desk: weekends,
+#     weekdays before 08:40 or after the evening close, and no live run
+#     (deploy_allowed in lib/desk-common.sh; `touch "$DESK_STATE_DIR/deploy-now"`
+#     overrides it for an hour). Until then it is only fetched: the checkout
+#     moves when the deploy goes out, so outside a deploy it is the deployed
+#     commit and a restart builds nothing else. Scripts and the Python engine
+#     alone go out at once. The commit last built is kept in
+#     DESK_STATE_DIR/deployed-sha, written only after its API build passed; a
+#     commit whose build failed is kept in deploy-failed-sha, not deployed, and
+#     not tried again (the next commit is; deploy-now retries it);
 #   - at 08:45 on weekdays runs scripts/market-open.sh, once a day even across
 #     desk restarts: a marker file per day decides (daily_job in
 #     lib/desk-common.sh), and a job that was interrupted is reported, never
@@ -41,6 +49,12 @@
 # an API restart and re-register with the new API, and the Python engine keeps
 # the code a run started with until that run is restarted by hand.
 #
+# This loop reads desk.sh and lib/desk-common.sh once, as it starts, and never
+# re-executes itself: a deploy that changes them reaches the loop only at its
+# next start (`sudo systemctl restart algotrading-desk`). The morning and
+# evening jobs and --restart-api are new processes, so they read the deployed
+# lib/desk-common.sh straight away.
+#
 # Switches, from the environment or .env, read when the desk starts:
 #   DESK_BACKGROUND_OPEN=1   run the morning job in the background and keep
 #                            checking the API meanwhile (default: foreground)
@@ -53,7 +67,8 @@
 #        ./scripts/desk.sh --headless    (Mac) in the background; watch logs/desk.log
 #        ./scripts/desk.sh --stop        (Mac) stop the background loop; the API stays up
 #        ./scripts/desk.sh --restart-api restart the API once, as the desk would
-#                                        (refused while runs are live)
+#                                        (refused while runs are live; exit 2:
+#                                        the build failed, the old API kept)
 #        (--daemon is the detached copy: the launcher, --headless and systemd run it)
 
 set -uo pipefail
@@ -168,12 +183,21 @@ api_start || true
 # HEAD at startup, as it was until 28 Sep, a desk restarted between a pull and
 # its build (a deferred deploy, a crash, a systemd restart) counted the pulled
 # commit as built and never built it.
-# >>> deployed-sha (also loaded by scripts/tests/desk-hygiene.test.sh)
+#
+# deployed_sha is written only when the deploy's API build passed. A commit
+# whose build failed goes in deploy-failed-sha instead: it is not tried again
+# at every check (the next commit gets its own attempt, and deploy-now retries
+# it), and it is never mistaken for what the API runs. Until 2 Nov a failed
+# build was saved as deployed, and the next restart then built it, failed, and
+# left the API down (2 Nov review, F1).
+# >>> deployed-sha (also loaded by scripts/tests/desk-hygiene.test.sh and desk-deploy.test.sh)
 DEPLOYED_SHA_FILE="$DESK_STATE_DIR/deployed-sha"
+DEPLOY_FAILED_SHA_FILE="$DESK_STATE_DIR/deploy-failed-sha"
 # Written before a pull and removed when the deploy step returns: found at
 # startup, the last deploy was cut off halfway.
 DEPLOY_PENDING_FILE="$DESK_STATE_DIR/deploy-pending"
 save_deployed_sha() { printf '%s\n' "$1" >"$DEPLOYED_SHA_FILE.tmp" && mv -f "$DEPLOYED_SHA_FILE.tmp" "$DEPLOYED_SHA_FILE"; }
+save_failed_sha() { printf '%s\n' "$1" >"$DEPLOY_FAILED_SHA_FILE.tmp" && mv -f "$DEPLOY_FAILED_SHA_FILE.tmp" "$DEPLOY_FAILED_SHA_FILE"; }
 deploy_pending() { printf '%s at %s\n' "$1" "$(date '+%F %T')" >"$DEPLOY_PENDING_FILE"; }
 
 # Sets deployed_sha as the desk starts: the recorded commit while it is one in
@@ -191,6 +215,7 @@ load_deployed_sha() {
     rm -f "$DEPLOY_PENDING_FILE"
   fi
   deployed_sha="$sha"
+  failed_sha="$(head -1 "$DEPLOY_FAILED_SHA_FILE" 2>/dev/null || true)"
 }
 # <<< deployed-sha
 load_deployed_sha
@@ -219,14 +244,29 @@ write_status() {
 # --- deploy ---------------------------------------------------------------------
 # What was built last is deployed_sha (above). deploy-pending lives only while
 # this runs; a desk that finds it at startup redoes the deploy.
+#
+# The checkout moves only when a deploy goes out (2 Nov review, F2). Until then
+# every check pulled at once and the gate held back only the build, so during
+# a session the working tree ran ahead of what the API had been built from: a
+# health restart then built and started the held commit mid-session, and
+# infra_up applied a held docker-compose change. Now a check fetches and
+# compares; the fast-forward comes after the gate has let the deploy through.
+# Outside a deploy the checkout is the deployed commit, so every restart builds
+# exactly that (and when that build fails, starts the last good build of it).
+# >>> deploy-step (also loaded by scripts/tests/desk-deploy.test.sh)
 deploy_if_behind() {
   _deploy_if_behind
   rm -f "$DEPLOY_PENDING_FILE"
 }
 
+# How many changed paths (one a line on stdin) the API's build reads — its
+# projects and the repo-wide build files — and how many the containers read.
+api_build_inputs() { grep -cE '^(src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/|Directory\.(Build|Packages)\.[^/]+$|global\.json$|[Nn][Uu][Gg]et\.[Cc]onfig$)' || true; }
+infra_inputs() { grep -cE '^(docker-compose[^/]*\.ya?ml$|docker/)' || true; }
+
 _deploy_if_behind() {
   git fetch origin --quiet 2>>"$LOG" || { warn "git fetch failed; leaving everything alone"; return; }
-  local local_sha remote_sha
+  local local_sha remote_sha target
   local_sha="$(git rev-parse HEAD)"; remote_sha="$(git rev-parse origin/main)"
   local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local from_short to_short; from_short="$(git rev-parse --short "$deployed_sha")"; to_short="$(git rev-parse --short "$remote_sha")"
@@ -239,46 +279,53 @@ _deploy_if_behind() {
     python3 scripts/lib/deploy-record.py "${args[@]}" >>"$LOG" 2>&1 || true
   }
 
+  # What would go out: origin/main when it has moved, else a commit made here.
+  target="$local_sha"
   if [ "$local_sha" != "$remote_sha" ]; then
-    say "origin/main moved: $(git rev-parse --short "$local_sha") -> $to_short"
     # Refuse to destroy local work. A dirty tree here means someone is editing
     # on this machine; the deploy waits for them to commit or stash.
     if [ -n "$(git status --porcelain)" ]; then
+      say "origin/main moved: $(git rev-parse --short "$local_sha") -> $to_short"
       warn "working tree has uncommitted changes — NOT pulling. Commit or stash them and the next check will deploy."
       last_deploy_note="blocked by uncommitted local changes at $(date '+%H:%M')"
       record skipped "Uncommitted changes on this machine" "Pulled from GitHub|skipped|$(git status --porcelain | wc -l | tr -d ' ') uncommitted file(s) on this machine"
       return
     fi
     if ! git merge-base --is-ancestor "$local_sha" "$remote_sha"; then
+      say "origin/main moved: $(git rev-parse --short "$local_sha") -> $to_short"
       warn "local HEAD is not an ancestor of origin/main (diverged) — NOT pulling. Resolve by hand."
       last_deploy_note="blocked: local history diverged at $(date '+%H:%M')"
       record failed "Not a fast-forward — the branches have diverged" "Pulled from GitHub|failed|Not a fast-forward - resolve by hand"
       return
     fi
-    deploy_pending "pulling $(git rev-parse --short "$local_sha") -> $to_short"
-    git pull --ff-only --quiet origin main >>"$LOG" 2>&1 || { warn "git pull failed (see desk.log)"; record failed "git pull failed" "Pulled from GitHub|failed|see logs/desk.log"; return; }
+    target="$remote_sha"
   fi
+  [ "$target" != "$deployed_sha" ] || return 0
+  # Its API build failed once: not again at every check. The next commit gets
+  # its own attempt, and deploy-now asks for this one again.
+  if [ "$target" = "${failed_sha:-}" ] && ! deploy_now_requested; then return 0; fi
+  to_short="$(git rev-parse --short "$target")"
+  local changed; changed="$(git diff --name-only "$deployed_sha" "$target")"
+  local how="pulled"; [ "$local_sha" = "$target" ] && how="committed here"
+  local n_commits n_files
+  n_commits="$(git log --oneline "$deployed_sha..$target" | wc -l | tr -d ' ')"
+  n_files="$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"
 
-  local head; head="$(git rev-parse HEAD)"
-  [ "$head" != "$deployed_sha" ] || return 0
-  to_short="$(git rev-parse --short "$head")"
-  local changed; changed="$(git diff --name-only "$deployed_sha" "$head")"
-  local how="pulled"; [ "$local_sha" = "$head" ] && how="committed here"
-
-  local web_changed api_changed engine_changed
+  local web_changed api_changed engine_changed infra_changed
   web_changed="$(printf '%s\n' "$changed" | console_build_inputs)"
-  api_changed="$(printf '%s\n' "$changed" | grep -cE '^src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/' || true)"
+  api_changed="$(printf '%s\n' "$changed" | api_build_inputs)"
   engine_changed="$(printf '%s\n' "$changed" | grep -c '^src/AlgoTrading.PythonEngine/' || true)"
+  infra_changed="$(printf '%s\n' "$changed" | infra_inputs)"
   local notes=() steps=()
-  if [ "$how" = "pulled" ]; then steps+=("Pulled from GitHub|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)")
-  else steps+=("Committed on this machine|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s) - nothing to pull"); fi
 
-  # Build and restart only on a quiet desk (see deploy_allowed). The pull above
-  # already happened, so scripts and the Python engine are current for anything
-  # started from now on; what waits is the console build and the API restart.
-  # deployed_sha is left alone, so every check tries again and the deploy goes
-  # out by itself once the desk is quiet.
-  if [ "$web_changed" -gt 0 ] || [ "$api_changed" -gt 0 ]; then
+  # The console, the API and the containers change only on a quiet desk (see
+  # deploy_allowed), and nothing of such a commit reaches the checkout before
+  # then: not its scripts, not its Python engine, not its settings. A commit
+  # with none of them goes out at once, so new Python runs get new engine code
+  # straight away. A held commit holds every commit after it, which cannot be
+  # fast-forwarded to without it. deployed_sha is left alone, so every check
+  # asks again and the deploy goes out by itself once the desk is quiet.
+  if [ "$web_changed" -gt 0 ] || [ "$api_changed" -gt 0 ] || [ "$infra_changed" -gt 0 ]; then
     local g_dow g_hhmm g_closed g_live
     g_dow="$(date +%u)"; g_hhmm="$(date +%H%M)"
     g_closed=0; [ "$closed_on" = "$(date +%F)" ] && g_closed=1
@@ -287,24 +334,60 @@ _deploy_if_behind() {
     g_live=0
     if deploy_clock_allows "$g_dow" "$g_hhmm" "$g_closed" && ! deploy_now_requested; then g_live="$(live_runs)"; fi
     if ! deploy_allowed "$g_dow" "$g_hhmm" "$g_closed" "$g_live"; then
-      if [ "$deferred_sha" != "$head" ]; then
+      if [ "$deferred_sha" != "$target" ]; then
         local why; why="$(deploy_block_reason "$g_dow" "$g_hhmm" "$g_closed" "$g_live")"
-        say "deploy of $to_short deferred — $why; it goes out by itself when the desk is quiet (or: touch \"$DEPLOY_NOW_FILE\")"
-        record skipped "Deferred: $why" "${steps[@]}" "Build and restart|deferred|$why - retried every check"
+        say "origin/main moved: $from_short -> $to_short"
+        say "deploy of $to_short deferred — $why; nothing is pulled until it goes out by itself when the desk is quiet (or: touch \"$DEPLOY_NOW_FILE\")"
+        record skipped "Deferred: $why" "Fetched from GitHub|ok|$n_commits commit(s), $n_files file(s) - not pulled until the deploy goes out" "Build and restart|deferred|$why - retried every check"
         notify "AlgoTrading deploy deferred" "$to_short waits: $why"
-        deferred_sha="$head"
+        deferred_sha="$target"
       fi
       return
     fi
     if deploy_now_requested; then
-      say "deploy-now requested — building $to_short despite the desk not being quiet"
+      say "deploy-now requested — deploying $to_short despite the desk not being quiet"
     fi
     rm -f "$DEPLOY_NOW_FILE"
   fi
+
+  if [ "$local_sha" != "$target" ]; then
+    say "origin/main moved: $(git rev-parse --short "$local_sha") -> $to_short"
+    deploy_pending "pulling $(git rev-parse --short "$local_sha") -> $to_short"
+    git merge --ff-only --quiet "$target" >>"$LOG" 2>&1 || { warn "git pull failed (see desk.log)"; record failed "git pull failed" "Pulled from GitHub|failed|see logs/desk.log"; return; }
+  fi
+  if [ "$how" = "pulled" ]; then steps+=("Pulled from GitHub|ok|$n_commits commit(s), $n_files file(s)")
+  else steps+=("Committed on this machine|ok|$n_commits commit(s), $n_files file(s) - nothing to pull"); fi
+
   # Said only once the gate lets the build through: said before it, the line repeated every
   # check while a deploy was deferred and read as a build loop (12 Oct 2026).
-  say "building $from_short -> $to_short ($how): $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
+  say "building $from_short -> $to_short ($how): $n_files file(s)"
   deploy_pending "building $from_short -> $to_short"
+
+  # The API is built first, before anything of the commit is live: a commit
+  # whose API does not build is not deployed at all — no console, no restart —
+  # and the checkout goes back to where it was, so a restart before the next
+  # deploy builds what the API runs. The build is the one api_start runs:
+  # Debug, or Release with API_BUILD_CONFIG=Release.
+  if [ "$api_changed" -gt 0 ]; then
+    say "API code changed — building${DESK_API_CONFIG:+ ($DESK_API_CONFIG)} ..."
+    if ! api_build >>"$LOG" 2>&1; then
+      warn "dotnet build failed for $to_short — NOT deployed; the API keeps running $from_short. See desk.log for the compiler error."
+      if [ "$local_sha" != "$target" ]; then
+        if git reset --keep --quiet "$local_sha" >>"$LOG" 2>&1; then
+          say "  checkout put back to $(git rev-parse --short "$local_sha")"
+        else
+          warn "could not put the checkout back to $(git rev-parse --short "$local_sha") — until the next deploy an API restart tries $to_short, and starts the last good build when that fails"
+        fi
+      fi
+      failed_sha="$target"
+      save_failed_sha "$target" || warn "could not record $to_short in $DEPLOY_FAILED_SHA_FILE"
+      last_deploy_note="$to_short at $(date '+%H:%M') — API build FAILED, not deployed; the API keeps running $from_short"
+      say "deploy: $last_deploy_note"
+      record failed "API build FAILED - not deployed" "${steps[@]}" "API build|failed|dotnet build failed - nothing of $to_short went out; the API keeps running $from_short"
+      notify "AlgoTrading deploy FAILED" "$to_short did not build, so nothing of it went out; the API keeps running $from_short. The next commit is tried by itself (touch deploy-now to retry this one)."
+      return
+    fi
+  fi
 
   if [ "$web_changed" -gt 0 ]; then
     if ( cd web && npm ci --silent >>"$LOG" 2>&1 || true ) && web_build; then notes+=("console rebuilt"); steps+=("Console rebuilt|ok|New bundle is being served - no restart needed"); else notes+=("console build FAILED"); steps+=("Console rebuilt|failed|Build failed - the old bundle is still being served"); fi
@@ -324,26 +407,29 @@ _deploy_if_behind() {
   fi
 
   if [ "$api_changed" -gt 0 ]; then
-    # Build BEFORE stopping the old API, so a broken build costs nothing but
-    # a log line and the running API stays up. The build is the one api_start
-    # runs: Debug, or Release with API_BUILD_CONFIG=Release.
-    say "API code changed — building${DESK_API_CONFIG:+ ($DESK_API_CONFIG)} ..."
-    if api_build >>"$LOG" 2>&1; then
-      local live; live="$(live_runs)"
-      if [ "$live" != "0" ]; then
-        say "  restarting the API with $live live run(s) — runners survive and re-register (owner's policy)"
-      fi
-      if api_restart; then notes+=("API rebuilt and restarted"); steps+=("API rebuilt and restarted|ok|Backend is live on the new build ($live live run(s) kept)"); else notes+=("API restart FAILED"); steps+=("API rebuilt and restarted|failed|See logs/api.log"); fi
-    else
-      notes+=("API build FAILED — old API still running")
-      steps+=("API rebuilt and restarted|failed|dotnet build failed - the old API keeps running")
-      warn "dotnet build failed; the old API keeps running. See desk.log."
+    local live rc=0; live="$(live_runs)"
+    if [ "$live" != "0" ]; then
+      say "  restarting the API with $live live run(s) — runners survive and re-register (owner's policy)"
     fi
+    api_restart || rc=$?
+    case "$rc" in
+      0) notes+=("API rebuilt and restarted"); steps+=("API rebuilt and restarted|ok|Backend is live on the new build ($live live run(s) kept)") ;;
+      2) notes+=("API restart FAILED: its second build failed, the old API keeps running"); steps+=("API rebuilt and restarted|failed|The build before the restart failed - the old API keeps running") ;;
+      *) notes+=("API restart FAILED"); steps+=("API rebuilt and restarted|failed|See logs/api.log") ;;
+    esac
   fi
 
   if [ "$engine_changed" -gt 0 ]; then
     notes+=("engine changed: live runs keep the old code until restarted; new runs use the new")
     steps+=("Python engine|ok|Pulled; live runs keep the code they started with, new runs use the new")
+  fi
+
+  # docker compose recreates a changed container at the next `up`: the 08:45
+  # morning job's, or a desk start's. Not here, at midnight, under the night's
+  # jobs; the gate above only makes sure it was a quiet desk that took it in.
+  if [ "$infra_changed" -gt 0 ]; then
+    notes+=("docker-compose changed: applied at the next infra start (the 08:45 morning job)")
+    steps+=("Containers|ok|docker-compose.yml changed - applied by the next docker compose up (08:45 morning job or a desk start)")
   fi
 
   [ ${#notes[@]} -gt 0 ] || notes+=("nothing to rebuild (docs/scripts only)")
@@ -352,12 +438,14 @@ _deploy_if_behind() {
   say "deploy: $last_deploy_note"
   local outcome=ok; case "$last_deploy_note" in *FAILED*) outcome=failed;; esac
   record "$outcome" "$(IFS='; '; echo "${notes[*]}")" "${steps[@]}"
-  # One attempt per commit, pass or fail — a broken build is not retried every
-  # two minutes; the next commit gets its own attempt. Kept across restarts.
-  deployed_sha="$head"
-  save_deployed_sha "$head" || warn "could not record $to_short in $DEPLOYED_SHA_FILE"
+  # Recorded once the API build has passed (a failed one returned above). A
+  # console build or a restart that failed is not retried every two minutes:
+  # the next commit gets its own attempt. Kept across restarts.
+  deployed_sha="$target"
+  save_deployed_sha "$target" || warn "could not record $to_short in $DEPLOYED_SHA_FILE"
   notify "AlgoTrading deploy" "$last_deploy_note"
 }
+# <<< deploy-step
 
 # --- the loop -------------------------------------------------------------------
 while true; do
@@ -386,7 +474,9 @@ while true; do
         say "the API is down while another script restarts it ($API_RESTARTING_FILE) — leaving that restart alone"
       else
         # The database first: an API restarted against a stopped Docker just
-        # dies again, two minutes at a time.
+        # dies again, two minutes at a time. The checkout is the deployed
+        # commit (deploy-step above), so this rebuilds nothing new; when that
+        # build fails anyway, api_restart starts the last good build.
         say "API is down — checking infra, then restarting"
         infra_up || true
         api_restart || true

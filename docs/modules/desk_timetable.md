@@ -112,16 +112,30 @@ inside a session. The digest goes after 15:45 on those days when either wrote.
 
 ## When a deploy goes out
 
-A web or API change pulled on a weekday between 08:40 and 23:58 waits. It goes out at the first 2-minute check
-after `market-close.sh` has run (about 23:59–00:01), or before 08:40 the next weekday. A live run keeps it waiting
-even inside those windows.
+A commit that changes the console (`web/`, `docs/`), the API (its projects, `appsettings*.json`, repo-wide build
+files) or `docker-compose.yml` waits when it arrives on a weekday between 08:40 and 23:58. It goes out at the first
+2-minute check after `market-close.sh` has run (about 23:59–00:01), or before 08:40 the next weekday. A live run
+keeps it waiting even inside those windows.
+
+While it waits it is only fetched, never pulled: the server's checkout stays at the deployed commit, so an API
+restart during the session (the desk's health restart, the 08:45 job) builds what is already running and nothing
+newer. Commits after a held one wait with it. A docker-compose change, once pulled, is applied by the next
+`docker compose up`: the 08:45 morning job, or a desk start.
 
 The desk's message names the time: "waits for the evening close job at 23:58 (market-close.sh, after the MCX
 close)". `touch ~/.local/state/algotrading/deploy-now` sends one out at once; the file counts for an hour.
 
-A deploy of scripts, docs or Python only rebuilds nothing and is never held. Python runners pick up new code at
-their next start. `desk.sh` and `desk-common.sh` load when the desk starts, so a change to them takes effect after
-`sudo systemctl restart algotrading-desk`.
+The API is built before anything of the commit goes live. When that build fails, nothing of the commit goes out:
+the checkout goes back to the deployed commit, the commit is noted in `deploy-failed-sha` (not `deployed-sha`),
+Telegram is told, and it is not built again at every check. The next commit gets its own attempt; `deploy-now`
+retries the failed one. Every API restart also builds first and stops the running API only when the build passed;
+an API that is down when the build fails is started from the last good build (`~/.local/state/algotrading/api-last-good`,
+one copy of about 70 MB).
+
+A commit of scripts or Python alone rebuilds nothing and is never held. Python runners pick up new code at their
+next start. `desk.sh` and `desk-common.sh` load when the desk starts and the desk never re-executes itself, so a
+change to them reaches its loop only after `sudo systemctl restart algotrading-desk`; the morning and evening jobs
+read the new `desk-common.sh` at their next run.
 
 ## Rules for code and tests that depend on the time
 
