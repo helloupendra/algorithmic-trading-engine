@@ -98,6 +98,11 @@ public class TradingDbContext : DbContext
     public DbSet<MutualFundScheme> MutualFundSchemes => Set<MutualFundScheme>();
     public DbSet<MutualFundNav> MutualFundNavs => Set<MutualFundNav>();
 
+    // The fund report (Phase 2): NSE total-return indices, AMFI's TER, and each scheme's returns and peer ranks.
+    public DbSet<MutualFundBenchmarkValue> MutualFundBenchmarkValues => Set<MutualFundBenchmarkValue>();
+    public DbSet<MutualFundTer> MutualFundTers => Set<MutualFundTer>();
+    public DbSet<MutualFundSchemeStats> MutualFundSchemeStats => Set<MutualFundSchemeStats>();
+
     /// <summary>SEBI, NSE and BSE circulars that might bind the desk, for the Compliance Triage. See <see cref="RegulatoryCircular"/>.</summary>
     public DbSet<RegulatoryCircular> RegulatoryCirculars => Set<RegulatoryCircular>();
 

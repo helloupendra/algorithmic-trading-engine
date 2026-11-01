@@ -3507,6 +3507,23 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("market_ticks", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundBenchmarkValue", b =>
+                {
+                    b.Property<string>("IndexName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<decimal>("Value")
+                        .HasColumnType("numeric");
+
+                    b.HasKey("IndexName", "Date");
+
+                    b.ToTable("mf_benchmark_tri", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundNav", b =>
                 {
                     b.Property<int>("SchemeCode")
@@ -3595,6 +3612,103 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex("IsinGrowth");
 
                     b.ToTable("mf_schemes", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundSchemeStats", b =>
+                {
+                    b.Property<int>("SchemeCode")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("AsOfDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("ComputedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PeerKey")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)");
+
+                    b.Property<int?>("Peers1y")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Peers3y")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Peers5y")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int?>("Rank1y")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Rank3y")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Rank5y")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("Return1y")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Return3y")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Return5y")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("SchemeCode");
+
+                    b.HasIndex("PeerKey", "Plan");
+
+                    b.ToTable("mf_scheme_stats", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundTer", b =>
+                {
+                    b.Property<string>("NsdlSchemeCode")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<decimal?>("DirectTer")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<decimal?>("RegularTer")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("SchemeName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("SchemeType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("NsdlSchemeCode", "Date");
+
+                    b.HasIndex("NameKey", "Date");
+
+                    b.ToTable("mf_ter", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.NewsItem", b =>

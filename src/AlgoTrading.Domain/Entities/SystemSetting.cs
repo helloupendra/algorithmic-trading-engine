@@ -143,6 +143,12 @@ public static class SystemSettingKeys
     public const string MutualFundsBackfill = "mutualfunds.backfill";
 
     /// <summary>
+    /// The fund report's nightly jobs, as JSON: the benchmark (TRI) sync and its one-time backfill, the TER sync and
+    /// the category statistics: when each last ran, whether it worked and what it reached.
+    /// </summary>
+    public const string MutualFundsAnalytics = "mutualfunds.analytics";
+
+    /// <summary>
     /// "marketintel.nofile.&lt;dataset&gt;": the days a market-intelligence
     /// backfill found no file for, once they were old enough that none will
     /// come (holidays the exchange calendar does not hold), as comma-separated

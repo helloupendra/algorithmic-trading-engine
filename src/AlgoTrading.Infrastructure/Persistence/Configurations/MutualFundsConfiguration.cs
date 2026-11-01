@@ -49,3 +49,54 @@ public class MutualFundNavConfiguration : IEntityTypeConfiguration<MutualFundNav
         builder.Property(x => x.Source).IsRequired().HasMaxLength(16);
     }
 }
+
+/// <summary>EF configuration for <see cref="MutualFundBenchmarkValue"/>.</summary>
+public class MutualFundBenchmarkValueConfiguration : IEntityTypeConfiguration<MutualFundBenchmarkValue>
+{
+    public void Configure(EntityTypeBuilder<MutualFundBenchmarkValue> builder)
+    {
+        builder.ToTable("mf_benchmark_tri");
+
+        // One value per index per day; it includes Date, the hypertable's partitioning column. Every read is one
+        // index over a date range.
+        builder.HasKey(x => new { x.IndexName, x.Date });
+        builder.Property(x => x.IndexName).HasMaxLength(60);
+        builder.Property(x => x.Value).HasColumnType("numeric");
+    }
+}
+
+/// <summary>EF configuration for <see cref="MutualFundTer"/>.</summary>
+public class MutualFundTerConfiguration : IEntityTypeConfiguration<MutualFundTer>
+{
+    public void Configure(EntityTypeBuilder<MutualFundTer> builder)
+    {
+        builder.ToTable("mf_ter");
+        builder.HasKey(x => new { x.NsdlSchemeCode, x.Date });
+        builder.Property(x => x.NsdlSchemeCode).HasMaxLength(40);
+        builder.Property(x => x.SchemeName).IsRequired().HasMaxLength(300);
+        builder.Property(x => x.NameKey).IsRequired().HasMaxLength(300);
+        builder.Property(x => x.SchemeType).IsRequired().HasMaxLength(40);
+        builder.Property(x => x.Category).IsRequired().HasMaxLength(200);
+        builder.Property(x => x.RegularTer).HasColumnType("numeric");
+        builder.Property(x => x.DirectTer).HasColumnType("numeric");
+
+        // The report looks a scheme's TER up by its name.
+        builder.HasIndex(x => new { x.NameKey, x.Date });
+    }
+}
+
+/// <summary>EF configuration for <see cref="MutualFundSchemeStats"/>.</summary>
+public class MutualFundSchemeStatsConfiguration : IEntityTypeConfiguration<MutualFundSchemeStats>
+{
+    public void Configure(EntityTypeBuilder<MutualFundSchemeStats> builder)
+    {
+        builder.ToTable("mf_scheme_stats");
+        builder.HasKey(x => x.SchemeCode);
+        builder.Property(x => x.SchemeCode).ValueGeneratedNever();
+        builder.Property(x => x.PeerKey).IsRequired().HasMaxLength(260);
+        builder.Property(x => x.Plan).IsRequired().HasMaxLength(10);
+
+        // A report reads its scheme's peers: same group, same plan.
+        builder.HasIndex(x => new { x.PeerKey, x.Plan });
+    }
+}
