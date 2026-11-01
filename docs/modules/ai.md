@@ -1440,8 +1440,13 @@ agent. Anything ambiguous or wrong is an error the model reads and relays, and n
 A valid one is stored as a pending row of `ai_actions` (`IraActions`): the owner's console user, the channel, the
 conversation (and the Telegram chat), the model call that proposed it, the kind, the resolved target as JSON, the
 sentence code wrote, and when it expires (`Ai:Actions:ConfirmSeconds`, 120). A newer proposal in the same conversation
-replaces an older one still waiting, so a PIN always confirms the one just shown. The tool's answer tells the model the
-summary and how the owner confirms; it adds "Nothing has happened yet."
+replaces an older one still waiting (`Replaced by action #13.`), so only the newest can be confirmed. The tool's answer
+tells the model the summary and how the owner confirms; it adds "Nothing has happened yet."
+
+A PIN confirms only an action the owner was shown. The console and the Ira app confirm by the number on the card they
+show, which carries the action's own summary. On Telegram the bot confirms only the action whose "Type your PIN"
+message Telegram took for that chat (review of 2 Nov 2026: a follow-up's proposal replaced the shown action and then
+every model failed, so the PIN typed for #12 ran an unseen #13).
 
 **Confirming.** The right PIN moves the row from pending to confirmed exactly once, under one gate, so a double confirm
 (two clicks, two tabs) carries it out once; the second is told "Action #12 is already being carried out." Then code
@@ -1466,6 +1471,19 @@ was proposed on, by the admin it was proposed for.
 
 A typed message of 4 to 8 digits is always handled there, before any model: with nothing waiting it is still deleted
 ("No action is waiting for a PIN. I deleted your message."), so a PIN typed late never reaches a model or `ai_calls`.
+
+The bot remembers, per chat and in memory, the action whose PIN request Telegram took. An action the owner was never
+shown is cancelled (its `Error` starts "Never shown: ") and he is told that nothing waits:
+- an answer that fails after proposing one: "No model answered (call #…): … Nothing is waiting for your PIN.
+  Action #13 (…) was proposed during this answer but never shown to you, so I cancelled it. It replaced action #12
+  (…), which will not run either. Ask again if you still want it." The replaced action is not brought back;
+- a proposal tool that failed after storing its action, or a PIN request Telegram refused;
+- a PIN that meets a waiting action the bot never offered (an API restart in between, a crash): "Nothing was done.
+  Action #13 (…) was proposed, but its PIN request never reached you, so a PIN cannot confirm it: I cancelled it." The
+  PIN is not checked, so it counts toward no lock.
+
+A newer proposal that was shown says what it replaced on the line above its PIN request: "Action #12 is replaced by
+this one and will not run."
 A voice note is never a PIN: its transcript is asked as a question, as any heard words are. `/cancel` drops the action
 waiting ("Cancelled action #12: nothing was done."). `/pin 1234` sets the PIN when none is set; `/pin <old> <new>`
 changes it, and a wrong old PIN counts toward the lock; `/pin` alone says whether one is set. Every `/pin` message is
@@ -1567,8 +1585,10 @@ carry it out once; a refusal by the desk is a failed action; switched off, nothi
 activity log; the PIN is only a salted hash), `IraActionsWiringTests` (only the Desk Assistant in an admin's chat is
 offered the tools, and not with `Ai:Actions:Enabled` off; the console endpoints behind the admin policy, over HTTP; on
 Telegram the typed PIN is deleted, checked and carried out without a model, three wrong PINs lock, `/cancel`, a late or
-stray PIN, `/pin`), `IraCloseAccountTests` (the proposal lists runs and positions, recaps and the alerts runner left
-out; nothing open is an error; the account named tolerantly, an ambiguous one refused; one PIN closes everything; what
+stray PIN, `/pin`; a PIN never confirms an action whose PIN request did not reach the chat, the 2 Nov review's probe
+among them; a shown replacement says what it replaced and only it runs; a shown action that expired runs nothing),
+`IraCloseAccountTests` (the proposal lists runs and positions, recaps and the alerts runner left out; nothing open is
+an error; the account named tolerantly, an ambiguous one refused; one PIN closes everything; what
 closed before the PIN is skipped; one failure does not stop the others; four at a time and never more; a row per item
 and one for the action; a trader, a script or another agent proposes nothing), `IraDeskHandsTests` (the start through
 `StrategyStartService`'s checks with real runner processes; the stop's path; an account close stopping real runners
