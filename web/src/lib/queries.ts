@@ -2511,6 +2511,109 @@ export function useMutualFundCoverage() {
   })
 }
 
+import type {
+  MutualFundCompare,
+  MutualFundJob,
+  MutualFundJobResponse,
+  MutualFundReport,
+  MutualFundScheme,
+  MutualFundSummaryResponse,
+} from './mutualFunds'
+
+/** A 400 or 404 is the API's answer about the request itself (an unknown scheme, a bad list): asking again changes nothing. */
+function retryUnlessRefused(failureCount: number, error: Error): boolean {
+  const status = (error as { status?: number } | null)?.status
+  if (status === 400 || status === 401 || status === 403 || status === 404) return false
+  return failureCount < 2
+}
+
+export interface MutualFundSchemeFilter {
+  /** "direct", "regular" or "unknown". */
+  plan?: string
+  /** "growth", "idcw", "other" or "unknown". */
+  option?: string
+  active?: boolean
+  take?: number
+}
+
+/**
+ * Schemes whose name or AMC contains the text, or whose code or ISIN it is;
+ * active ones first. Asks nothing under two characters; the caller debounces.
+ */
+export function useMutualFundSchemes(search: string, filter: MutualFundSchemeFilter = {}) {
+  const text = search.trim()
+  const params = new URLSearchParams({ search: text, take: String(filter.take ?? 50) })
+  if (filter.plan) params.set('plan', filter.plan)
+  if (filter.option) params.set('option', filter.option)
+  if (filter.active != null) params.set('active', String(filter.active))
+  const qs = params.toString()
+  return useQuery({
+    queryKey: ['mutualFunds', 'schemes', qs],
+    queryFn: () => api.get<MutualFundScheme[]>(`/api/MutualFunds/schemes?${qs}`),
+    enabled: text.length >= 2,
+    // The previous answer stays on screen while the next one loads, so the table does not blink per keystroke.
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+  })
+}
+
+/** One scheme's fund report, to its latest NAV day or to `asOf` (yyyy-MM-dd). Its figures change once a night. */
+export function useMutualFundReport(code: number | null, asOf?: string | null) {
+  return useQuery({
+    queryKey: ['mutualFunds', 'report', code, asOf ?? null],
+    queryFn: () =>
+      api.get<MutualFundReport>(`/api/MutualFunds/${code}/report${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ''}`),
+    enabled: code != null && code > 0,
+    staleTime: 10 * 60_000,
+    retry: retryUnlessRefused,
+  })
+}
+
+/** Two to four schemes' reports, all ending on their common NAV day. */
+export function useMutualFundCompare(codes: readonly number[]) {
+  const list = codes.join(',')
+  return useQuery({
+    queryKey: ['mutualFunds', 'compare', list],
+    queryFn: () => api.get<MutualFundCompare>(`/api/MutualFunds/compare?codes=${list}`),
+    enabled: codes.length >= 2 && codes.length <= 4,
+    staleTime: 10 * 60_000,
+    retry: retryUnlessRefused,
+  })
+}
+
+/**
+ * The written summary of a report, to the same `asOf` as the report (yyyy-MM-dd;
+ * none for the latest NAV day): slow (10–30 s while a model writes it) and
+ * allowed to fail, so it is asked for once, only after the report itself is
+ * on screen (`enabled`), and kept for an hour.
+ */
+export function useMutualFundSummary(code: number | null, asOf?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['mutualFunds', 'summary', code, asOf ?? null],
+    queryFn: () =>
+      api.get<MutualFundSummaryResponse>(
+        `/api/MutualFunds/${code}/report/summary${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ''}`,
+      ),
+    enabled: enabled && code != null && code > 0,
+    retry: false,
+    staleTime: 60 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+/**
+ * Run a fund-report job now (admin; the API decides who may): it starts at
+ * once outside market hours, else after the close. The coverage then shows
+ * the run, or the request waiting for its turn.
+ */
+export function useRunMutualFundJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (job: MutualFundJob) => api.post<MutualFundJobResponse>(`/api/MutualFunds/analytics/${job}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mutualFunds', 'coverage'] }),
+  })
+}
+
 // ---------- Sentinel incidents (admin) ----------
 
 import { historyQuery, incidentsQuery, readIncidentHistory, readIncidentList } from './incidents'
