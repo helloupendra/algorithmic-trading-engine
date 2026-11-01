@@ -55,6 +55,7 @@ export const NAV = [
       { slug: 'modules/ai-trader', src: 'docs/modules/ai_trader.md', title: 'AI Trader' },
       { slug: 'modules/analysis', src: 'docs/modules/analysis.md', title: 'Forecasts & analysis' },
       { slug: 'modules/market-intelligence', src: 'docs/modules/market_intelligence.md', title: 'Market intelligence' },
+      { slug: 'modules/mutual-funds', src: 'docs/modules/mutual_funds_module.md', title: 'Mutual funds' },
       { slug: 'modules/option-chain', src: 'docs/modules/option_chain.md', title: 'Option chain' },
       { slug: 'modules/chart', src: 'docs/modules/chart.md', title: 'Chart & indicators' },
       { slug: 'modules/pattern-alerts', src: 'docs/modules/pattern_alerts.md', title: 'Candle pattern alerts' },
