@@ -187,9 +187,9 @@ public class PaperTradingService : IPaperTradingService
         // Every leg gets a real price before ANY of them fills. Done inside the
         // loop instead, a group could half-fill — leg one booked, leg two
         // rejected — and a one-legged "straddle" is a worse position to wake up
-        // to than no position at all. A replay's bar closes and the manual
-        // ticket's prices are filled as given; a live run's legs are priced
-        // from the latest quote.
+        // to than no position at all. A replay's bar closes are filled as
+        // given; a live run's legs, and the manual ticket's, are priced from
+        // the latest quote.
         var fills = await PriceLegsAsync(legs, signal, reduceOnly,
             pricesAreFinal: replay || request.LegPricesAreFinal, ReplayPriced(run), cancellationToken);
 
@@ -312,7 +312,7 @@ public class PaperTradingService : IPaperTradingService
             string? why = "no live quote";
             var fill = pricesAreFinal
                 ? PriceAsGiven(leg, quote, open)
-                : PriceLive(leg, quote, open, now, out why);
+                : PriceLiveLeg(leg, quote, open, now, out why);
 
             if (fill is null)
             {
@@ -331,6 +331,63 @@ public class PaperTradingService : IPaperTradingService
         }
 
         return fills;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The manual ticket asks this before it books, so the price it checks a stop, a target or the AI Trader's rules
+    /// against, and the refusal it shows, are the ones <see cref="CreateSignalAsync"/> reaches a moment later on the
+    /// same quote (<see cref="PriceLiveLeg"/>). An opening order has no position to fall back to, and no price of its
+    /// own is offered as one: without a usable quote there is no fill.
+    /// </remarks>
+    public async Task<LiveFillQuote> QuoteLiveFillAsync(
+        string symbol,
+        string side,
+        CancellationToken cancellationToken = default)
+    {
+        var leg = new SimulationSignalLegRequest { Symbol = symbol, Side = side, Quantity = 1 };
+        ValidateLeg(leg);
+
+        var quotes = await LoadLiveQuotesAsync(new List<string> { symbol }, replayPriced: false, cancellationToken);
+        QuoteSnapshot? quote = quotes.TryGetValue(symbol, out var q) ? q : null;
+
+        var fill = PriceLiveLeg(leg, quote, open: null, UtcNow, out string? why);
+
+        string? refusal = null;
+        if (fill is null)
+        {
+            refusal = quote is null ? "there is no live quote for it"
+                : why is null or "no live quote" ? "its latest quote carries no price"
+                : why;
+        }
+
+        return new LiveFillQuote(
+            fill?.Price,
+            fill?.Rule,
+            fill?.Note,
+            refusal,
+            quote?.BidPrice,
+            quote?.AskPrice,
+            quote?.LastTradedPrice,
+            quote?.UpdatedUtc);
+    }
+
+    /// <summary>
+    /// A live leg's fill (<see cref="PriceLive"/>), held to the leg's limit when it has one: a fill beyond it leaves
+    /// the leg unpriced, with the reason. Only the manual ticket puts a limit on a leg; a strategy's legs carry none.
+    /// </summary>
+    private PaperFill? PriceLiveLeg(
+        SimulationSignalLegRequest leg,
+        QuoteSnapshot? quote,
+        PaperPosition? open,
+        DateTime nowUtc,
+        out string? why)
+    {
+        var fill = PriceLive(leg, quote, open, nowUtc, out why);
+        if (fill is null || leg.LimitPrice is not { } limit) return fill;
+
+        why = PaperFillPricing.BeyondLimit(leg.Side, fill.Price, fill.Rule, limit);
+        return why is null ? fill : null;
     }
 
     /// <summary>A live leg's fill from the latest quote; null, with the reason, when there is none it may use.</summary>
@@ -376,9 +433,9 @@ public class PaperTradingService : IPaperTradingService
     }
 
     /// <summary>
-    /// A replay's or the manual ticket's leg: its own price as it came. One
-    /// sent without a price takes the last trade, then (closing only) the
-    /// position's last mark, then its entry — as before fills had a spread.
+    /// A replay's leg: its own price as it came. One sent without a price
+    /// takes the last trade, then (closing only) the position's last mark,
+    /// then its entry — as before fills had a spread.
     /// </summary>
     private static PaperFill? PriceAsGiven(SimulationSignalLegRequest leg, QuoteSnapshot? quote, PaperPosition? open)
     {

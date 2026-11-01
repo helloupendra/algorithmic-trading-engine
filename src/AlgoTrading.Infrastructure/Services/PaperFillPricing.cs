@@ -138,9 +138,31 @@ public static class PaperFillPricing
         return Crossed(IsBuy(side), reference, basis, what, options, age: null, stale: false);
     }
 
-    /// <summary>A price filled exactly as given: a replay's bar close, the manual ticket's limit.</summary>
+    /// <summary>A price filled exactly as given: a replay's bar close.</summary>
     public static PaperFill AsGiven(decimal price, string rule = "signal", string note = "filled at the price the signal carried")
         => new(price, rule, note);
+
+    /// <summary>
+    /// Why a fill at <paramref name="price"/> (priced by <paramref name="rule"/>) may not be taken under
+    /// <paramref name="limit"/>, or null when it may: a BUY fills only at or below its limit, a SELL only at or above
+    /// it. A limit the book has not reached is not filled at the limit; there is no resting order to wait for the
+    /// market to come to it.
+    /// </summary>
+    public static string? BeyondLimit(string side, decimal price, string? rule, decimal limit)
+    {
+        bool isBuy = IsBuy(side);
+        if (isBuy ? price <= limit : price >= limit) return null;
+
+        string touch = rule switch
+        {
+            "ask" => "the ask",
+            "bid" => "the bid",
+            _ => "the price it would fill at",
+        };
+        return isBuy
+            ? $"a BUY limit of {Price(limit)} is below {touch} {Price(price)}, so it would not fill now"
+            : $"a SELL limit of {Price(limit)} is above {touch} {Price(price)}, so it would not fill now";
+    }
 
     /// <summary>"priced on a stale quote (95 s old)", as the stale-quote refusal and fills word it.</summary>
     public static string StaleNote(double ageSeconds)

@@ -58,6 +58,7 @@ public class ManualOrdersController : ControllerBase
     public const string BookStrategyName = "Manual";
 
     private readonly TradingDbContext _dbContext;
+    private readonly IPaperTradingService _paperTrading;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly ILogger<ManualOrdersController> _logger;
@@ -73,6 +74,7 @@ public class ManualOrdersController : ControllerBase
         IDeskEventPublisher? deskEvents = null)
     {
         _dbContext = dbContext;
+        _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
         _upsertWatchlistItem = upsertWatchlistItem;
         _logger = logger;
@@ -179,6 +181,14 @@ public class ManualOrdersController : ControllerBase
         var lot = await _lotSizeResolver.ResolveAsync(symbol, cancellationToken);
         bool derivative = IsDerivative(instrument.InstrumentType);
 
+        // What a market order would fill at now, by the rules Place books it by
+        // (2 Nov): the touch, else the last trade across half the spread, and
+        // nothing on a quote too old while the market is open. The ticket's
+        // "Buy at" is then the price the order gets, and a frozen quote shows as
+        // not tradable instead of as a price.
+        var buy = await _paperTrading.QuoteLiveFillAsync(symbol, "BUY", cancellationToken);
+        var sell = await _paperTrading.QuoteLiveFillAsync(symbol, "SELL", cancellationToken);
+
         return Ok(new
         {
             symbol = instrument.Symbol,
@@ -221,10 +231,12 @@ public class ManualOrdersController : ControllerBase
             // again, so the ticket says so plainly instead of waiting.
             expired,
 
-            // What a market order would actually pay right now.
-            buyAt = quote?.AskPrice ?? quote?.LastTradedPrice,
-            sellAt = quote?.BidPrice ?? quote?.LastTradedPrice,
-            tradable = !expired && quote is not null && (quote.AskPrice ?? quote.LastTradedPrice) is > 0
+            // What a market order would actually pay right now; null when it
+            // would be refused, and why.
+            buyAt = expired ? null : buy.Price,
+            sellAt = expired ? null : sell.Price,
+            tradable = !expired && (buy.Price is > 0 || sell.Price is > 0),
+            untradableReason = expired || quote is null ? null : buy.Refusal ?? sell.Refusal
         });
     }
 

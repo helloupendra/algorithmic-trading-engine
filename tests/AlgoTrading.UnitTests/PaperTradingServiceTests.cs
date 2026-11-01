@@ -111,12 +111,13 @@ public class PaperTradingServiceTests
     }
 
     [Fact]
-    public async Task The_manual_ticket_and_a_replay_fill_as_given()
+    public async Task Legs_marked_final_and_a_replay_fill_as_given()
     {
         using var book = new Book(Morning);
         book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, age: TimeSpan.FromSeconds(2));
 
-        // A limit the person typed, or the ask the ticket showed them.
+        // A caller inside the API that has decided the price. (The manual
+        // ticket no longer is one: since 2 Nov its legs are priced live.)
         var ticket = book.Signal("OPEN_GROUP", "M1", Leg(Call, "BUY", 99.8m));
         ticket.LegPricesAreFinal = true;
         await book.Service.CreateSignalAsync(ticket);
@@ -129,6 +130,28 @@ public class PaperTradingServiceTests
         replay.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, age: TimeSpan.FromHours(3));
         await replay.Open(Call, "SELL", price: 101.25m);
         Assert.Equal(101.25m, replay.Orders().Single().FillPrice);
+    }
+
+    [Fact]
+    public async Task A_legs_limit_takes_the_touch_within_it_and_refuses_beyond_it()
+    {
+        // Only the manual ticket puts a limit on a leg. Within it the leg fills
+        // at the touch like any live leg; beyond it the whole signal is refused.
+        using var book = new Book(Morning);
+        book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, age: TimeSpan.FromSeconds(2));
+        book.Quote(Put, ltp: 80m, bid: 79.5m, ask: 80.5m, age: TimeSpan.FromSeconds(2));
+
+        var within = Leg(Call, "BUY", 100.5m);
+        within.LimitPrice = 101m;
+        await book.Service.CreateSignalAsync(book.Signal("OPEN_GROUP", "G1", within));
+        Assert.Equal(100.5m, book.Orders().Single().FillPrice);
+
+        var beyond = Leg(Put, "SELL", 80m);
+        beyond.LimitPrice = 80m;
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            book.Service.CreateSignalAsync(book.Signal("OPEN_GROUP", "G2", beyond)));
+        Assert.Contains($"{Put} (a SELL limit of 80.00 is above the bid 79.50, so it would not fill now)", refused.Message);
+        Assert.Single(book.Orders());
     }
 
     // ======================================================= stale quotes

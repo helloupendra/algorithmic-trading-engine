@@ -17,6 +17,17 @@ public interface IPaperTradingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// What a live order for <paramref name="symbol"/> would fill at right now, by the rules
+    /// <see cref="CreateSignalAsync"/> fills a live strategy's leg by, booking nothing: the far side of the book (the
+    /// ask for a BUY, the bid for a SELL), else the last trade across half the spread; refused on a quote older than
+    /// the paper-fill limit while the contract's market is open, or with no quote at all.
+    /// </summary>
+    Task<LiveFillQuote> QuoteLiveFillAsync(
+        string symbol,
+        string side,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves all raw signals generated during a specific simulation run.
     /// </summary>
     Task<IReadOnlyList<SimulationSignalResponse>> GetSignalsAsync(

@@ -63,9 +63,11 @@ public class CreateSimulationSignalRequest
 
     /// <summary>
     /// Set by a caller inside the API whose leg prices are already decided and
-    /// must be filled as given — the manual ticket's limit, or the bid or ask it
-    /// showed the person. Never read from a request body: a live strategy run's
-    /// legs are always priced from the live quote.
+    /// must be filled as given, the way a replay's bar closes are. Never read
+    /// from a request body: a live strategy run's legs are always priced from
+    /// the live quote. The manual ticket does not set it (2 Nov): its legs are
+    /// priced from the live quote like a strategy's, with a limit as
+    /// <see cref="SimulationSignalLegRequest.LimitPrice"/>.
     /// </summary>
     [JsonIgnore]
     public bool LegPricesAreFinal { get; set; }
@@ -80,4 +82,14 @@ public class SimulationSignalLegRequest
     public string Side { get; set; } = string.Empty;
     public int Quantity { get; set; }
     public decimal? Price { get; set; }
+
+    /// <summary>
+    /// The worst price this leg may fill at: a BUY at or below it, a SELL at or
+    /// above it. A live leg whose fill would be beyond it is left unpriced and
+    /// the signal refused, so a limit fills only when it is marketable. Set by
+    /// the manual ticket inside the API; never read from a request body, so a
+    /// strategy's legs are priced exactly as before.
+    /// </summary>
+    [JsonIgnore]
+    public decimal? LimitPrice { get; set; }
 }

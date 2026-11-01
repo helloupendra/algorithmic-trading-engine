@@ -13,7 +13,10 @@ namespace AlgoTrading.Api.Services;
 /// <param name="UserId">Whose book it goes into.</param>
 /// <param name="UserName">Who placed it, recorded on the order's signal.</param>
 /// <param name="Quantity">Lots for a derivative, shares for equity.</param>
-/// <param name="LimitPrice">Omitted, the order fills at the far side of the book (a buy at the ask, a sell at the bid).</param>
+/// <param name="LimitPrice">
+/// Omitted, the order fills at the far side of the book (a buy at the ask, a sell at the bid). Given, it fills there
+/// only if that is no worse than the limit (a buy at or below it, a sell at or above it), and is refused otherwise.
+/// </param>
 /// <param name="Source">Recorded on the order's signal beside the rest (the AI Trader names its decision); null for the ticket.</param>
 /// <param name="Confirm">
 /// A last check on the price the order would fill at and the quote it came from, made just before it is booked: a
@@ -88,6 +91,12 @@ public sealed record ManualOrderOutcome(ManualOrderFill? Fill, object? Refusal, 
 /// had and one you could not. A price off the instrument's tick grid is refused, and so is a stop or target on the
 /// wrong side of the fill, which would close the position on the guard's very next sweep.
 /// </para>
+/// <para>
+/// Since 2 Nov the price comes from the engine's own live-fill rules (<see cref="IPaperTradingService.QuoteLiveFillAsync"/>),
+/// and the leg is booked live, not as final: a quote older than the paper-fill limit while the market is open is
+/// refused, as it is for a strategy, and a limit fills at the book only when the book has reached it. There are no
+/// resting orders: a limit the book has not reached is refused, never booked at the limit.
+/// </para>
 /// </remarks>
 public sealed class ManualOrderService(
     TradingDbContext db,
@@ -119,19 +128,13 @@ public sealed class ManualOrderService(
             return ManualOrderOutcome.Refused(new { message = expired, expiryDate = contractExpiry }, expired);
         }
 
-        var quote = await db.LiveQuotesLatest
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
-
-        // The fill price, and why it is that price.
-        decimal? price;
-        string priceBasis;
+        // The fill price, and why it is that price. A limit is first a price the
+        // exchange would take: a price off the tick grid is refused, since booking
+        // it here would flatter every fill that followed.
         if (command.LimitPrice is { } limit)
         {
             if (limit <= 0) return ManualOrderOutcome.Refused("limitPrice must be greater than zero.");
 
-            // A price off the tick grid is not a price the exchange would take,
-            // and booking it here would flatter every fill that followed.
             if (instrument.TickSize is { } tick && tick > 0)
             {
                 decimal steps = limit / tick;
@@ -141,30 +144,40 @@ public sealed class ManualOrderService(
                     return ManualOrderOutcome.Refused(new { message = offGrid, tickSize = tick }, offGrid);
                 }
             }
-
-            price = limit;
-            priceBasis = "limit";
-        }
-        else
-        {
-            price = side == "BUY"
-                ? quote?.AskPrice ?? quote?.LastTradedPrice
-                : quote?.BidPrice ?? quote?.LastTradedPrice;
-
-            priceBasis = side == "BUY"
-                ? (quote?.AskPrice is not null ? "ask" : "last trade")
-                : (quote?.BidPrice is not null ? "bid" : "last trade");
         }
 
-        if (price is not > 0)
+        // Priced the way a strategy's live leg is (2 Nov, review F2): the far side
+        // of the book, else the last trade across half the spread, and never on a
+        // quote older than the paper-fill limit while the contract's market is
+        // open. Until then the ticket's price went to the engine as final, so a
+        // market order took a quote of any age (a feed stall's frozen ask) and a
+        // limit was booked AT the limit whatever the book said: a BUY limit of
+        // 0.05 on a 150 option was a position 149.95 in profit the moment it was
+        // marked. The engine prices the leg again as it books it, on the same
+        // rules (and holds it to the limit), so this is the price the order gets.
+        var live = await paperTrading.QuoteLiveFillAsync(symbol, side, cancellationToken);
+        if (live.Price is not { } price)
         {
             // Inventing a price here would defeat the same refusal the strategy
             // path makes for an unpriced opening group.
-            return ManualOrderOutcome.Refused($"No live price for {symbol}. Add it to the watchlist and wait for a tick, or give a limitPrice.");
+            return ManualOrderOutcome.Refused(live.QuoteUtc is null
+                ? $"No live price for {symbol}. Add it to the watchlist and wait for a tick."
+                : $"No live price for {symbol}: {live.Refusal}. Wait for the next tick and try again.");
         }
 
-        if (command.Confirm?.Invoke(new ManualOrderPrice(price.Value, priceBasis, quote?.BidPrice, quote?.AskPrice, quote?.LastTradedPrice,
-                quote?.UpdatedUtc)) is { } refused)
+        // A limit is a cap, not a price: it fills at the book when the book has
+        // reached it, and the ticket keeps no resting orders to wait for it.
+        if (command.LimitPrice is { } cap && PaperFillPricing.BeyondLimit(side, price, live.Rule, cap) is { } beyond)
+        {
+            string notMarketable = $"Not filled: {beyond}. A limit fills only when the book has reached it "
+                                   + "(a buy at the ask, a sell at the bid), and this ticket keeps no resting orders.";
+            return ManualOrderOutcome.Refused(new { message = notMarketable, limitPrice = cap, bid = live.Bid, ask = live.Ask },
+                notMarketable);
+        }
+
+        string priceBasis = Basis(live.Rule);
+
+        if (command.Confirm?.Invoke(new ManualOrderPrice(price, priceBasis, live.Bid, live.Ask, live.Ltp, live.QuoteUtc)) is { } refused)
         {
             return ManualOrderOutcome.Refused(refused);
         }
@@ -183,8 +196,8 @@ public sealed class ManualOrderService(
             if (level is not { } value) continue;
 
             if (value <= 0) return ManualOrderOutcome.Refused($"{name} must be greater than zero.");
-            if (mustBeBelow && value >= price) return ManualOrderOutcome.Refused($"{name} {value} must be BELOW the {price} fill for a {side}.");
-            if (!mustBeBelow && value <= price) return ManualOrderOutcome.Refused($"{name} {value} must be ABOVE the {price} fill for a {side}.");
+            if (mustBeBelow && value >= price) return ManualOrderOutcome.Refused($"{name} {value} must be BELOW the {Money(price)} fill for a {side}.");
+            if (!mustBeBelow && value <= price) return ManualOrderOutcome.Refused($"{name} {value} must be ABOVE the {Money(price)} fill for a {side}.");
         }
 
         var lot = await lotSizeResolver.ResolveAsync(symbol, cancellationToken);
@@ -203,10 +216,12 @@ public sealed class ManualOrderService(
             ["instrumentType"] = instrument.InstrumentType,
             ["lotSize"] = lot.LotSize,
             ["tickSize"] = instrument.TickSize,
-            ["bid"] = quote?.BidPrice,
-            ["ask"] = quote?.AskPrice,
-            ["ltp"] = quote?.LastTradedPrice,
+            ["bid"] = live.Bid,
+            ["ask"] = live.Ask,
+            ["ltp"] = live.Ltp,
+            ["quoteUtc"] = live.QuoteUtc,
         };
+        if (command.LimitPrice is not null) fields["limitPrice"] = command.LimitPrice;
         if (command.Source is not null) fields["source"] = command.Source;
         var metadata = JsonSerializer.Serialize(fields);
 
@@ -222,16 +237,29 @@ public sealed class ManualOrderService(
             MetadataJson = metadata,
             // Quantity is LOTS to the engine, which multiplies by the lot size.
             // For a share the resolver gives 1, so this is the share count.
+            // Priced live by the engine, like a strategy's leg (not as final):
+            // the stale-quote refusal and the spread apply, and a limit rides on
+            // the leg so a book that moved past it since the check above is
+            // refused there rather than filled beyond it.
             Legs = new List<SimulationSignalLegRequest>
             {
-                new() { Symbol = symbol, Side = side, Quantity = command.Quantity, Price = price }
+                new() { Symbol = symbol, Side = side, Quantity = command.Quantity, Price = price, LimitPrice = command.LimitPrice }
             },
-            // The ticket has decided the price — the limit, or the bid or ask
-            // it just showed the person — and the reply quotes it.
-            LegPricesAreFinal = true
         };
 
-        var result = await paperTrading.CreateSignalAsync(signal, cancellationToken);
+        SimulationSignalResponse result;
+        try
+        {
+            result = await paperTrading.CreateSignalAsync(signal, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The engine refused the signal as a whole and booked nothing: most
+            // often the quote went stale, or the book moved past the limit, in
+            // the moment since it was read above.
+            logger.LogWarning("Manual {Side} of {Symbol} by {By} not booked: {Reason}", side, symbol, userName, ex.Message);
+            return ManualOrderOutcome.Refused($"Not filled: {ex.Message}");
+        }
 
         // Written after the fill, because the position does not exist until the
         // signal is booked. The guard reads the levels off the position on its
@@ -282,10 +310,15 @@ public sealed class ManualOrderService(
             .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
             .Select(x => x.Id)
             .ToListAsync(cancellationToken);
-        var orderIds = await db.PaperOrders.AsNoTracking()
+        var orders = await db.PaperOrders.AsNoTracking()
             .Where(x => x.SimulationRunId == book.Id && x.SimulationSignalId == result.Id)
-            .Select(x => x.Id)
+            .Select(x => new { x.Id, x.FillPrice })
             .ToListAsync(cancellationToken);
+        var orderIds = orders.Select(x => x.Id).ToList();
+
+        // What the engine booked, which is what the person is told: the same
+        // quote as the check above, unless it ticked in between.
+        if (orders.FirstOrDefault()?.FillPrice is { } bookedPrice && bookedPrice > 0) price = bookedPrice;
 
         int units = command.Quantity * Math.Max(1, lot.LotSize);
         string unitWord = IsDerivative(instrument.InstrumentType) ? "lot" : "share";
@@ -296,19 +329,33 @@ public sealed class ManualOrderService(
             command.CarryForward ? "carry forward" : "intraday");
 
         string message = $"{side} {command.Quantity} {unitWord}{(command.Quantity == 1 ? "" : "s")} "
-                         + $"({units} qty) of {symbol} at {price} — filled on the {priceBasis}. "
+                         + $"({units} qty) of {symbol} at {Money(price)} — filled on the {priceBasis}"
+                         + (command.LimitPrice is { } within ? $", within your limit {Money(within)}. " : ". ")
                          + (command.CarryForward
                              ? "Carried forward: held overnight until you close it."
                              : $"Intraday: squared off at the {PositionCarryForward.CloseName(symbol, IstTime.DateOf(DateTime.UtcNow), instrument.ExpiryDate)}.");
 
         return new ManualOrderOutcome(new ManualOrderFill(
-            book.Id, groupId, symbol, side, command.Quantity, lot.LotSize, units, price.Value, priceBasis, command.StopLossPrice,
-            command.TargetPrice, command.CarryForward, result.Id, message, unitWord, quote?.BidPrice, quote?.AskPrice, quote?.LastTradedPrice,
-            quote?.UpdatedUtc, positionIds, orderIds), null, null);
+            book.Id, groupId, symbol, side, command.Quantity, lot.LotSize, units, price, priceBasis, command.StopLossPrice,
+            command.TargetPrice, command.CarryForward, result.Id, message, unitWord, live.Bid, live.Ask, live.Ltp,
+            live.QuoteUtc, positionIds, orderIds), null, null);
     }
+
+    /// <summary>How the fill was priced, in the words the reply uses ("filled on the ask").</summary>
+    private static string Basis(string? rule) => rule switch
+    {
+        "ask" => "ask",
+        "bid" => "bid",
+        "ltp-plus-half-spread" => "last trade plus half the spread",
+        "ltp-less-half-spread" => "last trade less half the spread",
+        _ => rule ?? "quote",
+    };
 
     private static string Level(decimal? price) =>
         price is { } value ? value.ToString("0.00", CultureInfo.InvariantCulture) : "none";
+
+    /// <summary>A price as the reply words it: two places, more only when the fill has them (the half-spread).</summary>
+    private static string Money(decimal price) => price.ToString("0.00##", CultureInfo.InvariantCulture);
 
     public static bool IsDerivative(string? instrumentType) =>
         instrumentType is "CE" or "PE" or "FUT";
