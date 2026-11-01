@@ -13,16 +13,18 @@ using Microsoft.AspNetCore.Mvc;
 namespace AlgoTrading.Api.Controllers;
 
 /// <summary>
-/// Mutual funds, Phase 1: AMFI's scheme master as we cleaned it, every
-/// scheme's daily NAV, and what is stored (coverage) before anything is
-/// picked. See docs/modules/mutual_funds_module.md.
+/// Mutual funds: AMFI's scheme master as we cleaned it, every scheme's daily
+/// NAV, and what is stored (coverage) before anything is picked (Phase 1);
+/// the fund report, the comparison and the report's written summary
+/// (Phase 2). See docs/modules/mutual_funds_module.md.
 /// </summary>
 /// <remarks>
 /// The reads are for anyone holding the market-data grant, like the other
-/// market data; admins hold every grant. Running a sync, the history backfill
-/// and the spot check against mfapi.in stay with admins: they spend the
-/// host's time and AMFI's patience. Facts only: nothing here ranks or
-/// recommends a fund.
+/// market data; admins hold every grant. Running a sync, the history backfill,
+/// the report's jobs and the spot check against mfapi.in stay with admins:
+/// they spend the host's time and the sources' patience. Facts only: nothing
+/// here rates or recommends a fund; a category position is a rank by a stated
+/// return.
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
