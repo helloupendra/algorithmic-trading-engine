@@ -45,11 +45,13 @@ def trading_desk(
     ],
 ) -> dict:
     """Ask the owner's trading desk (OpenFNO) about itself: today's P&L by account and run, live strategy runs,
-    open positions, incidents, the data feeds, the AI Trader, strategies and their results. Also the market's
-    latest Indian prices from its feeds, each with the time it was last updated: the indices (NIFTY, BANK NIFTY,
-    SENSEX), India VIX, large caps and MCX commodities (gold, silver, crude oil, natural gas). Use it for "gold
-    ka rate" or "NIFTY kahan hai". The desk answers from its own records. It cannot place, change or close
-    anything from here: anything it proposes still needs the owner's PIN on the desk."""
+    open positions, incidents, the data feeds, the AI Trader, strategies and their results. Also exchange prices
+    from its feeds, each with the time it was last updated: the indices (NIFTY, BANK NIFTY, SENSEX), India VIX,
+    large caps, and MCX futures (gold, silver, crude oil, natural gas), for "NIFTY kahan hai" or "MCX gold".
+    Not the retail rate of gold or silver (24 or 22 carat, per gram or 10 grams, as jewellers quote it): use
+    web search for that, and for anything else outside the desk. The desk answers from its own records. It
+    cannot place, change or close anything from here: anything it proposes still needs the owner's PIN on the
+    desk."""
     if not _token:
         raise ToolError("the trading desk is not connected: set OPENFNO_PHONE_TOKEN in this instance's .env")
     try:
