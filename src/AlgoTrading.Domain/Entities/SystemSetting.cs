@@ -130,6 +130,19 @@ public static class SystemSettingKeys
     public const string VixGapsReported = "archive.vix.reportedGaps";
 
     /// <summary>
+    /// The last AMFI NAV sync, as JSON: when, why, whether it worked, the NAV day
+    /// it reached and what it wrote. Kept here rather than in memory so a
+    /// restart neither forgets a failure nor runs a sync that already ran.
+    /// </summary>
+    public const string MutualFundsLastSync = "mutualfunds.sync.last";
+
+    /// <summary>
+    /// The AMFI NAV history backfill, as JSON: asked for or not, the oldest
+    /// 90-day window finished (it resumes below that), totals and the last error.
+    /// </summary>
+    public const string MutualFundsBackfill = "mutualfunds.backfill";
+
+    /// <summary>
     /// "marketintel.nofile.&lt;dataset&gt;": the days a market-intelligence
     /// backfill found no file for, once they were old enough that none will
     /// come (holidays the exchange calendar does not hold), as comma-separated

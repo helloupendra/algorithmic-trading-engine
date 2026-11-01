@@ -170,6 +170,18 @@ public static class DependencyInjection
             AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder.Configure);
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.RegulatoryCircularsRecorder>();
 
+        // Mutual funds: AMFI's daily NAV file and its NAV history
+        // (docs/modules/mutual_funds_module.md). Public files, no broker.
+        services.Configure<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions>(
+            configuration.GetSection(AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.SectionName));
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.HttpClientName,
+                AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.Configure)
+            .ConfigurePrimaryHttpMessageHandler(AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.CreateHandler);
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundStatus>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundStore>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundNavSync>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundHistory>();
+
 
         services.AddScoped<ISimulationService, SimulationService>();
 

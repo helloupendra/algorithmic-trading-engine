@@ -356,6 +356,10 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService
 builder.Services.AddHostedService<AlgoTrading.Api.Services.CarriedPositionsService>();
 // NSE's evening market-factor files (participant OI, F&O bhavcopy, FII/DII), fetched after 18:00 IST.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncService>();
+// Mutual funds (docs/modules/mutual_funds_module.md): AMFI's daily NAV file at 23:30 IST
+// (07:00 retry), and the NAV history backfill, which runs only once an admin asks for it.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MutualFundNavSyncService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MutualFundBackfillService>();
 // The Analysis module's forecasts: `python -m analysis issue` at 08:50 IST and
 // `score` at 15:50 IST on NSE trading days, plus a catch-up score after start-up.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ForecastJobRunner>();
