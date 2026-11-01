@@ -46,8 +46,11 @@ namespace AlgoTrading.Api.Controllers;
     /// <summary>
     /// The broker's hosted-login URL for the web console. The frontend sends the
     /// browser here; the broker redirects back to our callback, which saves the
-    /// token and returns the browser to the console.
+    /// token and returns the browser to the console. Admin only, like the
+    /// session it leads to; the console's Connectors page uses
+    /// <c>api/Providers/{key}/auth-url</c>.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpGet("url")]
     public async Task<IActionResult> GetAuthUrl(CancellationToken cancellationToken)
     {
@@ -229,7 +232,9 @@ namespace AlgoTrading.Api.Controllers;
     /// Sends the caller's browser straight to the broker's hosted login. The
     /// previous implementation asked the vendor SDK to open a browser on the
     /// <em>server</em>, which does nothing for an operator sitting at the console.
+    /// Admin only, like <c>url</c>.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpGet("start")]
     public async Task<IActionResult> Start(CancellationToken cancellationToken)
     {
@@ -416,6 +421,13 @@ namespace AlgoTrading.Api.Controllers;
     /// </remarks>
     public static bool MayReadBrokerTokens(ClaimsPrincipal user) => user.IsInRole(UserRoles.Service);
 
+    /// <summary>
+    /// Signs the desk out of its platform broker (FYERS). Admin only: until
+    /// 2 Nov any signed-in account could post it, and the desk then had no
+    /// FYERS until the owner's next 2FA sign-in. A user signing themselves out
+    /// of the console calls <c>api/UserAuth/logout</c>, not this.
+    /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {
