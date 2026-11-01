@@ -20,9 +20,12 @@ public static class AiTraderAccount
     /// <summary>The owner's capital for it (1 Oct 2026); <see cref="AiTraderRules.Capital"/> is what enforces it.</summary>
     public const decimal Capital = 500_000m;
 
-    /// <summary>Its account, or null before its first use.</summary>
+    /// <summary>
+    /// Its account, or null before its first use. The exact name: matched in any case, a person's account named
+    /// "AI-Trader" could be read, granted and traded as the AI Trader's.
+    /// </summary>
     public static Task<AppUser?> FindAsync(TradingDbContext db, CancellationToken cancellationToken) =>
-        db.AppUsers.FirstOrDefaultAsync(u => u.UserName.ToLower() == UserName, cancellationToken);
+        db.AppUsers.FirstOrDefaultAsync(u => u.UserName == UserName, cancellationToken);
 
     /// <summary>Who its own grants are recorded as given by: the desk, not a person.</summary>
     public const string GrantedBy = "system (AI Trader account)";

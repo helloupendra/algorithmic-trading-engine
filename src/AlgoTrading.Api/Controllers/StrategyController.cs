@@ -526,12 +526,22 @@ public class StrategyController : ControllerBase
         => run.StrategyName == ManualOrdersController.BookStrategyName
            && StrategyRunControl.IsOpenStatus(run.Status);
 
+    /// <summary>
+    /// Whether the caller may stop, square off, re-rule or carry a run: an
+    /// admin, the account it runs in, or the user who started it.
+    /// </summary>
+    /// <remarks>
+    /// The starter is matched by the exact name. Until 2 Nov it was matched in
+    /// any case while names were unique only case-sensitively, so an invitee who
+    /// accepted as "ADMIN" could stop, flatten and re-rule every run the morning
+    /// job (signed in as "admin") started, in every account.
+    /// </remarks>
     private bool CanStop(string? startedBy, long ownerUserId)
     {
         if (User.IsAdmin()) return true;
 
         var userName = User.GetUserName();
-        if (!string.IsNullOrWhiteSpace(userName) && string.Equals(startedBy, userName, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(userName) && string.Equals(startedBy, userName, StringComparison.Ordinal))
             return true;
 
         return User.GetUserId() == ownerUserId;

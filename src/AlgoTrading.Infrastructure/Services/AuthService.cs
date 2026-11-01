@@ -39,7 +39,12 @@ public class AuthService : IAuthService
         string userName = request.UserName.Trim();
         string email = request.Email.Trim().ToLowerInvariant();
 
-        bool userNameExists = await _dbContext.AppUsers.AnyAsync(x => x.UserName == userName, cancellationToken);
+        // Taken in any case. The unique index on the column is case-sensitive, and
+        // until 2 Nov an invitee could accept as "ADMIN" beside "admin"; people,
+        // scripts and the morning job read names in any case, so two accounts
+        // that differ only in case are never created. Sign-in stays exact.
+        string folded = userName.ToLowerInvariant();
+        bool userNameExists = await _dbContext.AppUsers.AnyAsync(x => x.UserName.ToLower() == folded, cancellationToken);
         if (userNameExists)
             throw new InvalidOperationException("Username is already taken.");
 
@@ -263,8 +268,10 @@ public class AuthService : IAuthService
 
     public async Task<bool> DeleteUserByUsernameAsync(string username, CancellationToken cancellationToken = default)
     {
+        // The exact name only: matched in any case, with no order, deleting
+        // "ADMIN" could delete "admin".
         var user = await _dbContext.AppUsers
-            .FirstOrDefaultAsync(x => x.UserName.ToLower() == username.ToLower(), cancellationToken);
+            .FirstOrDefaultAsync(x => x.UserName == username, cancellationToken);
 
         if (user is null)
             return false;

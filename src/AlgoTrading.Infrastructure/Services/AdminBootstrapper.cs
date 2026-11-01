@@ -70,9 +70,17 @@ public class AdminBootstrapper
 
         // An account may already exist under this name with a non-admin role or no
         // password (for example one created by the users.json seed). Promote it
-        // rather than failing on the unique-username index.
-        var existing = await _dbContext.AppUsers
-            .FirstOrDefaultAsync(x => x.UserName.ToLower() == userName.ToLower(), cancellationToken);
+        // rather than failing on the unique-username index — the exact name only.
+        var (existing, otherCase) = await FindByExactNameAsync(userName, cancellationToken);
+
+        if (existing is null && otherCase is not null)
+        {
+            _logger.LogError(
+                "No active admin exists, and the configured admin name '{UserName}' matches only the account " +
+                "'{OtherCase}', which differs in case. It was not promoted. Set ADMIN_USERNAME to the exact " +
+                "name of the account to make admin, then restart.", userName, otherCase);
+            return;
+        }
 
         if (existing is not null)
         {
@@ -140,8 +148,18 @@ public class AdminBootstrapper
     private async Task SyncConfiguredAdminPasswordAsync(
         string userName, string password, CancellationToken cancellationToken)
     {
-        var account = await _dbContext.AppUsers
-            .FirstOrDefaultAsync(x => x.UserName.ToLower() == userName.ToLower(), cancellationToken);
+        var (account, otherCase) = await FindByExactNameAsync(userName, cancellationToken);
+
+        if (account is null && otherCase is not null)
+        {
+            // Neither promoted nor shadowed by a second account: a new row could
+            // also collide with the other one's email and stop the API starting.
+            _logger.LogWarning(
+                "ADMIN_USERNAME '{UserName}' matches no account exactly; '{OtherCase}' differs only in case and " +
+                "was left as it is (not promoted, password not reset). Set ADMIN_USERNAME to the exact name.",
+                userName, otherCase);
+            return;
+        }
 
         if (account is null)
         {
@@ -214,8 +232,16 @@ public class AdminBootstrapper
             return;
         }
 
-        var existing = await _dbContext.AppUsers
-            .FirstOrDefaultAsync(x => x.UserName.ToLower() == userName.ToLower(), cancellationToken);
+        var (existing, otherCase) = await FindByExactNameAsync(userName, cancellationToken);
+
+        if (existing is null && otherCase is not null)
+        {
+            _logger.LogWarning(
+                "ENGINE_SERVICE_USERNAME '{UserName}' matches no account exactly; '{OtherCase}' differs only in " +
+                "case and was left as it is (no Service account created, no password reset). Set " +
+                "ENGINE_SERVICE_USERNAME to the exact name.", userName, otherCase);
+            return;
+        }
 
         if (existing is null)
         {
@@ -249,6 +275,34 @@ public class AdminBootstrapper
             await _dbContext.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Updated engine service account '{UserName}' password from configuration.", userName);
         }
+    }
+
+    /// <summary>
+    /// The account named exactly <paramref name="userName"/>, never one that
+    /// differs only in case; when there is none, <c>OtherCase</c> names such an
+    /// account (the oldest), so the caller can say so rather than act on it.
+    /// </summary>
+    /// <remarks>
+    /// Until 2 Nov these lookups matched in any case, with no order, and the
+    /// admin sync runs on every start: an invitee who accepted as "ADMIN"
+    /// beside "admin" could be the row it found, and be made Admin. Sign-in
+    /// matches names exactly, so a desk whose scripts and engine sign in with
+    /// these configured names already has them exact.
+    /// </remarks>
+    private async Task<(AppUser? Account, string? OtherCase)> FindByExactNameAsync(
+        string userName, CancellationToken cancellationToken)
+    {
+        var account = await _dbContext.AppUsers
+            .FirstOrDefaultAsync(x => x.UserName == userName, cancellationToken);
+        if (account is not null) return (account, null);
+
+        string folded = userName.ToLowerInvariant();
+        string? otherCase = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.UserName.ToLower() == folded)
+            .OrderBy(x => x.Id)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+        return (null, otherCase);
     }
 
     /// <summary>
