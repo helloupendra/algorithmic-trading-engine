@@ -50,6 +50,8 @@ import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
 import { MutualFundsPage } from './pages/data/MutualFundsPage'
+import { MutualFundReportPage } from './pages/data/MutualFundReportPage'
+import { MutualFundComparePage } from './pages/data/MutualFundComparePage'
 import { ReplayPage } from './pages/data/ReplayPage'
 import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
@@ -211,6 +213,9 @@ export default function App() {
                   <Route path="/data/instruments" element={<InstrumentsFnoPage />} />
                   {/* AMFI's schemes and NAVs: coverage first (docs/modules/mutual_funds_module.md). */}
                   <Route path="/data/mutual-funds" element={<MutualFundsPage />} />
+                  {/* A fund report and a comparison of 2 to 4; compare comes first so it is never read as a scheme code. */}
+                  <Route path="/data/mutual-funds/compare" element={<MutualFundComparePage />} />
+                  <Route path="/data/mutual-funds/:code" element={<MutualFundReportPage />} />
                   {/* A recorded day played back through the runners, as recap runs. */}
                   <Route path="/data/replay" element={<ReplayPage />} />
 

@@ -80,3 +80,85 @@
     overflow: hidden;
   }
 }
+
+/* --- Mutual funds: the scheme search, the fund report and compare --------- */
+
+.data-page .mf-search { width: 100%; margin-bottom: 10px; }
+.data-page .mf-flush { margin: 0; }
+.data-page .mf-gap { margin-top: 14px; }
+.data-page .mf-crumb { margin: 0 0 4px; font-size: 12px; color: var(--text-3); }
+.data-page .mf-crumb a { color: inherit; }
+
+/* Text that wraps inside a table that otherwise keeps every cell on one line
+   (a scheme name, a job's message); the minimum keeps it from becoming a
+   one-word-per-line column on a phone, where the table scrolls instead. */
+.data-page .mf-wrap { white-space: normal; }
+.data-page .table .mf-wrap { min-width: 200px; }
+
+/* Ticked schemes waiting for Compare: a long name is cut, the full name is its title. */
+.data-page .mf-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.data-page .mf-picked__name {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* Reasons under a table, notes, the worked examples in words. */
+.data-page .mf-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  max-width: 110ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.data-page .mf-sentences { margin-top: 12px; gap: 6px; }
+
+.data-page .mf-lead { margin: 0; font-size: 13px; }
+/* The API's own sentence, shown as it is written. */
+.data-page .mf-verbatim { margin: 6px 0 0; max-width: 104ch; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+
+.data-page .mf-summary { padding: 2px 0 2px 14px; border-left: 2px solid var(--brand-line); }
+.data-page .mf-summary__text { margin: 0; max-width: 104ch; font-size: 13px; line-height: 1.65; white-space: pre-line; }
+.data-page .mf-summary__meta { margin: 6px 0 0; font-size: 11.5px; color: var(--text-3); }
+
+.data-page .mf-disclaimer {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Compare: the common as-of day first, then one column per scheme. Every
+   cell wraps (a reason under a "—" can be a sentence); the table scrolls
+   sideways inside its wrapper on a phone, the row headings stay put. */
+.data-page .mf-asof { margin: 0; font-size: 13px; font-weight: 600; }
+.data-page .mf-compare th,
+.data-page .mf-compare td { white-space: normal; vertical-align: top; }
+.data-page .mf-compare td,
+.data-page .mf-compare thead th + th { min-width: 160px; max-width: 280px; }
+.data-page .mf-compare thead th + th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.data-page .mf-compare tbody th { min-width: 110px; max-width: 170px; }
+.data-page .mf-compare .mf-compare__section th,
+.data-page .mf-compare .mf-compare__section td { background: var(--surface2); color: var(--text-2); }
