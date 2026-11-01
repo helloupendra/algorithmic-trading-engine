@@ -33,6 +33,19 @@ import { formatAge, formatDateTime, formatNumber, formatPrice } from '../../lib/
 import { ticketCarryHint } from '../../lib/carry'
 import { useManualBook, useManualInstrument, usePlaceManualOrder, useStrategyLive } from '../../lib/queries'
 import type { ManualInstrument } from '../../lib/queries'
+import {
+  blankTicket,
+  checkTicket,
+  confirmText,
+  limitHint,
+  sameSymbol,
+  sideEnabled,
+  sideLabel,
+  ticketFormFor,
+  ticketInstrument,
+  ticketLive,
+} from '../../lib/ticket'
+import type { TicketForm } from '../../lib/ticket'
 import './ticket.css'
 
 /** One side of the book, with the size resting there. */
@@ -123,13 +136,17 @@ function InstrumentRules({ instrument }: { instrument: ManualInstrument }) {
 
 export function ManualOrderPage() {
   const [symbol, setSymbol] = useState('')
-  const [quantity, setQuantity] = useState('1')
-  const [limitPrice, setLimitPrice] = useState('')
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
-  const [stopLoss, setStopLoss] = useState('')
-  const [target, setTarget] = useState('')
-  // Off by default: a hand-placed order is intraday unless the owner says otherwise.
-  const [carryForward, setCarryForward] = useState(false)
+  // What is typed belongs to one instrument and is cleared when the box names
+  // another (lib/ticket.ts): 50 shares of SBIN must never become 50 lots of a
+  // NIFTY option, nor a limit or stop typed for one contract be sent for the
+  // next. Intraday (carry unticked) unless the owner says otherwise.
+  const [storedForm, setForm] = useState<TicketForm>(() => blankTicket(''))
+  const form = ticketFormFor(storedForm, symbol)
+  const edit = (patch: Partial<TicketForm>) => setForm((prev) => ({ ...ticketFormFor(prev, symbol), ...patch }))
+  const changeSymbol = (next: string) => {
+    if (!sameSymbol(next, symbol)) setForm(blankTicket(next))
+    setSymbol(next)
+  }
 
   const instrumentQuery = useManualInstrument(symbol)
   const book = useManualBook()
@@ -142,47 +159,35 @@ export function ManualOrderPage() {
   const bookLive = useStrategyLive(bookRunId ?? 0, bookRunId != null)
   const place = usePlaceManualOrder()
 
-  const instrument = instrumentQuery.data
-  const qty = Number.parseInt(quantity, 10)
-  // Only a Limit ticket sends a price. A number left behind in the box after
-  // switching back to Market must not quietly become the order's price.
-  const limit = orderType === 'limit' && limitPrice.trim() !== '' ? Number(limitPrice) : null
-  const limitMissing = orderType === 'limit' && limitPrice.trim() === ''
-
-  const qtyValid = Number.isFinite(qty) && qty >= 1
-  const limitValid = limit == null || (Number.isFinite(limit) && limit > 0)
-
-  // The tick rule is enforced by the API too; checking here turns a rejected
-  // round-trip into a message under the field the operator is still typing in.
-  const offTick =
-    limit != null && instrument?.tickSize
-      ? Math.abs(limit / instrument.tickSize - Math.round(limit / instrument.tickSize)) > 0.0001
-      : false
-
-  const canPlace =
-    !!instrument && !instrument.expired && qtyValid && limitValid && !offTick && !limitMissing && !place.isPending
+  // Only the answer for what is in the box now: never the previous symbol's,
+  // held over while the next one loads or after the box is cleared. Buy and
+  // Sell wait for this instrument's own answer (not a cached one from an
+  // earlier visit) and stop when its poll fails.
+  const instrument = ticketInstrument(instrumentQuery, symbol)
+  const live = ticketLive(instrumentQuery, symbol)
+  const check = checkTicket(form, instrument, live)
+  const { qty, qtyValid, limit, limitMissing, offTick } = check
+  const canBuy = !place.isPending && sideEnabled(check, instrument, 'BUY')
+  const canSell = !place.isPending && sideEnabled(check, instrument, 'SELL')
 
   function submit(side: 'BUY' | 'SELL') {
-    if (!instrument || !canPlace) return
-    const price = side === 'BUY' ? instrument.buyAt : instrument.sellAt
-    const what = `${side} ${qty} ${instrument.quantityUnit === 'lots' ? (qty === 1 ? 'lot' : 'lots') : qty === 1 ? 'share' : 'shares'}`
-    const at = limit != null ? `at your limit ${limit}` : `at the ${side === 'BUY' ? 'ask' : 'bid'} ${price ?? '—'}`
-    const product = carryForward ? 'carry forward (held overnight)' : 'intraday'
-    if (!window.confirm(`${what} of ${instrument.symbol} ${at}, ${product}?`)) return
+    if (!instrument || !(side === 'BUY' ? canBuy : canSell)) return
+    if (!window.confirm(confirmText(side, check, instrument, form.carryForward))) return
 
     place.mutate({
       symbol: instrument.symbol,
       side,
       quantity: qty,
       limitPrice: limit,
-      stopLossPrice: stopLoss.trim() === '' ? null : Number(stopLoss),
-      targetPrice: target.trim() === '' ? null : Number(target),
-      carryForward,
+      stopLossPrice: form.stopLoss.trim() === '' ? null : Number(form.stopLoss),
+      targetPrice: form.target.trim() === '' ? null : Number(form.target),
+      carryForward: form.carryForward,
     })
   }
 
   const unitWord = instrument?.quantityUnit ?? 'lots'
   const units = instrument && qtyValid ? qty * instrument.lotSize : null
+  const hint = limitHint(limit, instrument)
 
   return (
     <div className="page ticket-page">
@@ -208,7 +213,7 @@ export function ManualOrderPage() {
           <SymbolCombobox
             id="manual-symbol"
             value={symbol}
-            onChange={setSymbol}
+            onChange={changeSymbol}
             placeholder="SBIN, CRUDEOIL, NIFTY 25000 CE…"
           />
           <p className="field__help">
@@ -251,10 +256,13 @@ export function ManualOrderPage() {
             ) : (
               !instrument.tradable && (
                 <p className="muted" style={{ marginTop: 10 }}>
-                  {instrument.subscribing
-                    ? 'Just added to the live feed — the first tick usually lands within a few seconds. '
-                    : 'No live price yet. '}
-                  The market may also be closed for this segment. You can still place a Limit order.
+                  {instrument.untradableReason
+                    ? `Not tradable now: ${instrument.untradableReason}. Orders open again with the next fresh tick.`
+                    : `${
+                        instrument.subscribing
+                          ? 'Just added to the live feed — the first tick usually lands within a few seconds. '
+                          : 'No live price yet. '
+                      }The market may also be closed for this segment. A limit order needs a live price too.`}
                 </p>
               )
             )}
@@ -270,8 +278,8 @@ export function ManualOrderPage() {
                   type="number"
                   min={1}
                   step={1}
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
+                  value={form.quantity}
+                  onChange={(e) => edit({ quantity: e.target.value })}
                 />
                 <p className="field__help">
                   {units == null
@@ -291,23 +299,23 @@ export function ManualOrderPage() {
                 <div className="seg" role="group" aria-label="Order type">
                   <button
                     type="button"
-                    className={`seg__btn ${orderType === 'market' ? 'is-active' : ''}`}
-                    aria-pressed={orderType === 'market'}
-                    onClick={() => setOrderType('market')}
+                    className={`seg__btn ${form.orderType === 'market' ? 'is-active' : ''}`}
+                    aria-pressed={form.orderType === 'market'}
+                    onClick={() => edit({ orderType: 'market' })}
                   >
                     Market
                   </button>
                   <button
                     type="button"
-                    className={`seg__btn ${orderType === 'limit' ? 'is-active' : ''}`}
-                    aria-pressed={orderType === 'limit'}
-                    onClick={() => setOrderType('limit')}
+                    className={`seg__btn ${form.orderType === 'limit' ? 'is-active' : ''}`}
+                    aria-pressed={form.orderType === 'limit'}
+                    onClick={() => edit({ orderType: 'limit' })}
                   >
                     Limit
                   </button>
                 </div>
 
-                {orderType === 'limit' ? (
+                {form.orderType === 'limit' ? (
                   <>
                     <input
                       id="manual-limit"
@@ -315,22 +323,21 @@ export function ManualOrderPage() {
                       style={{ marginTop: 8 }}
                       type="number"
                       step={instrument.tickSize ?? 0.05}
-                      value={limitPrice}
-                      onChange={(e) => setLimitPrice(e.target.value)}
+                      value={form.limitPrice}
+                      onChange={(e) => edit({ limitPrice: e.target.value })}
                       placeholder={String(instrument.buyAt ?? instrument.ltp ?? '')}
                     />
-                    <p className={`field__help ${offTick || limitMissing ? 'neg' : ''}`}>
+                    <p className={`field__help ${offTick || limitMissing || hint.warn ? 'neg' : ''}`}>
                       {limitMissing
                         ? 'Enter a limit price, or switch to Market.'
                         : offTick
                           ? `Not a multiple of the ${instrument.tickSize} tick.`
-                          : `Must be a multiple of ${instrument.tickSize ?? '—'}.`}
+                          : `Must be a multiple of ${instrument.tickSize ?? '—'}. ${hint.text}`}
                     </p>
                   </>
                 ) : (
                   <p className="field__help">
-                    Takes the book: buys at the ask {instrument.ask ?? '—'}, sells at the bid{' '}
-                    {instrument.bid ?? '—'}.
+                    Takes the book: a buy fills at {instrument.buyAt ?? '—'}, a sell at {instrument.sellAt ?? '—'}.
                   </p>
                 )}
               </div>
@@ -346,8 +353,8 @@ export function ManualOrderPage() {
                   className="field__input"
                   type="number"
                   step={instrument.tickSize ?? 0.05}
-                  value={stopLoss}
-                  onChange={(e) => setStopLoss(e.target.value)}
+                  value={form.stopLoss}
+                  onChange={(e) => edit({ stopLoss: e.target.value })}
                   placeholder="this position only"
                 />
                 <p className="field__help">Below the fill for a buy, above it for a sell.</p>
@@ -362,8 +369,8 @@ export function ManualOrderPage() {
                   className="field__input"
                   type="number"
                   step={instrument.tickSize ?? 0.05}
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  value={form.target}
+                  onChange={(e) => edit({ target: e.target.value })}
                   placeholder="this position only"
                 />
                 <p className="field__help">Above the fill for a buy, below it for a sell.</p>
@@ -374,12 +381,12 @@ export function ManualOrderPage() {
               <input
                 id="manual-carry"
                 type="checkbox"
-                checked={carryForward}
-                onChange={(e) => setCarryForward(e.target.checked)}
+                checked={form.carryForward}
+                onChange={(e) => edit({ carryForward: e.target.checked })}
               />
               <span>
                 <span className="manual-carry__label">Carry forward (hold overnight)</span>
-                <span className="field__help">{ticketCarryHint(carryForward, instrument.symbol)}</span>
+                <span className="field__help">{ticketCarryHint(form.carryForward, instrument.symbol)}</span>
               </span>
             </label>
 
@@ -387,18 +394,18 @@ export function ManualOrderPage() {
               <button
                 type="button"
                 className="btn btn--pos"
-                disabled={!canPlace || (limit == null && instrument.buyAt == null)}
+                disabled={!canBuy}
                 onClick={() => submit('BUY')}
               >
-                {place.isPending ? 'Placing…' : `Buy at ${limit ?? instrument.buyAt ?? '—'}`}
+                {place.isPending ? 'Placing…' : sideLabel('BUY', limit, instrument)}
               </button>
               <button
                 type="button"
                 className="btn btn--danger"
-                disabled={!canPlace || (limit == null && instrument.sellAt == null)}
+                disabled={!canSell}
                 onClick={() => submit('SELL')}
               >
-                {place.isPending ? 'Placing…' : `Sell at ${limit ?? instrument.sellAt ?? '—'}`}
+                {place.isPending ? 'Placing…' : sideLabel('SELL', limit, instrument)}
               </button>
             </div>
 

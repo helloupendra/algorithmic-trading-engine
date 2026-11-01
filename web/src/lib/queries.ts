@@ -38,6 +38,7 @@ import type { ListAsOf, RunLegs } from './liveMarks'
 import { polledDown } from './queryState'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
+import { manualInstrumentQuery } from './ticket'
 import {
   REPLAY_LOG_LINES,
   REPLAY_POLL_ACTIVE_MS,
@@ -494,10 +495,16 @@ export interface ManualInstrument {
   subscribing: boolean
   /** The calendar has retired this contract; it will never quote again. */
   expired: boolean
-  /** What a market order would pay right now. */
+  /**
+   * What a market order would fill at right now, by the rules the order is
+   * booked by; null when it would be refused (no quote, or one too old while
+   * the market is open).
+   */
   buyAt: number | null
   sellAt: number | null
   tradable: boolean
+  /** Why a quote that exists gives no price, e.g. "its latest quote is 300 s old; …"; absent on an older API. */
+  untradableReason?: string | null
 }
 
 export interface ManualOrderResponse {
@@ -519,23 +526,11 @@ export interface ManualOrderResponse {
 /**
  * The ticket's live half. Polled fast: the operator is reading a bid and an ask
  * they are about to hit, and a price a few seconds stale is the one thing this
- * screen must not show.
+ * screen must not show. No placeholder across symbols (lib/ticket.ts): one
+ * instrument's answer is never shown, or ordered, under another's name.
  */
 export function useManualInstrument(symbol: string) {
-  const trimmed = symbol.trim()
-  return useQuery({
-    queryKey: ['manual', 'instrument', trimmed],
-    queryFn: () => api.get<ManualInstrument>(`/api/ManualOrders/instrument?symbol=${encodeURIComponent(trimmed)}`),
-    // Only once the box holds something shaped like a broker symbol. Firing on
-    // every keystroke asked the API about "M", "MC", "MCX:C"... and each 404
-    // painted "not in the instrument master" under a field still being typed in.
-    enabled: /^[A-Za-z]+:.{3,}$/.test(trimmed),
-    refetchInterval: 2_000,
-    // Keep the last good reading on screen while the next one is in flight,
-    // so the prices do not blink out between polls.
-    placeholderData: (previous) => previous,
-    retry: false,
-  })
+  return useQuery(manualInstrumentQuery(symbol))
 }
 
 /** The caller's manual book, or null before their first order. */
