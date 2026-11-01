@@ -2497,6 +2497,20 @@ export function useSyncMarketFactors() {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Mutual funds: AMFI's scheme master and NAVs, coverage first.
+// ---------------------------------------------------------------------------
+
+/** What is stored: schemes by plan, option, category and AMC, the NAV range, the last sync and the backfill. */
+export function useMutualFundCoverage() {
+  return useQuery({
+    queryKey: ['mutualFunds', 'coverage'],
+    queryFn: () => api.get<import('./mutualFunds').MutualFundCoverage>('/api/MutualFunds/coverage'),
+    // The NAVs change once a night; a running backfill moves every minute or two.
+    refetchInterval: 60_000,
+  })
+}
+
 // ---------- Sentinel incidents (admin) ----------
 
 import { historyQuery, incidentsQuery, readIncidentHistory, readIncidentList } from './incidents'

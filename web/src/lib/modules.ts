@@ -447,7 +447,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     key: 'data',
     label: 'Data',
     home: '/data',
-    description: 'What the desk records and holds: coverage, live feeds, history and instruments.',
+    description: 'What the desk records and holds: coverage, live feeds, history, instruments and mutual fund NAVs.',
     icon: IconDatabase,
     tabs: [
       {
@@ -478,6 +478,16 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/data/instruments',
         requires: 'admin',
         pages: [{ label: 'Instruments', to: '/data/instruments', keywords: ['masters', 'symbols', 'lot size'] }],
+      },
+      {
+        // AMFI's scheme master and daily NAVs (1 Nov 2026, Phase 1): coverage only for now.
+        key: 'mutual-funds',
+        label: 'Mutual funds',
+        home: '/data/mutual-funds',
+        requires: 'admin',
+        pages: [
+          { label: 'Mutual funds', to: '/data/mutual-funds', keywords: ['mf', 'nav', 'amfi', 'schemes', 'sip', 'fund'] },
+        ],
       },
       {
         // Play a recorded day back through the strategy runners (1 Oct): the
