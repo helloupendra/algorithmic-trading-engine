@@ -1,8 +1,26 @@
 import os
+import re
 import requests
 import threading
 import queue
 from typing import Optional
+
+# A bot token in the Bot API's shape (sentinel/notify.py uses the same one).
+_BOT_TOKEN_SHAPE = re.compile(r"(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}")
+
+
+def redact_bot_token(text: object, token: Optional[str] = None) -> str:
+    """
+    The text with any Telegram bot token in it replaced by '…'. The token is
+    part of the Bot API's URL, and a requests error quotes that URL ("… for
+    url: https://api.telegram.org/bot<token>/sendMessage"), so an error is
+    passed through this before it is printed or logged.
+    """
+    out = str(text)
+    if token:
+        out = out.replace(token, "…")
+    return _BOT_TOKEN_SHAPE.sub("…", out)
+
 
 class TelegramAlerter:
     """
@@ -70,7 +88,7 @@ class TelegramAlerter:
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
         except Exception as e:
-            print(f"Failed to send Telegram alert: {e}")
+            print(f"Failed to send Telegram alert: {redact_bot_token(e, self.bot_token)}")
 
     def send_alert_async(self, message: str):
         """

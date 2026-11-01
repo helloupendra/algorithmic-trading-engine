@@ -603,5 +603,84 @@ class PayloadShapeTests(unittest.TestCase):
         self.assertIn("13:03:55 IST", tn.ist("2026-09-07T07:33:55.410588Z"))
 
 
+# A made-up token in the Bot API's shape, built so that no line here is
+# secret-shaped (the repository's secret scan, test_repo_secrets.py).
+FAKE_TOKEN = "8123456789:" + "AAHdqTcvCH1vGWJx" * 2 + "fSeo"
+BOT_URL = f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
+
+
+class BotTokenRedactionTests(unittest.TestCase):
+    """
+    The Bot API takes its token in the URL, and a requests exception quotes the
+    URL. Logged as it was, the token reached the notifier's log (2 Nov review).
+    """
+
+    def _telegram(self, session):
+        config = tn.Config({"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-100111"})
+        telegram = tn.Telegram(config)
+        telegram._session = session  # noqa: SLF001 - the one seam the class has
+        return telegram
+
+    def test_the_helper_hides_a_token_in_a_url_and_the_configured_one_anywhere(self):
+        text = f"Max retries exceeded with url: /bot{FAKE_TOKEN}/sendMessage"
+        self.assertEqual(tn.redact_bot_token(text), "Max retries exceeded with url: /bot…/sendMessage")
+        self.assertEqual(tn.redact_bot_token("token 123:abc here", "123:abc"), "token … here")
+        self.assertEqual(tn.redact_bot_token("nothing secret at 09:15"), "nothing secret at 09:15")
+
+    def test_a_failed_send_logs_the_error_without_the_token(self):
+        import requests
+        from unittest import mock
+
+        class Unreachable:
+            def post(self, url, **_):
+                raise requests.ConnectionError(f"HTTPSConnectionPool(host='api.telegram.org', port=443): "
+                                               f"Max retries exceeded with url: {url}")
+
+        with mock.patch.object(tn.time, "sleep"), self.assertLogs("notifier", "WARNING") as logs:
+            self.assertFalse(self._telegram(Unreachable()).send("hello"))
+        text = "\n".join(logs.output)
+        self.assertIn("Telegram send failed (attempt 1)", text)
+        self.assertIn("Max retries exceeded with url: https://api.telegram.org/bot…/sendMessage", text)
+        self.assertNotIn(FAKE_TOKEN, text)
+
+    def test_a_refusal_that_echoes_the_url_is_logged_without_the_token(self):
+        class Refused:
+            ok, status_code, text = False, 400, f"Bad Request for url: {BOT_URL}"
+
+        class Session:
+            def post(self, url, **_):
+                return Refused()
+
+        with self.assertLogs("notifier", "WARNING") as logs:
+            self.assertFalse(self._telegram(Session()).send("hello"))
+        self.assertNotIn(FAKE_TOKEN, "\n".join(logs.output))
+
+    def test_the_log_filter_cleans_any_record_and_its_traceback(self):
+        """urllib3's own request lines (--verbose) and a logged exception carry the URL too."""
+        import io
+        import logging
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(tn.RedactBotToken(FAKE_TOKEN))
+        logger = logging.getLogger("test.redact")
+        logger.addHandler(handler)
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        try:
+            logger.debug('%s://%s:%s "%s %s %s" %s %s', "https", "api.telegram.org", 443, "POST",
+                         f"/bot{FAKE_TOKEN}/sendMessage", "HTTP/1.1", 200, 120)
+            try:
+                raise RuntimeError(f"failed for url: {BOT_URL}")
+            except RuntimeError:
+                logger.exception("send failed")
+        finally:
+            logger.removeHandler(handler)
+        text = stream.getvalue()
+        self.assertIn('"POST /bot…/sendMessage HTTP/1.1" 200', text)
+        self.assertIn("RuntimeError: failed for url: https://api.telegram.org/bot…/sendMessage", text)
+        self.assertNotIn(FAKE_TOKEN, text)
+
+
 if __name__ == "__main__":
     unittest.main()

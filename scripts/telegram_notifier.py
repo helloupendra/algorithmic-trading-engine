@@ -87,6 +87,54 @@ log = logging.getLogger("notifier")
 
 
 # --------------------------------------------------------------------------- #
+# keeping the bot token out of the log
+# --------------------------------------------------------------------------- #
+# The Bot API takes its token in the URL path (https://api.telegram.org/bot<token>/…),
+# and a requests exception quotes that URL: "Max retries exceeded with url:
+# /bot<token>/sendMessage", "400 Client Error … for url: …". Logged as it was,
+# the token landed in the notifier's log (2 Nov review). Anything that may hold
+# the URL goes through redact_bot_token before it is logged, and RedactBotToken
+# on the log handlers catches the rest (urllib3's own request lines under
+# --verbose). The shape is Sentinel's (sentinel/notify.py): a bot id of 8–10
+# digits, a colon, 30+ URL-safe characters.
+_BOT_TOKEN_SHAPE = re.compile(r"(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}")
+HIDDEN = "…"
+
+
+def redact_bot_token(text: object, token: str = "") -> str:
+    """The text with any Telegram bot token in it, the configured one included, replaced by '…'."""
+    out = str(text)
+    if token:
+        out = out.replace(token, HIDDEN)
+    return _BOT_TOKEN_SHAPE.sub(HIDDEN, out)
+
+
+class RedactBotToken(logging.Filter):
+    """A handler filter: every record leaves with no bot token in its message or its traceback."""
+
+    def __init__(self, token: str = "") -> None:
+        super().__init__()
+        self._token = token
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        clean = redact_bot_token(message, self._token)
+        if clean != message:
+            record.msg, record.args = clean, ()
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = redact_bot_token(record.exc_text, self._token)
+        return True
+
+
+def install_token_filter(token: str = "") -> None:
+    """Puts RedactBotToken on every handler of the root logger (call after basicConfig)."""
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactBotToken(token))
+
+
+# --------------------------------------------------------------------------- #
 # configuration
 # --------------------------------------------------------------------------- #
 def load_env(path: Path) -> dict[str, str]:
@@ -313,11 +361,16 @@ class Telegram:
                 log.warning(
                     "Telegram refused the message: HTTP %s %s",
                     response.status_code,
-                    response.text[:200],
+                    redact_bot_token(response.text[:200], self._config.bot_token),
                 )
                 return False
             except requests.RequestException as exc:
-                log.warning("Telegram send failed (attempt %s): %s", attempt, exc)
+                # The exception's text quotes the URL, and the URL holds the token.
+                log.warning(
+                    "Telegram send failed (attempt %s): %s",
+                    attempt,
+                    redact_bot_token(exc, self._config.bot_token),
+                )
                 time.sleep(2 * attempt)
         return False
 
@@ -1122,6 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     config = Config(load_env(REPO_ROOT / ".env"))
+    install_token_filter(config.bot_token)
     if not config.telegram_configured and not args.dry_run:
         log.error(
             "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not set in .env — "
