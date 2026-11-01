@@ -33,6 +33,9 @@ public sealed class MutualFundTerSync
     /// </summary>
     public const int MinimumRows = 500;
 
+    /// <summary>A month's workbook was 4.4 MB on 1 Nov 2026; anything past this is not AMFI's file, and is not held in memory.</summary>
+    public const long MaxWorkbookBytes = 50_000_000;
+
     private readonly TradingDbContext _db;
     private readonly IHttpClientFactory _http;
     private readonly MutualFundsOptions _options;
@@ -107,10 +110,21 @@ public sealed class MutualFundTerSync
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromMinutes(5));
         string url = $"{_options.TerUrl}&Month={MonthParameter(month)}";
-        using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName).GetAsync(url, deadline.Token);
+        using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName).GetAsync(url, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         response.EnsureSuccessStatusCode();
         await using var buffer = new MemoryStream();
-        await response.Content.CopyToAsync(buffer, deadline.Token);
+        await using (var body = await response.Content.ReadAsStreamAsync(deadline.Token))
+        {
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await body.ReadAsync(chunk, deadline.Token)) > 0)
+            {
+                if (buffer.Length + read > MaxWorkbookBytes)
+                    throw new InvalidDataException($"AMFI's TER file for {month:MMM yyyy} is larger than {MaxWorkbookBytes / 1_000_000} MB; nothing was stored.");
+                buffer.Write(chunk, 0, read);
+            }
+        }
+
         buffer.Position = 0;
         var rows = Parse(buffer);
         if (finished && rows.Count < MinimumRows)
