@@ -217,6 +217,11 @@ In live mode the rules judge its own account (`AiTraderBookReader`), and its net
 Until 1 Oct a carried position's whole P&L since entry, and every running run's whole net, counted against today's
 charges only, so a winner carried in hid the day's losses from the daily-loss rule.
 
+Beneath its own rules, each buy also passes the platform's order gate (`RiskManagementService`), whose max daily
+loss (Risk → Trading limits, −₹50,000 by default) reads its book's day by the same rule (`DailyLoss`). Until 2 Nov
+that gate summed the book's whole life before charges, so enough small losing days would have refused every later
+buy with "MAX DAILY LOSS EXCEEDED", even on a day it had lost nothing.
+
 ## Shadow mode
 
 With `Ai:AiTraderExecute` off it decides and places nothing (mode `shadow`), as it did from 1 to 9 Oct, and no

@@ -430,7 +430,7 @@ flowchart TD
     K -->|"yes"| REJ["❌ RiskViolationException"]
     K -->|"no"| R{"Trailing 60s order count<br/>exceeds MaxOrdersPerMinute?"}
     R -->|"yes"| REJ
-    R -->|"no"| L{"Realised + unrealised P&L<br/>breaches MaxDailyLoss?"}
+    R -->|"no"| L{"Run's net P&L today (IST, after charges)<br/>below MaxDailyLoss?"}
     L -->|"yes"| REJ
     L -->|"no"| OK["✅ Order admitted"]
 

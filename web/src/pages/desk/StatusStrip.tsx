@@ -93,7 +93,7 @@ function NetLead({ view }: { view: DeskView }) {
 }
 
 // No loss rail here: the only loss limit is per run (Risk → max daily loss,
-// checked on each new order), so an account's total measured against it read
+// on the run's net P&L today after charges, checked on each new order), so an account's total measured against it read
 // as "144% of max daily loss" on a day no run was near it.
 function AccountCell({ view, index }: { view: DeskView; index: number }) {
   const totals = useLiveGrid(view)?.totals[index]

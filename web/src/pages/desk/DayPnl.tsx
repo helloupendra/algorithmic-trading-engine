@@ -5,9 +5,9 @@
  *
  * Where the recorder wrote nothing for a stretch, the curve breaks and the
  * panel says when, rather than drawing a line across what nobody saw. Nor is
- * there a loss rail: the one limit, Risk → max daily loss, is per run, on
- * P&L before charges, and an account's total held against it read as a
- * breach that was not one. The panel states the limit as it is instead
+ * there a loss rail: the one limit, Risk → max daily loss, is per run (its
+ * net P&L today, after charges), and an account's total held against it read
+ * as a breach that was not one. The panel states the limit as it is instead
  * (admins only: traders cannot read the limits).
  */
 
@@ -166,8 +166,8 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
       {view.isAdmin && limit != null && limit < 0 && (
         <div className="dk-foot" style={{ display: 'block' }}>
           <p className="dk-note">
-            Max daily loss: {formatInrSigned(limit)} per run, on its P&L before charges, checked when the run places a new order.
-            There is no limit per account.
+            Max daily loss: {formatInrSigned(limit)} per run, on its net P&L today (IST, after charges), checked when the run
+            places a new order. There is no limit per account.
           </p>
         </div>
       )}
