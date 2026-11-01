@@ -3507,6 +3507,96 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("market_ticks", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundNav", b =>
+                {
+                    b.Property<int>("SchemeCode")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<decimal>("Nav")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("SchemeCode", "Date");
+
+                    b.ToTable("mf_nav", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundScheme", b =>
+                {
+                    b.Property<int>("SchemeCode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Amc")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateOnly?>("FirstNavDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("IsinGrowth")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<string>("IsinReinvest")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<decimal?>("LastNav")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateOnly?>("LastNavDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Option")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("OptionLabel")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("SchemeName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.HasKey("SchemeCode");
+
+                    b.HasIndex("Amc");
+
+                    b.HasIndex("IsinGrowth");
+
+                    b.ToTable("mf_schemes", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.NewsItem", b =>
                 {
                     b.Property<long>("Id")

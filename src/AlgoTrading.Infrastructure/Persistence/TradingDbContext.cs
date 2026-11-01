@@ -93,6 +93,11 @@ public class TradingDbContext : DbContext
     public DbSet<MarketQuoteSnapshot> MarketQuoteSnapshots => Set<MarketQuoteSnapshot>();
     public DbSet<MarketBreadthDaily> MarketBreadthDaily => Set<MarketBreadthDaily>();
 
+    // Mutual funds: AMFI's scheme master, cleaned, and every scheme's daily NAV.
+    // See docs/modules/mutual_funds_module.md.
+    public DbSet<MutualFundScheme> MutualFundSchemes => Set<MutualFundScheme>();
+    public DbSet<MutualFundNav> MutualFundNavs => Set<MutualFundNav>();
+
     /// <summary>SEBI, NSE and BSE circulars that might bind the desk, for the Compliance Triage. See <see cref="RegulatoryCircular"/>.</summary>
     public DbSet<RegulatoryCircular> RegulatoryCirculars => Set<RegulatoryCircular>();
 
