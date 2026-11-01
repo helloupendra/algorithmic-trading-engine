@@ -115,6 +115,29 @@ public sealed class MutualFundStatus
 
         if (wake.Task.IsCompleted) Interlocked.CompareExchange(ref _wake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), wake);
     }
+
+    private TaskCompletionSource _analyticsWake = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>The fund-report job running now ("benchmarks", "ter", "stats"), if any.</summary>
+    public string? AnalyticsNow { get; set; }
+
+    /// <summary>Wakes the fund-report jobs' service now (an admin asked for a run).</summary>
+    public void WakeAnalytics() => _analyticsWake.TrySetResult();
+
+    /// <summary>Completes on <see cref="WakeAnalytics"/> or after <paramref name="timeout"/>.</summary>
+    public async Task WaitAnalyticsAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        var wake = _analyticsWake;
+        try
+        {
+            await wake.Task.WaitAsync(timeout, ct);
+        }
+        catch (TimeoutException)
+        {
+        }
+
+        if (wake.Task.IsCompleted) Interlocked.CompareExchange(ref _analyticsWake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), wake);
+    }
 }
 
 /// <summary>Reads and writes the two JSON records in <c>system_settings</c>.</summary>

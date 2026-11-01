@@ -360,6 +360,11 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncServ
 // (07:00 retry), and the NAV history backfill, which runs only once an admin asks for it.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MutualFundNavSyncService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MutualFundBackfillService>();
+// The fund report's nightly jobs after the NAV sync (23:45 IST): NSE total-return indices, AMFI's TER and the
+// category ranking; never in market hours. The report's written summary goes through the AI gateway (Bedrock only).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MutualFundAnalyticsService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.MutualFunds.IMutualFundSummaryModel, AlgoTrading.Api.Services.MutualFunds.GatewayMutualFundSummaryModel>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.MutualFunds.MutualFundSummaryWriter>();
 // The Analysis module's forecasts: `python -m analysis issue` at 08:50 IST and
 // `score` at 15:50 IST on NSE trading days, plus a catch-up score after start-up.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ForecastJobRunner>();

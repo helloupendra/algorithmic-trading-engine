@@ -1,5 +1,6 @@
 using System.Globalization;
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services.MutualFunds;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.MutualFunds;
 using AlgoTrading.Domain.Constants;
@@ -34,16 +35,23 @@ public class MutualFundsController : ControllerBase
     private readonly MutualFundStatus _status;
     private readonly IProcessSettingsStore _settings;
     private readonly IMarketSessionService _sessions;
+    private readonly MutualFundReports _reports;
+    private readonly MutualFundBenchmarkSync _benchmarks;
+    private readonly MutualFundSummaryWriter _summaries;
     private readonly TimeProvider _time;
 
     public MutualFundsController(MutualFundQueries queries, MutualFundNavSync sync, MutualFundStatus status, IProcessSettingsStore settings,
-        IMarketSessionService sessions, TimeProvider? time = null)
+        IMarketSessionService sessions, MutualFundReports reports, MutualFundBenchmarkSync benchmarks, MutualFundSummaryWriter summaries,
+        TimeProvider? time = null)
     {
         _queries = queries;
         _sync = sync;
         _status = status;
         _settings = settings;
         _sessions = sessions;
+        _reports = reports;
+        _benchmarks = benchmarks;
+        _summaries = summaries;
         _time = time ?? TimeProvider.System;
     }
 
@@ -55,7 +63,11 @@ public class MutualFundsController : ControllerBase
     /// </summary>
     [HttpGet("coverage")]
     public async Task<ActionResult<MutualFundCoverageResponse>> Coverage(CancellationToken cancellationToken)
-        => Ok(await _queries.CoverageAsync(cancellationToken));
+    {
+        var coverage = await _queries.CoverageAsync(cancellationToken);
+        coverage.Analytics = await _reports.CoverageAsync(_benchmarks, cancellationToken);
+        return Ok(coverage);
+    }
 
     /// <summary>
     /// Schemes whose name or AMC contains <paramref name="search"/> (any case),
@@ -84,6 +96,85 @@ public class MutualFundsController : ControllerBase
 
         var result = await _queries.NavAsync(code, start, end, cancellationToken);
         return result is null ? NotFound(new { message = $"No scheme {code} in the master." }) : Ok(result);
+    }
+
+    /// <summary>
+    /// The fund report: returns over 1, 3, 5 and 10 years and by calendar year, rolling 3-year returns, a ₹10,000
+    /// monthly SIP and a ₹2,00,000 lump sum, volatility and drawdowns, the benchmark and category comparisons, the
+    /// TER and the direct-versus-regular gap, each with its dates and source, to <paramref name="asOf"/> (yyyy-MM-dd,
+    /// the last NAV when left out). Facts only. See docs/modules/mutual_funds_module.md.
+    /// </summary>
+    [HttpGet("{code:int}/report")]
+    public async Task<ActionResult<MutualFundReportResponse>> Report(int code, [FromQuery] string? asOf, CancellationToken cancellationToken)
+    {
+        if (!TryDate(asOf, out var day)) return BadRequest(new { message = "asOf is a date, yyyy-MM-dd." });
+        var (report, notFound) = await _reports.ReportAsync(code, day, cancellationToken);
+        return report is null ? NotFound(new { message = notFound }) : Ok(report);
+    }
+
+    /// <summary>
+    /// The written summary of a fund report: one paragraph a model wrote and code checked (every number from the
+    /// report, no advice or rating wording), or the reason there is none. Slow the first time (a model call); the
+    /// report does not wait for it.
+    /// </summary>
+    [HttpGet("{code:int}/report/summary")]
+    public async Task<ActionResult<MutualFundSummaryResponse>> Summary(int code, [FromQuery] string? asOf, CancellationToken cancellationToken)
+    {
+        if (!TryDate(asOf, out var day)) return BadRequest(new { message = "asOf is a date, yyyy-MM-dd." });
+        var (report, notFound) = await _reports.ReportAsync(code, day, cancellationToken);
+        if (report is null) return NotFound(new { message = notFound });
+        return Ok(await _summaries.WriteAsync(User.GetRequiredUserId(), report, cancellationToken));
+    }
+
+    /// <summary>2 to 4 schemes' reports, all ending on the newest NAV day every one of them has. <paramref name="codes"/>: comma-separated scheme codes.</summary>
+    [HttpGet("compare")]
+    public async Task<ActionResult<MutualFundCompareResponse>> Compare([FromQuery] string? codes, CancellationToken cancellationToken)
+    {
+        var parsed = new List<int>();
+        foreach (string part in (codes ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out int code))
+                return BadRequest(new { message = $"'{part}' is not a scheme code; codes is a comma-separated list such as 120716,100822." });
+            parsed.Add(code);
+        }
+
+        var (compare, problem) = await _reports.CompareAsync(parsed, cancellationToken);
+        if (compare is not null) return Ok(compare);
+        return problem is not null && problem.StartsWith("No scheme", StringComparison.Ordinal) ? NotFound(new { message = problem }) : BadRequest(new { message = problem });
+    }
+
+    /// <summary>
+    /// Asks for a fund-report job now: <paramref name="job"/> is benchmarks (NSE total-return indices), ter (AMFI's
+    /// TER) or stats (the category ranking). It runs at the service's next look, outside 09:00–15:40 IST on trading
+    /// days, never at the same time as another of them. Admin-only.
+    /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    [HttpPost("analytics/{job}")]
+    public async Task<ActionResult<object>> RunJob(string job, CancellationToken cancellationToken)
+    {
+        string key = (job ?? string.Empty).Trim().ToLowerInvariant();
+        if (!MutualFundJobs.All.Contains(key))
+            return NotFound(new { message = $"No job '{job}': benchmarks, ter or stats." });
+
+        await MutualFundAnalyticsSettings.UpdateAsync(_settings, s =>
+        {
+            if (!s.Requested.Contains(key)) s.Requested.Add(key);
+        }, cancellationToken);
+        _status.WakeAnalytics();
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        bool quiet = MarketIntelligenceSchedule.InQuietWindow(now, d => _sessions.GetSessionInfo(IstTime.MiddayUtc(d), "NSE", "CM").IsTradingDay);
+        string until = TimeOnly.FromTimeSpan(MarketIntelligenceSchedule.QuietUntilOn(IstTime.DateOf(now))).ToString("HH:mm", CultureInfo.InvariantCulture);
+        bool busy = _status.AnalyticsNow is not null || _status.SyncRunning;
+        return Accepted(new
+        {
+            startsNow = !quiet && !busy,
+            message = quiet
+                ? $"Queued: the fund-report jobs do not run 09:00-{until} IST on trading days. It runs after {until} IST."
+                : busy
+                    ? "Queued: it runs as soon as the job running now finishes. Follow it on GET api/MutualFunds/coverage (analytics)."
+                    : "Starting now. Follow it on GET api/MutualFunds/coverage (analytics).",
+        });
     }
 
     /// <summary>
