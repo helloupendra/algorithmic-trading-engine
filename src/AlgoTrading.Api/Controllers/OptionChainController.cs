@@ -278,8 +278,15 @@ public class OptionChainController : ControllerBase
     /// This is the only way open interest enters the platform — the broker's
     /// tick feed does not carry it — so a session with the poller stopped has
     /// prices and volume and no OI at all, for good. It cannot be backfilled.
+    /// <para>
+    /// The poller signs in as the Service account (core/api_client.py). Until
+    /// 2 Nov any signed-in account could post a row here, and the chain view,
+    /// which reads only the newest capture, served it to the strategies that
+    /// trade on it and kept it in the OI history for good.
+    /// </para>
     /// </remarks>
     [HttpPost("snapshots")]
+    [Authorize(Roles = LiveDataController.Writers)]
     public async Task<IActionResult> StoreSnapshots(
         [FromBody] StoreOptionChainRequest? request,
         CancellationToken cancellationToken)

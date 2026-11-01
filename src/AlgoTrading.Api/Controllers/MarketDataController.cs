@@ -1,6 +1,7 @@
 using AlgoTrading.Application.UseCases.MarketData;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -91,7 +92,14 @@ public class MarketDataController : ControllerBase
         return Ok(rows);
     }
 
+    /// <summary>
+    /// Pulls candles from the broker's history API into the local store. Each
+    /// call spends the desk's per-app broker limits, which the live desk shares,
+    /// so only the engine's Service account (the backtest feed,
+    /// core/api_client.py) and an admin may call it.
+    /// </summary>
     [HttpPost("history/sync")]
+    [Authorize(Roles = LiveDataController.Writers)]
     public async Task<IActionResult> SyncHistory(
         [FromBody] SyncHistoryRequest request,
         CancellationToken cancellationToken)

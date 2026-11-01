@@ -27,7 +27,15 @@ public class EquitiesController : ControllerBase
         _addEquityGroupToWatchlistUseCase = addEquityGroupToWatchlistUseCase;
     }
 
+    /// <summary>
+    /// Adds every member of an equity group to the feed's recording list. A
+    /// recording-list write, so the same callers as <see cref="LiveDataController"/>'s:
+    /// the admin's Data → Feeds page and the Service account's tools. Under a
+    /// symbol limit the list wins over the feed's own symbols, so this was never
+    /// one for a trader.
+    /// </summary>
     [HttpPost("live/watchlist/group")]
+    [Authorize(Roles = LiveDataController.Writers)]
     public async Task<IActionResult> AddGroupToWatchlist(
         [FromBody] AddEquityGroupToWatchlistRequest request,
         CancellationToken cancellationToken = default)

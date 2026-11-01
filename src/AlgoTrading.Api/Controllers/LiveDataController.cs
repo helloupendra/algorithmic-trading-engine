@@ -21,12 +21,22 @@ namespace AlgoTrading.Api.Controllers;
 /// real tick after it read as older and was refused, and every account's paper
 /// fills and risk marks priced from it — pushed to every browser following the
 /// symbol as well. The reads stay open to every signed-in caller.
+/// <para>
+/// The recording-list writes (<c>watchlist</c> add, remove and <c>prune</c>) are
+/// the same: until 2 Nov any signed-in account could delete the rows a live
+/// run's contracts were subscribed through, and the feed unsubscribed them in
+/// place. Their callers are the admin's Data pages, the morning job (admin), and
+/// the runners, chain tracker and tools (Service).
+/// </para>
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 public class LiveDataController : ControllerBase
 {
-    /// <summary>Who may write prices and feed health: the feeds' Service account, and an admin.</summary>
+    /// <summary>
+    /// Who may write prices, feed health and the feed's recording list: the
+    /// feeds' and runners' Service account, and an admin.
+    /// </summary>
     public const string Writers = $"{UserRoles.Admin},{UserRoles.Service}";
 
     private readonly GetWatchlistUseCase _getWatchlistUseCase;
@@ -92,6 +102,7 @@ public class LiveDataController : ControllerBase
     }
 
     [HttpPost("watchlist")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> UpsertWatchlist(
         [FromBody] UpsertWatchlistItemRequest request,
         CancellationToken cancellationToken)
@@ -107,6 +118,7 @@ public class LiveDataController : ControllerBase
     }
 
     [HttpDelete("watchlist/{id:long}")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> RemoveWatchlist(long id, CancellationToken cancellationToken)
     {
         await _removeWatchlistItemUseCase.ExecuteAsync(id, cancellationToken);
@@ -126,6 +138,7 @@ public class LiveDataController : ControllerBase
     /// lists, or only the ids given) and tells the ingestor to resubscribe.
     /// </summary>
     [HttpPost("watchlist/prune")]
+    [Authorize(Roles = Writers)]
     public async Task<ActionResult<PruneWatchlistResponse>> PruneWatchlist(
         [FromServices] WatchlistPruneService pruner,
         [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PruneWatchlistRequest? request,

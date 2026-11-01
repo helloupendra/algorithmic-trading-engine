@@ -229,7 +229,7 @@ as soon as anything comes back.
 | GET | `/api/OptionChain/expiries/recorded` | the expiries recorded on one IST day (`day`, or the newest capture's), with captures, usual spacing and which is the default |
 | GET | `/api/OptionChain/days/recorded` | the IST days the underlying's chain was recorded on, newest first: a loose walk of the (underlying, expiry, time) index, about one read per day, kept in memory and only its newest end read again every two minutes |
 | GET | `/api/OptionChain/positions` | open legs of running runs on the underlying's contracts, the caller's own (an admin's: every account's); `mode` is `LivePaper` (default: strategy runs and manual books, marked at the newer of the live quote and the stored mark) or `OfflineReplay` (backtests, at their own last mark) — never both |
-| POST | `/api/OptionChain/snapshots` | the poller's write path |
+| POST | `/api/OptionChain/snapshots` | the poller's write path; the Service account and admins only |
 | POST | `/api/OptionChain/poller/start` · `/stop` | admin only |
 | GET | `/api/OptionChain/poller/status` · `/logs` | process state and output |
 | GET | `/api/Straddle` | one session's ATM straddle and IV, a point per capture minute; `date` (IST), default today; market-data grant |
