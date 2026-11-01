@@ -48,7 +48,7 @@ Phase 2 (the fund report):
 | A check, never a source | `https://api.mfapi.in/mf/{code}` | mfapi.in, a free mirror of AMFI's history. `GET api/MutualFunds/{code}/check` compares it with what we stored. |
 | Benchmarks: NSE total-return indices | `POST https://www.niftyindices.com/BackPage/getTotalReturnIndexString` | The request niftyindices.com's own historical-data page makes: `{"cinfo":"{'name':'NIFTY 50','startDate':'01-Oct-2025','endDate':'30-Sep-2026','indexName':'NIFTY 50'}"}`, answered with a JSON array, newest first (`"Date":"30 Oct 2026","TotalReturnsIndex":"35043.45"`). The page allows a year a request; under a second each; `[]` for a range with no values. No cookie needed (1 Nov 2026). History from 30 Jun 1999 (NIFTY 50) and 1 Apr 2005 (the newer indices). |
 | Total expense ratio | `https://www.amfiindia.com/api/populate-te-rdata-revised?MF_ID=All&Month=10-2026&strCat=-1&strType=-1&excel=true` | AMFI's TER page's download: one workbook a month, every scheme's TER for every day, the regular and direct plans side by side. About 4.4 MB, 62,000 rows, 20–30 s to produce. The page's JSON form serves 100 rows a request (625 a month), so it is not used. |
-| Risk-free rate (Sharpe, Sortino) | RBI, Weekly Statistical Supplement (rbi.org.in, "Ratios and Rates") | The 91-day Treasury Bill (primary) yield, read by hand and set in configuration with its date: 5.73% for the week ended 16 Oct 2026. Not fetched. |
+| Risk-free rate (Sharpe, Sortino) | RBI, National Summary Data Page (`rbi.org.in/Scripts/BS_NSDPDisplay.aspx?param=4`, "Ratios and Rates") | The 91-day Treasury Bill (primary) yield, read by hand and set in configuration with its date: 5.73% for the week ended 16 Oct 2026. Not fetched. |
 
 AMFI's own page says 90 days per history request; the server answered a
 105-day window too, but the backfill keeps to 90. A 90-day open-ended window
@@ -459,4 +459,4 @@ without it.
 | `BenchmarkBackfillEnabled` | true | each index's history back to `BenchmarkFrom`, fetched once by itself |
 | `BenchmarkFrom` | 2006-01-01 | |
 | `BenchmarkUrl`, `TerUrl` | niftyindices.com's and AMFI's | in case a source moves |
-| `RiskFreeRatePct`, `RiskFreeRateSource`, `RiskFreeRateAsOf` | 5.73, RBI WSS 91-day T-bill, 2026-10-16 | the rate Sharpe and Sortino use, stated on every report; update the three together, or remove the rate to leave Sharpe and Sortino out (the report then says why) |
+| `RiskFreeRatePct`, `RiskFreeRateSource`, `RiskFreeRateAsOf` | 5.73, RBI NSDP 91-day T-bill, 2026-10-16 | the rate Sharpe and Sortino use, stated on every report; update the three together, or remove the rate to leave Sharpe and Sortino out (the report then says why) |
