@@ -182,6 +182,15 @@ public static class DependencyInjection
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundNavSync>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundHistory>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundQueries>();
+        // The fund report (Phase 2): NSE total-return indices from niftyindices.com, AMFI's TER, the nightly
+        // category ranking, and the report itself.
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.IndicesHttpClientName,
+                AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.ConfigureIndices)
+            .ConfigurePrimaryHttpMessageHandler(AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundsOptions.CreateHandler);
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundBenchmarkSync>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundTerSync>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundStatsJob>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundReports>();
 
 
         services.AddScoped<ISimulationService, SimulationService>();

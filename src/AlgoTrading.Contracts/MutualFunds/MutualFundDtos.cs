@@ -91,6 +91,9 @@ public class MutualFundCoverageResponse
     public bool SyncEnabled { get; set; }
     public bool SyncRunning { get; set; }
     public MutualFundBackfillDto Backfill { get; set; } = new();
+
+    /// <summary>What the fund report's jobs have collected: benchmarks, TER, the category ranking.</summary>
+    public MutualFundAnalyticsCoverageDto Analytics { get; set; } = new();
 }
 
 /// <summary>One scheme in a search.</summary>
