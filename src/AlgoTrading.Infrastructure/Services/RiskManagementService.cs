@@ -39,12 +39,23 @@ public class RiskManagementService : IRiskManagementService
     private static readonly SemaphoreSlim CacheLock = new(1, 1);
 
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILotSizeResolver _lotSizes;
+    private readonly TimeProvider _time;
 
-    public RiskManagementService(TradingDbContext dbContext, IRiskLimitsStore limitsStore, IServiceScopeFactory scopeFactory)
+    /// <param name="lotSizes">Lot sizes for the daily loss's charges and carried positions (<see cref="DailyLoss"/>).</param>
+    /// <param name="time">The clock the daily loss's IST day is read from; the system clock when null.</param>
+    public RiskManagementService(
+        TradingDbContext dbContext,
+        IRiskLimitsStore limitsStore,
+        IServiceScopeFactory scopeFactory,
+        ILotSizeResolver lotSizes,
+        TimeProvider? time = null)
     {
         _dbContext = dbContext;
         _limitsStore = limitsStore;
         _scopeFactory = scopeFactory;
+        _lotSizes = lotSizes;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -111,25 +122,35 @@ public class RiskManagementService : IRiskManagementService
             await RejectOrderAsync(simulationRunId, symbol, side, quantity, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId} (leg {side} {quantity}).", cancellationToken);
         }
 
-        // 3. Check Max Daily Loss
-        var positions = await _dbContext.PaperPositions
-            .AsNoTracking()
-            .Where(x => x.SimulationRunId == simulationRunId)
-            .Select(x => new { x.RealizedPnl, x.UnrealizedPnl, x.Status })
-            .ToListAsync(cancellationToken);
-
-        decimal totalRealized = positions.Sum(x => x.RealizedPnl);
-        decimal totalUnrealized = positions.Where(x => x.Status == "Open").Sum(x => x.UnrealizedPnl);
-        decimal currentPnl = totalRealized + totalUnrealized;
-
-        if (currentPnl < limits.MaxDailyLoss)
+        // 3. Check Max Daily Loss: the run's net P&L for today (IST), after
+        // charges (DailyLoss). Until 2 Nov it was the run's whole life, gross,
+        // so a manual book or the AI Trader's book was shut for good by old
+        // losses, and a high-churn run was never stopped by its charges.
+        var day = await DailyLoss.ReadAsync(_dbContext, _lotSizes, simulationRunId, _time.GetUtcNow().UtcDateTime, cancellationToken);
+        if (day.Net < limits.MaxDailyLoss)
         {
-            await RejectOrderAsync(simulationRunId, symbol, side, quantity, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}. Exits remain allowed.", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, side, quantity, DailyLossReason(day, limits.MaxDailyLoss), cancellationToken);
         }
 
         // Accepted: only now does it count toward the next order's rate window.
         queue.Enqueue(now);
     }
+
+    /// <summary>
+    /// The refusal for the daily loss. It starts "MAX DAILY LOSS EXCEEDED:", which Sentinel's log watcher
+    /// keys on, and names what was measured: today's net, the charges in it, the limit.
+    /// </summary>
+    internal static string DailyLossReason(DailyLoss.Figures day, decimal limit)
+    {
+        string what = day.WholeRun ? "this recap run's net P&L" : "today's net P&L (IST day)";
+        string until = day.WholeRun ? "" : " for the rest of the day";
+        return $"MAX DAILY LOSS EXCEEDED: {what} {Rupees(day.Net)} (after {Rupees(day.Charges)} charges) is below the limit {Rupees(limit)}. "
+             + $"New positions are refused{until}; exits remain allowed.";
+    }
+
+    /// <summary>"−₹52,310.50" / "₹1,240.00".</summary>
+    private static string Rupees(decimal value)
+        => (value < 0 ? "−₹" : "₹") + Math.Abs(value).ToString("#,##0.00", System.Globalization.CultureInfo.InvariantCulture);
 
     private async Task RejectOrderAsync(long simulationRunId, string symbol, string side, int lots, string reason, CancellationToken cancellationToken)
     {

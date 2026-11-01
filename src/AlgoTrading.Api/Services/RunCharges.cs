@@ -2,6 +2,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Risk;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services;
@@ -62,46 +63,11 @@ public sealed class RunCharges
         return charges.GetValueOrDefault(runId);
     }
 
-    private async Task<Dictionary<long, decimal>> LoadAsync(IQueryable<PaperOrder> orders, CancellationToken cancellationToken)
-    {
-        var rows = await orders
-            .Where(o => o.FillPrice != null)
-            .GroupBy(o => new { o.SimulationRunId, o.Symbol, o.Side })
-            .Select(g => new
-            {
-                g.Key.SimulationRunId,
-                g.Key.Symbol,
-                g.Key.Side,
-                PremiumLots = g.Sum(o => o.FillPrice!.Value * o.Quantity),
-                Orders = g.Count(),
-            })
-            .ToListAsync(cancellationToken);
-        if (rows.Count == 0) return new Dictionary<long, decimal>();
-
-        var lotSizes = await _lotSizeResolver.ResolveManyAsync(
-            rows.Select(r => r.Symbol).Distinct(StringComparer.Ordinal), cancellationToken);
-
-        return rows
-            .GroupBy(r => r.SimulationRunId)
-            .ToDictionary(g => g.Key, g =>
-                // Per schedule, then summed: an MCX fill is charged at MCX's
-                // rates, and one book can hold both kinds.
-                g.GroupBy(r => ChargeSchedule.ForSymbol(r.Symbol)).Sum(bySchedule =>
-                {
-                    decimal buy = 0m, sell = 0m;
-                    int orders = 0;
-                    foreach (var r in bySchedule)
-                    {
-                        decimal rupees = r.PremiumLots * LotSizeOf(lotSizes, r.Symbol);
-                        if (string.Equals(r.Side, "BUY", StringComparison.OrdinalIgnoreCase)) buy += rupees;
-                        else if (string.Equals(r.Side, "SELL", StringComparison.OrdinalIgnoreCase)) sell += rupees;
-                        orders += r.Orders;
-                    }
-                    return OptionCharges.For(buy, sell, orders, bySchedule.Key).Total;
-                }));
-    }
+    /// <remarks>The arithmetic is <see cref="FillCharges"/>'s, which the risk gate's daily loss shares.</remarks>
+    private Task<Dictionary<long, decimal>> LoadAsync(IQueryable<PaperOrder> orders, CancellationToken cancellationToken)
+        => FillCharges.PerRunAsync(orders, _lotSizeResolver, cancellationToken);
 
     /// <summary>The lot size a fill was booked at: 1 when the symbol is unknown, as in PaperTradingService.</summary>
     internal static int LotSizeOf(IReadOnlyDictionary<string, LotSizeInfo> lotSizes, string symbol)
-        => lotSizes.TryGetValue(symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
+        => FillCharges.LotSizeOf(lotSizes, symbol);
 }

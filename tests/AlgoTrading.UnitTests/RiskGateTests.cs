@@ -50,7 +50,7 @@ public class RiskGateTests
                 .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)))
             .BuildServiceProvider();
 
-        return new(db, new FixedLimits(limits), provider.GetRequiredService<IServiceScopeFactory>());
+        return new(db, new FixedLimits(limits), provider.GetRequiredService<IServiceScopeFactory>(), new PositionGreeksTests.FixedLots(1));
     }
 
     private static RiskLimitsDto Limits(int perMinute = 50, decimal maxDailyLoss = -10_000m)
