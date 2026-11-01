@@ -72,6 +72,16 @@ say() {
 }
 warn() { say "WARN: $1"; }
 
+# The same notice once an hour at most, KEY naming it: a restart that keeps
+# failing the same way (the desk retries every three and a half minutes) must
+# not page the owner every time.
+notify_at_most_hourly() {  # key title message
+  local stamp="$DESK_STATE_DIR/notified-$1"
+  [ -n "$(find "$stamp" -mmin -60 2>/dev/null)" ] && return 0
+  : >"$stamp" 2>/dev/null || true
+  notify "$2" "$3"
+}
+
 # --- environment the API and its daemons run with --------------------------
 # Underlyings the chain poller covers. The poller is spawned by the API and
 # reads this from the environment it inherits, so it is exported before the
@@ -162,6 +172,19 @@ api_stop() {
 # directly (dotnet AlgoTrading.Api.dll), from the project directory, which is
 # where `dotnet run` starts it too (RunWorkingDirectory): the content root,
 # wwwroot, SeedData and appsettings are found in the same place.
+#
+# Either way the build runs on its own first, and a build that fails never
+# costs the running API (2 Nov review, F1). Until then a failed build took the
+# API down: api_restart stopped the healthy API whatever the build said, and
+# api_start then compiled the same broken tree again inside `dotnet run`. The
+# 08:45 job restarts the API every trading morning, so one commit that did not
+# compile cost the whole day. Now:
+#   - api_restart builds while the old API still serves, and stops it only
+#     when the build passed; when it failed, the old API keeps serving and the
+#     owner is told (return 2);
+#   - every build that passes is copied to API_LAST_GOOD_DIR as the API starts
+#     from it; an API that must start when the build fails (it is down) starts
+#     from that copy, not from another compile.
 api_build() {  # builds the API as api_start will run it; output to the caller's redirect
   if [ "$DESK_API_CONFIG" = Release ]; then
     ( cd "$REPO_ROOT" && dotnet build src/AlgoTrading.Api -c Release -v q --nologo )
@@ -170,10 +193,50 @@ api_build() {  # builds the API as api_start will run it; output to the caller's
   fi
 }
 
-api_release_dll() {  # the Release build's entry point, relative to the project directory
+_api_tfm() {
   local tfm
   tfm="$(sed -n 's:.*<TargetFramework>\(.*\)</TargetFramework>.*:\1:p' "$REPO_ROOT/src/AlgoTrading.Api/AlgoTrading.Api.csproj" 2>/dev/null | head -1)"
-  printf 'bin/Release/%s/AlgoTrading.Api.dll' "${tfm:-net10.0}"
+  printf '%s' "${tfm:-net10.0}"
+}
+
+api_release_dll() {  # the Release build's entry point, relative to the project directory
+  printf 'bin/Release/%s/AlgoTrading.Api.dll' "$(_api_tfm)"
+}
+
+api_output_dir() {  # the output of the build api_start runs (Debug or Release), relative to the project directory
+  printf 'bin/%s/%s' "$( [ "$DESK_API_CONFIG" = Release ] && echo Release || echo Debug )" "$(_api_tfm)"
+}
+
+# --- the last good build -------------------------------------------------------
+# One copy of the newest build that passed, about 70 MB; never more than one,
+# apart from the moment a new copy replaces the old. It is outside the repo,
+# so no `git clean` or `dotnet clean` takes it, and outside bin/, so a build
+# cannot half-overwrite it. The API is started from it only when the build
+# has just failed; it runs from the project directory like any other start,
+# so the content root is the same.
+API_LAST_GOOD_DIR="$DESK_STATE_DIR/api-last-good"
+
+# Keeps the build just made as the last good one. Called with the API stopped:
+# an API started from the old copy would lose its files from under it.
+api_keep_last_good() {
+  local out tmp="$API_LAST_GOOD_DIR.new"
+  out="$REPO_ROOT/src/AlgoTrading.Api/$(api_output_dir)"
+  [ -f "$out/AlgoTrading.Api.dll" ] || return 1
+  rm -rf "$tmp"
+  if ! cp -R "$out" "$tmp" 2>>"$LOG"; then
+    rm -rf "$tmp"
+    warn "could not copy this build to $API_LAST_GOOD_DIR (disk full?) — the previous last good build is kept"
+    return 1
+  fi
+  printf 'sha=%s\nconfig=%s\nbuilt=%s\n' "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)" \
+    "$( [ "$DESK_API_CONFIG" = Release ] && echo Release || echo Debug )" "$(date '+%F %T')" >"$tmp/desk-build.txt"
+  rm -rf "$API_LAST_GOOD_DIR" && mv "$tmp" "$API_LAST_GOOD_DIR"
+}
+
+api_last_good_label() {  # "commit abc1234, Release, built 2026-11-01 23:59:10", or nothing
+  local f="$API_LAST_GOOD_DIR/desk-build.txt"
+  [ -f "$f" ] || return 0
+  printf 'commit %s, %s, built %s' "$(sed -n 's/^sha=//p' "$f")" "$(sed -n 's/^config=//p' "$f")" "$(sed -n 's/^built=//p' "$f")"
 }
 
 # Starts the API in the background, from DIR (relative to the repo), with .env
@@ -185,13 +248,16 @@ api_release_dll() {  # the Release build's entry point, relative to the project 
 _api_launch() {  # dir command...
   local dir="$1"
   shift
-  ( cd "$REPO_ROOT" \
+  ( unset _API_BUILT; cd "$REPO_ROOT" \
     && if [ -f .env ]; then set -a; . ./.env; set +a; fi \
     && export ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS="$API" \
     && cd "$dir" \
     && nohup "$@" >>"$REPO_ROOT/logs/api.log" 2>&1 & )
 }
 
+# _API_BUILT tells api_start what api_restart already knows about the build:
+# "ok" (built a moment ago, not again), "failed" (start the last good build at
+# once, no second compile while the API is down), empty (build it here).
 api_start() {
   if api_healthy; then say "API already healthy"; _api_restarted; return 0; fi
   _api_restarting
@@ -205,18 +271,30 @@ api_start() {
     mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api-until-$(date '+%Y%m%d-%H%M%S').log"
     ls -t "$REPO_ROOT"/logs/api-until-*.log 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
   fi
-  if [ "$DESK_API_CONFIG" = Release ]; then
-    # Built first, as `dotnet run` would (a no-op when a deploy or api_restart
-    # has just built it). A build that fails falls back to `dotnet run`, so
-    # the API still comes up.
-    if api_build >>"$REPO_ROOT/logs/api.log" 2>&1 && [ -f "$REPO_ROOT/src/AlgoTrading.Api/$(api_release_dll)" ]; then
+  local built="${_API_BUILT:-}" good
+  if [ -z "$built" ]; then
+    built=failed
+    api_build >>"$REPO_ROOT/logs/api.log" 2>&1 && built=ok
+  fi
+  if [ "$built" = ok ] && [ -f "$REPO_ROOT/src/AlgoTrading.Api/$(api_output_dir)/AlgoTrading.Api.dll" ]; then
+    api_keep_last_good || true
+    if [ "$DESK_API_CONFIG" = Release ]; then
       _api_launch src/AlgoTrading.Api dotnet "$(api_release_dll)"
     else
-      warn "the Release build failed — starting the API with dotnet run instead (see logs/api.log)"
-      _api_launch . dotnet run --project src/AlgoTrading.Api --no-launch-profile
+      _api_launch . dotnet run --no-build --project src/AlgoTrading.Api --no-launch-profile
     fi
+  elif [ -f "$API_LAST_GOOD_DIR/AlgoTrading.Api.dll" ]; then
+    good="$(api_last_good_label)"
+    warn "the API build FAILED — starting the last good build instead (${good:-$API_LAST_GOOD_DIR}); see logs/api.log and desk.log"
+    notify_at_most_hourly api-build-failed "AlgoTrading API" "The API build failed, so the API was started from the last good build (${good:-unknown}). Read logs/desk.log for the compiler error."
+    _api_launch src/AlgoTrading.Api dotnet "$API_LAST_GOOD_DIR/AlgoTrading.Api.dll"
   else
-    _api_launch . dotnet run --project src/AlgoTrading.Api --no-launch-profile
+    # No copy yet (the first start since copies began): whatever output the
+    # last build that passed left in bin/ is the next best thing — a build
+    # that fails does not replace it. Compiling the same tree again cannot work.
+    warn "the API build FAILED and there is no last good build yet — starting what is in $(api_output_dir) (see logs/api.log)"
+    notify_at_most_hourly api-build-failed "AlgoTrading API" "The API build failed and there is no last good build yet; trying the previous output in $(api_output_dir). Read logs/desk.log."
+    _api_launch src/AlgoTrading.Api dotnet "$(api_output_dir)/AlgoTrading.Api.dll"
   fi
   for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; _api_restarted; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
@@ -224,13 +302,25 @@ api_start() {
   return 1
 }
 
+# -> 0 restarted and healthy; 1 not healthy; 2 the build failed and the API
+#    that was already running was kept, not restarted.
 api_restart() {
   _api_restarting
-  # Release: built while the old API still serves, so a slow first build
-  # costs no downtime and api_start's own build is a no-op.
-  if [ "$DESK_API_CONFIG" = Release ]; then api_build >>"$LOG" 2>&1 || true; fi
+  # Built while the old API still serves: a slow build costs no downtime, and
+  # a broken one costs nothing but a warning.
+  if api_build >>"$LOG" 2>&1; then
+    api_stop
+    _API_BUILT=ok api_start
+    return $?
+  fi
+  if api_healthy; then
+    warn "the API build FAILED — the running API is kept and was not restarted (dotnet build failed; see desk.log)"
+    notify_at_most_hourly api-build-failed "AlgoTrading API" "The API build failed, so the running API was kept and not restarted. Read logs/desk.log for the compiler error."
+    _api_restarted
+    return 2
+  fi
   api_stop
-  api_start
+  _API_BUILT=failed api_start
 }
 
 # --- the console bundle ------------------------------------------------------

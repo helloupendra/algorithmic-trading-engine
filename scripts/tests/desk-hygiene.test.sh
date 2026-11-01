@@ -65,11 +65,13 @@ echo "api_start and api_restart mark the restart"
 (
   eval "$(sed -n '/^# --- an API restart in progress/,/^_api_restarted()/p' scripts/lib/desk-common.sh)"
   eval "$(sed -n '/^api_pids()/,/^# --- the console bundle/p' scripts/lib/desk-common.sh)"
-  REPO_ROOT="$WORK/repo"; mkdir -p "$REPO_ROOT/logs"; API=http://127.0.0.1:1 CHAIN_UNDERLYINGS=NIFTY DESK_API_CONFIG=""
+  REPO_ROOT="$WORK/repo"; mkdir -p "$REPO_ROOT/logs"; LOG="$WORK/desk.log" API=http://127.0.0.1:1 CHAIN_UNDERLYINGS=NIFTY DESK_API_CONFIG=""
   UP=0
   api_healthy() { [ "$UP" = 1 ]; }
   api_pids() { :; }
   nohup() { :; }
+  dotnet() { :; }   # a build that passes; scripts/tests/api-build.test.sh covers the rest
+  api_keep_last_good() { :; }
   seen=""
   sleep() { [ -f "$API_RESTARTING_FILE" ] && seen=1; UP=1; }
   api_restart >/dev/null

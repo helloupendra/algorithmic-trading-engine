@@ -304,9 +304,21 @@ say "  infra up"
 
 # --- 3. the API --------------------------------------------------------------
 # Restarted rather than reused, so today's CHAIN_UNDERLYINGS reach the poller
-# it spawns and today's console bundle is what the domain serves.
+# it spawns and today's console bundle is what the domain serves. The checkout
+# is the deployed commit (desk.sh deploys only on a quiet desk), so this builds
+# nothing new. When that build fails all the same, api_restart keeps the API
+# that is running (exit 2) and the morning goes on with it: the old API serves
+# the day, where a restart into a broken build used to cost it (2 Nov review, F1).
+# >>> api-restart (also loaded by scripts/tests/desk-deploy.test.sh)
 web_build || true
-api_restart || fail "the API did not come up."
+api_rc=0
+api_restart || api_rc=$?
+case "$api_rc" in
+  0) ;;
+  2) say "  the API build failed, so the API already running was kept — the morning goes on with it (with the chain list and settings it was started with)" ;;
+  *) fail "the API did not come up." ;;
+esac
+# <<< api-restart
 fi
 
 # Proves the credentials work now; every later call re-mints through
