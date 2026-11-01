@@ -109,7 +109,10 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// the bot sends the summary code wrote and "Type your PIN to confirm, or /cancel."
 /// A typed message of 4 to 8 digits is handled here, before any model: the bot
 /// deletes it, checks it, carries the chat's pending action out and says what
-/// happened. A voice note never confirms anything: its transcript is a question.
+/// happened. It confirms only the action whose PIN request Telegram took for
+/// this chat: one the owner was never shown (the answer failed, the request was
+/// refused, the API restarted) is cancelled, and the owner is told that nothing
+/// waits. A voice note never confirms anything: its transcript is a question.
 /// <c>/pin</c> sets or changes the PIN (the message is deleted) and
 /// <c>/cancel</c> drops the action waiting.
 /// </para>
@@ -163,6 +166,12 @@ public sealed class TelegramAssistant(
 
     /// <summary>The bot's "what should it have said?" prompts by message id: a reply to one is a correction of that call.</summary>
     private readonly ConcurrentDictionary<long, (long CallId, DateTime AskedUtc)> _corrections = new();
+
+    /// <summary>
+    /// Each chat's action whose "Type your PIN" message Telegram took: a typed PIN confirms only that one. In memory, so
+    /// after a restart a waiting action is refused (and cancelled) rather than confirmed unseen.
+    /// </summary>
+    private readonly ConcurrentDictionary<long, long> _offered = new();
 
     /// <summary>How long a "what should it have said?" prompt takes a reply.</summary>
     public static readonly TimeSpan CorrectionWindow = TimeSpan.FromHours(6);
@@ -366,8 +375,13 @@ public sealed class TelegramAssistant(
     /// <summary>The conversation a Telegram chat's actions are kept under: the chat's own, as its questions are.</summary>
     public static string ActionConversation(long chatId) => $"tg-{chatId}";
 
-    /// <summary>A typed PIN: the chat's pending action confirmed and carried out, or why not. The second value is what was done, for the conversation.</summary>
-    private static async Task<(string Reply, string? Outcome)> ConfirmAsync(IraActions actions, IraOwner ira, long chatId, string pin, CancellationToken cancellationToken)
+    /// <summary>
+    /// A typed PIN: the chat's pending action confirmed and carried out, or why not. Only the action whose PIN request
+    /// this bot delivered to the chat is confirmed; a pending one the owner was never shown (its answer failed, the
+    /// request was not sent, the API restarted) is cancelled unconfirmed, before the PIN is even checked. The second
+    /// value is what was done, for the conversation.
+    /// </summary>
+    private async Task<(string Reply, string? Outcome)> ConfirmAsync(IraActions actions, IraOwner ira, long chatId, string pin, CancellationToken cancellationToken)
     {
         if (!actions.Enabled) return (IraActions.OffText, null);
         var pending = await actions.PendingAsync(ActionConversation(chatId), ira.UserId, cancellationToken);
@@ -377,6 +391,13 @@ public sealed class TelegramAssistant(
             return (latest?.Status == AiActionStatus.Expired
                 ? $"No action is waiting for a PIN: {IraActionText.Expired(latest)} I deleted your message."
                 : "No action is waiting for a PIN. I deleted your message.", null);
+        }
+
+        if (!_offered.TryGetValue(chatId, out long shown) || shown != pending.Id)
+        {
+            var withdrawn = await actions.WithdrawAsync(pending.Id, ira, AiActionChannel.Telegram, "its PIN request never reached the Telegram chat.", cancellationToken);
+            logger.LogInformation("Telegram assistant: a PIN met action #{Id}, which was never shown in the chat; {Kind}", pending.Id, withdrawn.Kind);
+            return (withdrawn.Kind == IraConfirmKind.Cancelled ? withdrawn.Message + " I deleted your message." : withdrawn.Message, null);
         }
 
         var result = await actions.ConfirmAsync(pending.Id, ira, pin, AiActionChannel.Telegram, cancellationToken);
@@ -810,7 +831,9 @@ public sealed class TelegramAssistant(
         if (result.Outcome != AiCallOutcome.Ok)
         {
             string why = result.RefusalStatus is null ? $"No model answered (call #{result.CallId}): {result.Error}" : result.Error;
-            await SendAsync(chatId, why, cancellationToken);
+            // An action this call proposed was never shown: it is cancelled, and the owner told that nothing waits.
+            string? withdrawn = await WithdrawUnshownAsync(chatId, result.CallId, "the answer that proposed it failed before its PIN request was sent.", cancellationToken);
+            await SendAsync(chatId, withdrawn is null ? why : why + "\n\n" + withdrawn, cancellationToken);
             return;
         }
 
@@ -834,17 +857,50 @@ public sealed class TelegramAssistant(
 
     /// <summary>
     /// After an answer whose model proposed an action: the summary code wrote, when it expires, and "Type your PIN to
-    /// confirm, or /cancel." The model's own words are not what the owner confirms.
+    /// confirm, or /cancel", with a line first when it replaced an older action. The model's own words are not what the
+    /// owner confirms. Only once Telegram has taken this message can a typed PIN confirm the action; one stored by a
+    /// proposal tool that then failed, or whose message was refused, is cancelled instead.
     /// </summary>
     private async Task OfferConfirmAsync(long chatId, AiAskResult result, CancellationToken cancellationToken)
     {
-        if (!result.Tools.Any(t => t.Ok && AiToolNames.Actions.Contains(t.Name))) return;
-        await using var scope = scopes.CreateAsyncScope();
-        if (scope.ServiceProvider.GetService<IraActions>() is not { } actions) return;
-        if (await actions.ProposedByAsync(result.CallId, cancellationToken) is { } action)
+        if (!result.Tools.Any(t => AiToolNames.Actions.Contains(t.Name))) return;
+        string? withdrawn;
+        if (!result.Tools.Any(t => t.Ok && AiToolNames.Actions.Contains(t.Name)))
         {
-            await SendAsync(chatId, IraActionText.AskPin(action), cancellationToken);
+            // A proposal tool failed after storing its action: the answer does not stand behind it.
+            withdrawn = await WithdrawUnshownAsync(chatId, result.CallId, "its proposal did not finish, so it was not offered.", cancellationToken);
         }
+        else
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            if (scope.ServiceProvider.GetService<IraActions>() is not { } actions) return;
+            if (await actions.ProposedByAsync(result.CallId, cancellationToken) is not { } action) return;
+            var replaced = await actions.ReplacedAsync(result.CallId, ActionConversation(chatId), cancellationToken);
+            string ask = (replaced.Count > 0 ? IraActionText.Replaces(replaced) + "\n" : string.Empty) + IraActionText.AskPin(action);
+            if (await SendAsync(chatId, ask, cancellationToken) is not null)
+            {
+                _offered[chatId] = action.Id;
+                return;
+            }
+
+            withdrawn = await WithdrawUnshownAsync(chatId, result.CallId, "Telegram refused its PIN request.", cancellationToken);
+        }
+
+        if (withdrawn is not null) await SendAsync(chatId, withdrawn, cancellationToken);
+    }
+
+    /// <summary>
+    /// Cancels what model call <paramref name="callId"/> proposed in this chat and the owner was never shown
+    /// (<see cref="IraActions.WithdrawProposedByAsync"/>), and says so: the line for the owner, or null when it proposed
+    /// nothing that still waited.
+    /// </summary>
+    private async Task<string?> WithdrawUnshownAsync(long chatId, long callId, string why, CancellationToken cancellationToken)
+    {
+        if (callId <= 0) return null;
+        await using var scope = scopes.CreateAsyncScope();
+        if (scope.ServiceProvider.GetService<IraActions>() is not { } actions) return null;
+        var (withdrawn, replaced) = await actions.WithdrawProposedByAsync(callId, ActionConversation(chatId), why, cancellationToken);
+        return withdrawn.Count == 0 ? null : IraActionText.Withdrawn(withdrawn, replaced);
     }
 
     private static JsonObject VerdictButtons(long callId) => Keyboard(("👍", $"fb:1:{callId}"), ("👎", $"fb:-1:{callId}"));

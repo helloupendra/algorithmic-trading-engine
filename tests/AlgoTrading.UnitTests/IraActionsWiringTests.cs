@@ -252,9 +252,9 @@ public sealed class IraActionsWiringTests
     [Fact]
     public async Task On_telegram_three_wrong_pins_lock_and_every_one_is_deleted()
     {
-        var (_, bot, assistant, actions) = await Telegram();
+        var (ai, bot, assistant, actions) = await Telegram();
         await actions.SetPinAsync(Upendra, Pin, null, requireCurrent: false, "Telegram", CancellationToken.None);
-        await PendingInChat(actions);
+        await ShownInChat(ai, assistant);
         bot.Sent.Clear();
 
         await assistant.HandleAsync(Private(OwnerChat, "0000", 21), CancellationToken.None);
@@ -295,6 +295,126 @@ public sealed class IraActionsWiringTests
         Assert.Empty(ai.Provider.Requests);
     }
 
+    /// <summary>
+    /// Review 2026-11-02, finding 1: the owner is shown action #1 and asks a follow-up; the model proposes #2, which
+    /// replaces #1, and then every model fails, so #2's PIN request is never sent. The PIN he types meaning #1 must run
+    /// nothing, and he must be told that nothing waits.
+    /// </summary>
+    [Fact]
+    public async Task On_telegram_a_pin_never_confirms_an_action_whose_pin_request_did_not_reach_the_chat()
+    {
+        var (ai, bot, assistant, _) = await Telegram();
+        await assistant.HandleAsync(Private(OwnerChat, $"/pin {Pin}", 2), CancellationToken.None);
+        ai.Provider.On(Judge1,
+            Tools((AiToolNames.ProposeAgentSwitch, """{"agent":"news-analyst","on":true}""")),
+            Answer("Switching the News Analyst on: confirm it with your PIN."),
+            Tools((AiToolNames.ProposeAgentSwitch, """{"agent":"trade-reviewer","on":true}""")));
+        // Then every model of the chain answers 500.
+        await assistant.HandleAsync(Private(OwnerChat, "Switch the news analyst on.", 10), CancellationToken.None);
+        long shown;
+        await using (var db = NewDb(_db)) shown = (await db.AiActions.SingleAsync()).Id;
+        Assert.StartsWith($"Action #{shown}: Switch the News Analyst on", bot.Texts[^1]);
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(OwnerChat, "Hmm, is the reviewer busy today?", 11), CancellationToken.None);
+        var afterFailure = bot.Texts;
+        bot.Sent.Clear();
+        await assistant.HandleAsync(Private(OwnerChat, Pin, 12), CancellationToken.None);
+
+        // The PIN ran nothing: not the Trade Reviewer switch he never saw, nor the News Analyst one it replaced.
+        Assert.Empty(_hands.Calls);
+        Assert.Equal("No action is waiting for a PIN. I deleted your message.", bot.Texts.Single());
+
+        // The failed answer said so, and said plainly that nothing waits for a PIN: neither the unseen #2 nor #1.
+        var failed = Assert.Single(afterFailure);
+        Assert.StartsWith("No model answered", failed);
+        Assert.Contains("Nothing is waiting for your PIN.", failed);
+        Assert.DoesNotContain(IraActionText.TypePin, failed);
+        await using var read = NewDb(_db);
+        var rows = await read.AiActions.OrderBy(a => a.Id).ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.Contains($"#{rows[1].Id}", failed);
+        Assert.Contains($"#{shown}", failed);
+        Assert.All(rows, a => Assert.Equal(AiActionStatus.Cancelled, a.Status));
+        Assert.Equal($"Replaced by action #{rows[1].Id}.", rows[0].Error);
+        Assert.StartsWith("Never shown", rows[1].Error);
+    }
+
+    [Fact]
+    public async Task On_telegram_a_pending_action_the_bot_never_offered_is_refused_and_cancelled_without_counting_a_wrong_pin()
+    {
+        var (_, bot, assistant, actions) = await Telegram();
+        await actions.SetPinAsync(Upendra, Pin, null, requireCurrent: false, "Telegram", CancellationToken.None);
+        // Stored by a proposal whose PIN request never reached the chat (a crash, a restart, a refused send).
+        var unseen = await PendingInChat(actions);
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(OwnerChat, Pin, 51), CancellationToken.None);
+        await assistant.HandleAsync(Private(OwnerChat, Pin, 52), CancellationToken.None);
+
+        Assert.Equal(new[] { "51", "52" }, bot.Sent.Where(s => s["method"] == "deleteMessage").Select(s => s["message_id"]));
+        Assert.StartsWith("Nothing was done.", bot.Texts[0]);
+        Assert.Contains($"Action #{unseen.Id}", bot.Texts[0]);
+        Assert.Contains("never reached you", bot.Texts[0]);
+        Assert.Equal("No action is waiting for a PIN. I deleted your message.", bot.Texts[1]);
+        Assert.Empty(_hands.Calls);
+        Assert.Null(_guard.LockedUntil(Admin));
+        await using var db = NewDb(_db);
+        var row = await db.AiActions.SingleAsync();
+        Assert.Equal(AiActionStatus.Cancelled, row.Status);
+        Assert.StartsWith("Never shown", row.Error);
+        Assert.Contains(db.ActivityLog, e => e.Path == $"ira/actions/{unseen.Id}/cancelled");
+    }
+
+    [Fact]
+    public async Task On_telegram_a_newer_proposal_that_was_shown_says_what_it_replaced_and_the_pin_runs_only_it()
+    {
+        var (ai, bot, assistant, _) = await Telegram();
+        await assistant.HandleAsync(Private(OwnerChat, $"/pin {Pin}", 2), CancellationToken.None);
+        ai.Provider.On(Judge1,
+            Tools((AiToolNames.ProposeAgentSwitch, """{"agent":"news-analyst","on":true}""")),
+            Answer("Switching the News Analyst on: confirm it with your PIN."),
+            Tools((AiToolNames.ProposeAgentSwitch, """{"agent":"trade-reviewer","on":true}""")),
+            Answer("The Trade Reviewer instead: confirm it with your PIN."));
+        await assistant.HandleAsync(Private(OwnerChat, "Switch the news analyst on.", 10), CancellationToken.None);
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(OwnerChat, "No, the reviewer.", 11), CancellationToken.None);
+
+        await using (var db = NewDb(_db))
+        {
+            var rows = await db.AiActions.OrderBy(a => a.Id).ToListAsync();
+            Assert.Equal((AiActionStatus.Cancelled, AiActionStatus.Pending), (rows[0].Status, rows[1].Status));
+            Assert.Equal($"Action #{rows[0].Id} is replaced by this one and will not run.\n{IraActionText.AskPin(rows[1])}", bot.Texts[^1]);
+        }
+
+        bot.Sent.Clear();
+        await assistant.HandleAsync(Private(OwnerChat, Pin, 12), CancellationToken.None);
+
+        Assert.Equal("Done: agent_switch for upendra.", bot.Texts.Single());
+        var ran = Assert.Single(_hands.Calls);
+        Assert.Equal(AiActionKind.AgentSwitch, ran.Kind);
+        Assert.Equal(AiCatalog.TradeReviewer, Assert.IsType<IraAgentSwitch>(ran.Target).Agent);
+    }
+
+    [Fact]
+    public async Task On_telegram_a_shown_action_that_expired_runs_nothing()
+    {
+        var (ai, bot, assistant, actions) = await Telegram();
+        await actions.SetPinAsync(Upendra, Pin, null, requireCurrent: false, "Telegram", CancellationToken.None);
+        var shown = await ShownInChat(ai, assistant);
+        Assert.Equal(IraActionText.AskPin(shown), bot.Texts[^1]);
+        bot.Sent.Clear();
+        _time.Advance(TimeSpan.FromMinutes(3));
+
+        await assistant.HandleAsync(Private(OwnerChat, Pin, 61), CancellationToken.None);
+
+        Assert.Equal($"Action #{shown.Id} expired at 10:32 IST: nothing was done. Ask again.", bot.Texts.Single());
+        Assert.Empty(_hands.Calls);
+        await using var db = NewDb(_db);
+        Assert.Equal(AiActionStatus.Expired, (await db.AiActions.SingleAsync()).Status);
+    }
+
     [Fact]
     public async Task On_telegram_a_pin_changes_only_with_the_old_one_and_the_message_is_deleted()
     {
@@ -329,6 +449,17 @@ public sealed class IraActionsWiringTests
     private static Task<AiAction> PendingInChat(IraActions actions) =>
         actions.ProposeAsync(Upendra, new AiToolCaller(AiCatalog.DeskAssistant, "telegram", "upendra", Admin, TelegramAssistant.ActionConversation(OwnerChat), 5),
             new IraProposal(AiActionKind.AgentSwitch, """{"agent":"news-analyst","agentName":"News Analyst","on":true}""", "Switch the News Analyst on."), CancellationToken.None);
+
+    /// <summary>An action proposed through the bot, as the owner's own question makes one, whose PIN request reached the chat.</summary>
+    private async Task<AiAction> ShownInChat(Services ai, TelegramAssistant assistant)
+    {
+        ai.Provider.On(Judge1,
+            Tools((AiToolNames.ProposeAgentSwitch, """{"agent":"news-analyst","on":true}""")),
+            Answer("Switching the News Analyst on: confirm it with your PIN."));
+        await assistant.HandleAsync(Private(OwnerChat, "Switch the news analyst on.", 9), CancellationToken.None);
+        await using var db = NewDb(_db);
+        return await db.AiActions.SingleAsync(a => a.Status == AiActionStatus.Pending);
+    }
 
     private async Task<(Services Ai, Bot Bot, TelegramAssistant Assistant, IraActions Actions)> Telegram()
     {

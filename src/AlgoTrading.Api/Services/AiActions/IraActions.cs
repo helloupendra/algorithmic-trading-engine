@@ -46,6 +46,12 @@ public enum IraConfirmKind
 /// <summary>What a confirm or a cancel came to, with the owner's line.</summary>
 public sealed record IraConfirmResult(IraConfirmKind Kind, string Message, AiAction? Action, int AttemptsLeft = 0, DateTime? LockedUntilUtc = null);
 
+/// <summary>
+/// The actions a model call proposed that the owner was never shown, now cancelled, and the older actions of earlier
+/// answers they had replaced (which stay cancelled: nothing is restored behind the owner's back).
+/// </summary>
+public sealed record IraWithdrawal(IReadOnlyList<AiAction> Withdrawn, IReadOnlyList<AiAction> Replaced);
+
 /// <summary>How setting the PIN ended.</summary>
 public enum IraPinChange
 {
@@ -65,8 +71,11 @@ public enum IraPinChange
 /// <remarks>
 /// <para>
 /// A proposal tool resolves its target (<see cref="IraActionResolver"/>) and stores it here as a pending
-/// <see cref="AiAction"/>, replacing any older pending one in the same conversation, so a PIN always confirms the one
-/// the owner was just shown. It waits <c>Ai:Actions:ConfirmSeconds</c>.
+/// <see cref="AiAction"/>, replacing any older pending one in the same conversation. It waits
+/// <c>Ai:Actions:ConfirmSeconds</c>. A PIN confirms only an action the owner was shown: the console and the Ira app
+/// confirm by the id on the card they show; on Telegram the bot confirms only the action whose PIN request it
+/// delivered to the chat, and cancels one that was never shown (<see cref="WithdrawAsync"/>,
+/// <see cref="WithdrawProposedByAsync"/>), so a PIN typed for one action can never carry out another.
 /// </para>
 /// <para>
 /// The owner confirms with his PIN: typed on Telegram (handled by the bot before any model is asked) or in the
@@ -109,6 +118,12 @@ public sealed class IraActions(
     public int ConfirmSeconds => Math.Max(10, settings.CurrentValue.Actions.ConfirmSeconds);
 
     public static string PinKey(long userId) => PinKeyPrefix + userId.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Why an action ended when a newer proposal in its conversation replaced it (its <see cref="AiAction.Error"/>).</summary>
+    public static string ReplacedBy(long actionId) => $"Replaced by action #{actionId.ToString(CultureInfo.InvariantCulture)}.";
+
+    /// <summary>How the <see cref="AiAction.Error"/> of an action cancelled because the owner was never shown it starts.</summary>
+    public const string NeverShownPrefix = "Never shown: ";
 
     // ---------- owners ----------
 
@@ -211,7 +226,7 @@ public sealed class IraActions(
 
     /// <summary>
     /// Stores <paramref name="proposal"/> as the conversation's pending action; any older one still waiting there is
-    /// cancelled (or marked expired), so the PIN always confirms the action just shown.
+    /// cancelled (or marked expired): only a conversation's newest proposal can be confirmed.
     /// </summary>
     public async Task<AiAction> ProposeAsync(IraOwner owner, AiToolCaller caller, IraProposal proposal, CancellationToken cancellationToken)
     {
@@ -250,7 +265,7 @@ public sealed class IraActions(
             }
             else
             {
-                Close(old, AiActionStatus.Cancelled, $"Replaced by action #{action.Id}.");
+                Close(old, AiActionStatus.Cancelled, ReplacedBy(action.Id));
                 Audit(old, "cancelled", 200, false, $"Replaced by action #{action.Id} before it was confirmed ({old.Channel}): {old.Summary}");
             }
         }
@@ -280,6 +295,54 @@ public sealed class IraActions(
             .Where(a => a.CallId == callId && a.Status == AiActionStatus.Pending)
             .OrderByDescending(a => a.Id)
             .FirstOrDefaultAsync(cancellationToken);
+
+    /// <summary>
+    /// The actions of earlier answers in <paramref name="conversationId"/> that a proposal of model call
+    /// <paramref name="callId"/> replaced, oldest first: the owner may have been shown one of them.
+    /// </summary>
+    public async Task<IReadOnlyList<AiAction>> ReplacedAsync(long callId, string conversationId, CancellationToken cancellationToken)
+    {
+        var ids = await db.AiActions.AsNoTracking()
+            .Where(a => a.CallId == callId && a.ConversationId == conversationId)
+            .Select(a => a.Id)
+            .ToListAsync(cancellationToken);
+        if (ids.Count == 0) return [];
+        var reasons = ids.Select(ReplacedBy).ToList();
+        return await db.AiActions.AsNoTracking()
+            .Where(a => a.ConversationId == conversationId && a.Status == AiActionStatus.Cancelled
+                        && a.CallId != callId && reasons.Contains(a.Error))
+            .OrderBy(a => a.Id)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Cancels every action model call <paramref name="callId"/> proposed in <paramref name="conversationId"/> that still
+    /// waits, because its PIN request was never shown to the owner (the answer failed, or the request could not be
+    /// sent), so no PIN can confirm it. Says which it cancelled, and which older actions they had replaced.
+    /// </summary>
+    public async Task<IraWithdrawal> WithdrawProposedByAsync(long callId, string conversationId, string why, CancellationToken cancellationToken)
+    {
+        List<AiAction> waiting;
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            waiting = await db.AiActions
+                .Where(a => a.CallId == callId && a.ConversationId == conversationId && a.Status == AiActionStatus.Pending)
+                .OrderBy(a => a.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var action in waiting) Withdraw(action, why);
+            if (waiting.Count > 0) await db.SaveChangesAsync(CancellationToken.None);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+
+        if (waiting.Count == 0) return new IraWithdrawal([], []);
+        logger.LogInformation("Ira actions: {Ids} cancelled, proposed by call {CallId} but never shown: {Why}",
+            string.Join(", ", waiting.Select(a => "#" + a.Id.ToString(CultureInfo.InvariantCulture))), callId, why);
+        return new IraWithdrawal(waiting, await ReplacedAsync(callId, conversationId, cancellationToken));
+    }
 
     // ---------- confirming ----------
 
@@ -347,7 +410,18 @@ public sealed class IraActions(
     }
 
     /// <summary>Cancels the owner's action <paramref name="actionId"/> while it waits.</summary>
-    public async Task<IraConfirmResult> CancelAsync(long actionId, IraOwner owner, string channel, CancellationToken cancellationToken)
+    public Task<IraConfirmResult> CancelAsync(long actionId, IraOwner owner, string channel, CancellationToken cancellationToken) =>
+        EndAsync(actionId, owner, channel, null, cancellationToken);
+
+    /// <summary>
+    /// Cancels the owner's action <paramref name="actionId"/>, while it waits, because he was never shown it
+    /// (<paramref name="why"/>): a PIN he typed for something else must not carry it out.
+    /// </summary>
+    public Task<IraConfirmResult> WithdrawAsync(long actionId, IraOwner owner, string channel, string why, CancellationToken cancellationToken) =>
+        EndAsync(actionId, owner, channel, why, cancellationToken);
+
+    /// <param name="neverShown">Why the owner was never shown it; null when he cancels it himself.</param>
+    private async Task<IraConfirmResult> EndAsync(long actionId, IraOwner owner, string channel, string? neverShown, CancellationToken cancellationToken)
     {
         await Gate.WaitAsync(cancellationToken);
         try
@@ -367,6 +441,14 @@ public sealed class IraActions(
                 Audit(action, "expired", 410, false, $"Expired before the PIN ({action.Channel}): {action.Summary}");
                 await db.SaveChangesAsync(CancellationToken.None);
                 return new IraConfirmResult(IraConfirmKind.Expired, IraActionText.Expired(action), action);
+            }
+
+            if (neverShown is not null)
+            {
+                Withdraw(action, neverShown);
+                await db.SaveChangesAsync(CancellationToken.None);
+                logger.LogInformation("Ira actions: #{Id} cancelled, never shown to {User}: {Why}", action.Id, owner.UserName, neverShown);
+                return new IraConfirmResult(IraConfirmKind.Cancelled, IraActionText.NeverShown(action), action);
             }
 
             Close(action, AiActionStatus.Cancelled, $"Cancelled by {owner.UserName}.");
@@ -457,6 +539,13 @@ public sealed class IraActions(
     {
         action.Status = status;
         action.Error = why;
+    }
+
+    /// <summary>Cancels a waiting action the owner was never shown, with its activity-log row.</summary>
+    private void Withdraw(AiAction action, string why)
+    {
+        Close(action, AiActionStatus.Cancelled, Cut(NeverShownPrefix + why, 1000));
+        Audit(action, "cancelled", 200, false, $"Cancelled before the owner was shown it ({action.Channel}): {why} {action.Summary}");
     }
 
     private void LogLocked(IraOwner owner, DateTime until) =>

@@ -215,6 +215,42 @@ public static class IraActionText
 
     public static string Cancelled(AiAction action) => $"Cancelled action #{action.Id}: nothing was done.";
 
+    /// <summary>
+    /// A typed PIN met an action whose PIN request never reached the chat: it is cancelled instead of carried out.
+    /// </summary>
+    public static string NeverShown(AiAction action) =>
+        $"Nothing was done. Action #{action.Id} ({Brief(action)}) was proposed, but its PIN request never reached you, " +
+        "so a PIN cannot confirm it: I cancelled it. Ask again if you want it.";
+
+    /// <summary>
+    /// After an answer that failed (or whose PIN request could not be sent): the actions it proposed that were never
+    /// shown, now cancelled, and the older ones they had replaced, which do not come back.
+    /// </summary>
+    public static string Withdrawn(IReadOnlyList<AiAction> withdrawn, IReadOnlyList<AiAction> replaced)
+    {
+        var text = new System.Text.StringBuilder("Nothing is waiting for your PIN.");
+        foreach (var action in withdrawn)
+        {
+            text.Append($" Action #{action.Id} ({Brief(action)}) was proposed during this answer but never shown to you, so I cancelled it.");
+        }
+
+        foreach (var action in replaced)
+        {
+            text.Append($" It replaced action #{action.Id} ({Brief(action)}), which will not run either.");
+        }
+
+        text.Append(" Ask again if you still want it.");
+        return text.ToString();
+    }
+
+    /// <summary>The line above a PIN request when its action replaced older ones still waiting: those will not run.</summary>
+    public static string Replaces(IReadOnlyList<AiAction> replaced) => replaced.Count == 1
+        ? $"Action #{replaced[0].Id} is replaced by this one and will not run."
+        : $"Actions {string.Join(", ", replaced.Select(a => "#" + a.Id.ToString(CultureInfo.InvariantCulture)))} are replaced by this one and will not run.";
+
+    /// <summary>An action's summary inside a sentence: without its full stop, and short.</summary>
+    private static string Brief(AiAction action) => Cut(action.Summary.Trim().TrimEnd('.'), 160);
+
     /// <summary>Why an action that is no longer waiting cannot be confirmed or cancelled.</summary>
     public static string NotWaiting(AiAction action) => action.Status switch
     {

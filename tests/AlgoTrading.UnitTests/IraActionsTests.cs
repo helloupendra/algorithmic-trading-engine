@@ -208,6 +208,30 @@ public sealed class IraActionsTests
         Assert.Equal(AiActionStatus.Pending, (await db.AiActions.SingleAsync(a => a.Id == second.Id)).Status);
     }
 
+    [Fact]
+    public async Task Withdrawing_a_calls_unshown_proposal_cancels_only_it_names_what_it_replaced_and_restores_nothing()
+    {
+        await SetPin();
+        var shown = await ProposedStop(caller: Caller(conversation: "tg-77") with { CallId = 41 });
+        var unseen = await ProposedStop("""{"run_id":540}""", Caller(conversation: "tg-77") with { CallId = 42 });
+        var elsewhere = await ProposedStop(caller: Caller(conversation: "c-other") with { CallId = 42 });
+
+        var (withdrawn, replaced) = await Actions().WithdrawProposedByAsync(42, "tg-77", "the answer failed.", CancellationToken.None);
+        var nothing = await Actions().WithdrawProposedByAsync(42, "tg-77", "again.", CancellationToken.None);
+        var confirm = await Actions().ConfirmAsync(unseen.Id, Upendra, Pin, AiActionChannel.Console, CancellationToken.None);
+
+        Assert.Equal(unseen.Id, Assert.Single(withdrawn).Id);
+        Assert.Equal(shown.Id, Assert.Single(replaced).Id);
+        Assert.Empty(nothing.Withdrawn);
+        Assert.Equal(IraConfirmKind.NotPending, confirm.Kind);
+        Assert.Empty(_hands.Calls);
+        await using var db = NewDb(_db);
+        var cancelled = await db.AiActions.SingleAsync(a => a.Id == unseen.Id);
+        Assert.Equal((AiActionStatus.Cancelled, "Never shown: the answer failed."), (cancelled.Status, cancelled.Error));
+        Assert.Equal(AiActionStatus.Cancelled, (await db.AiActions.SingleAsync(a => a.Id == shown.Id)).Status);
+        Assert.Equal(AiActionStatus.Pending, (await db.AiActions.SingleAsync(a => a.Id == elsewhere.Id)).Status);
+    }
+
     // ---------- nothing without a PIN, and the PIN itself ----------
 
     [Fact]
