@@ -181,6 +181,7 @@ public static class DependencyInjection
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundStore>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundNavSync>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundHistory>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MutualFunds.MutualFundQueries>();
 
 
         services.AddScoped<ISimulationService, SimulationService>();
