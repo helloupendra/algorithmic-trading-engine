@@ -15,7 +15,22 @@ Placing lives in `ManualOrderService` (10 Oct), not in the controller, because t
 | The ticket, `POST /api/ManualOrders` (`ManualOrdersController.Place`) | The signed-in user's | Anything the ticket offers: any segment, BUY or SELL, a limit or the far side of the book, optional stop and target, the carry tick |
 | The [AI Trader](ai_trader.md#how-a-plan-becomes-an-order), live | Its own (`ai-trader`) only | A BUY of an index option, lots × lot size, at the ask, its plan's stop and target, intraday |
 
-Both get the same rules and the same rows: the instrument must be in the master and unexpired; a limit must sit on the tick grid; with no limit a buy fills at the ask and a sell at the bid (else the last trade); with no price nothing is booked; a stop or target on the wrong side of the fill is refused; the book is found or opened (`ManualBook`); one `OPEN_GROUP` signal with the price final (`LegPricesAreFinal`); the stop, target and carry tick written on the new position, with the desk events. So the risk guard, the intraday square-off and expiry settlement treat an AI Trader position exactly as a hand-placed one.
+Both get the same rules and the same rows: the instrument must be in the master and unexpired; a limit must sit on the tick grid; the order is priced by the paper-fill rules a strategy's live leg is priced by (below); with no price nothing is booked; a stop or target on the wrong side of the fill is refused; the book is found or opened (`ManualBook`); one `OPEN_GROUP` signal, its leg priced live by the engine as it is booked (with the limit on the leg); the stop, target and carry tick written on the new position, with the desk events. So the risk guard, the intraday square-off and expiry settlement treat an AI Trader position exactly as a hand-placed one.
+
+### How a ticket order is filled (2 Nov)
+The ticket's orders go through the same paper-fill guards as a strategy's (`PaperTradingService`, `PaperFillPricing`, section `PaperFills` of the settings):
+
+| Order | Fills at | Refused when |
+|---|---|---|
+| **Market** BUY / SELL | the ask / the bid; with no book, the last trade plus / less half the spread (0.15%) | there is no quote; or, while the contract's market is open, its quote is older than `MaxQuoteAgeSeconds` (60 s) |
+| **Limit** BUY | the ask (as a market buy would), when the ask is **at or below** the limit | the ask is above the limit; or as for a market order |
+| **Limit** SELL | the bid, when the bid is **at or above** the limit | the bid is below the limit; or as for a market order |
+
+A limit is a cap, never the fill price: a BUY limit of 0.05 on an option offered at 150 is refused ("Not filled: a BUY limit of 0.05 is below the ask 150.00, so it would not fill now…"), and a BUY limit of 155 fills at the 150 ask. There are **no resting orders**: a limit the book has not reached is refused, not kept until it is. Out of the market's hours the last quote still prices an order, as it does a strategy's (every quote is old then, and the order's row says how old).
+
+The service asks the engine what the order would fill at (`IPaperTradingService.QuoteLiveFillAsync`), checks the limit, the stop and target against that price and refuses with a clear message; then books the leg *live*, not as final, so the engine prices it again on the same rules and holds it to the limit. Should the quote go stale, or the book move past the limit, in the moment between, the engine refuses the signal and nothing is booked ("Not filled: No fill price for …"). The reply quotes the price the engine booked. `CreateSimulationSignalRequest.LegPricesAreFinal` and the leg's `LimitPrice` are never read from a request body, so a runner cannot use either.
+
+Until 2 Nov the ticket sent its price as final, past those guards: a limit was booked at the limit whatever the book said (a BUY limit of 0.05 on a ₹150 option showed ≈ +₹11,000 a lot at its first mark), and a market order took a quote of any age, such as one frozen by a feed stall (review of 2 Nov, F2).
 
 What the service adds for a caller other than the ticket:
 - `Source`: recorded on the order's signal beside the rest (the AI Trader names its decision, `{agent, decisionId}`); the ticket sends none, and its signal reads as before;
@@ -147,6 +162,14 @@ An open option that nothing can price (no quote for it or its underlying) shows 
 
 ## 4. In the console
 - **Trade → Ticket** (`/trade/ticket`, the same page for every role): the ticket, with the **Carry forward (hold overnight)** tick above Buy/Sell and a line under it that says what happens to the order (`Intraday: squared off at the close (15:30 IST)…`, or the MCX close for a commodity), and under the ticket the **Manual book** run card.
+
+The ticket (`web/src/lib/ticket.ts`, since 2 Nov, review F1):
+- it shows and orders only the instrument the box names now. The instrument query keeps no placeholder across symbols, and the page accepts an answer only for the symbol in the box, so clearing or retyping the box hides the previous contract at once instead of leaving it on screen, frozen and orderable;
+- Buy and Sell stay disabled until that instrument's own answer has arrived (one held in the cache from an earlier visit is shown, but not traded on, until it is refreshed), and while its poll is failing;
+- quantity, Market/Limit, the limit, stop-loss, target and the carry tick are cleared when the instrument changes: 50 shares of SBIN never become 50 lots of a NIFTY option;
+- **Buy at X / Sell at X** is the price the API would fill a market order at now (`buyAt` / `sellAt` from `GET /api/ManualOrders/instrument`, priced by the same rules as the order). On a quote too old while the market is open both are empty, the buttons are disabled, and the ticket says why (`untradableReason`). A limit needs a live price too;
+- with a limit, the buttons read **Buy, limit X**, and the line under the limit says which side the book has not reached (red when neither side would fill);
+- the confirm names the quantity in its unit and what it comes to, e.g. `BUY 2 lots (130 qty) of … at 101.5 (the price it fills at now), intraday?`.
 - **Trade → Runs** (`/trade/runs`) and a run's own page (`/trade/runs/{runId}`, which the API refuses for someone else's run): one run card per run.
 - **Trade → Positions** (`/trade/positions`): every open leg of every book the viewer may see, the manual books first, each with its **Carry** tick and **Square off**. The checkup's manual-book items link here.
 
@@ -159,7 +182,9 @@ On every run card:
 The table scrolls sideways inside its frame on a phone, like every table in the console.
 
 ## 5. API
-`POST /api/ManualOrders` takes `carryForward` (bool, default false — intraday) with the order; the response echoes it.
+`POST /api/ManualOrders` takes `carryForward` (bool, default false — intraday) with the order; the response echoes it. `limitPrice` is a cap (section "How a ticket order is filled"); a limit the book has not reached answers 400 with `{ message, limitPrice, bid, ask }`, and a missing or stale quote 400 with `{ message }`. `price` in the reply is the price booked, `priceBasis` how (`ask`, `bid`, `last trade plus half the spread`, `last trade less half the spread`).
+
+`GET /api/ManualOrders/instrument`: `buyAt` / `sellAt` are what a market order would fill at now, null when it would be refused; `tradable` is true when either side has a price; `untradableReason` says why a quote that exists gives none (e.g. `its latest quote is 300 s old; while the market is open a fill needs one under 60 s`).
 
 `PUT /api/Strategy/runs/{runId}/positions/{positionId}/carry-forward` with `{ "carryForward": true | false }` ticks or unticks one position, in the book or in a strategy run. Admin, or the owner of the run (403 otherwise). Only an **open** position of a **running, non-recap** run: anything else answers 409 and changes nothing. Asking for the value it already has answers 200 with `changed: false` and writes nothing.
 
@@ -173,6 +198,7 @@ The table scrolls sideways inside its frame on a phone, like every table in the 
 ## Components
 - `src/AlgoTrading.Api/Controllers/ManualOrdersController.cs` — ticket, book, place (with the carry tick), through the service below.
 - `src/AlgoTrading.Api/Services/ManualOrderService.cs` — placing one order into a user's book: price, checks, booking, levels and tick; shared with the AI Trader.
+- `src/AlgoTrading.Infrastructure/Services/PaperTradingService.cs` (`QuoteLiveFillAsync`, `PriceLiveLeg`) and `PaperFillPricing.cs` (`BeyondLimit`) — the live-fill rules the ticket shares with strategies, and the limit.
 - `src/AlgoTrading.Api/Services/ManualBook.cs` — finding and opening a user's book, shared with the close's carry.
 - `src/AlgoTrading.Api/Services/ManualIntradaySquareOff.cs` — which unticked positions are due at which close, and the square-off.
 - `src/AlgoTrading.Api/Services/PositionCarryForward.cs` — changing the tick; moving a strategy's ticked legs into the book at the close.
@@ -184,5 +210,6 @@ The table scrolls sideways inside its frame on a phone, like every table in the 
 - `scripts/market-close.sh` — the nightly close, which skips the book.
 - `web/src/lib/greeks.ts`, `web/src/pages/strategies/RunCard.tsx` — the column group, the totals line, the LTP age, the Carry column.
 - `web/src/lib/carry.ts`, `web/src/pages/trading/ManualOrderPage.tsx` — the tick's rules and words; the ticket's tick.
+- `web/src/lib/ticket.ts` — which instrument the ticket may show and order, when Buy and Sell may be pressed, the form per instrument, the confirm's words.
 
-Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`, `CarryForwardTests.cs`, `DeskEventTests.cs` (the ticket), `AiTraderExecutionTests.cs` (the AI Trader's buys and exits); `web/src/lib/greeks.test.ts`, `carry.test.ts`, `positions.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.
+Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`, `CarryForwardTests.cs`, `DeskEventTests.cs` (the ticket), `ManualTicketFillTests.cs` (the ticket's fills: stale quotes, limits, the engine's hold on the limit), `PaperTradingServiceTests.cs`, `AiTraderExecutionTests.cs` (the AI Trader's buys and exits); `web/src/lib/greeks.test.ts`, `carry.test.ts`, `positions.test.ts`, `ticket.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.
