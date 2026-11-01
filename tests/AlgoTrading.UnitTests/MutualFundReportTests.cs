@@ -38,7 +38,7 @@ public class MutualFundReportTests
             BackfillDone = true,
             Ter = new MutualFundTer { NsdlSchemeCode = "UTIM/O/O/EIN/00/03/0013", Date = AsOf, SchemeName = "UTI Nifty 50 Index Fund", RegularTer = 0.37m, DirectTer = 0.25m },
             RiskFreePct = 5.73,
-            RiskFreeSource = "RBI, Weekly Statistical Supplement: 91-day Treasury Bill (primary) yield, week ended 16 Oct 2026",
+            RiskFreeSource = "RBI, National Summary Data Page (Ratios and Rates): 91-day Treasury Bill (primary) yield, week ended 16 Oct 2026",
             RiskFreeAsOf = new DateOnly(2026, 10, 16),
         };
         change?.Invoke(b);
