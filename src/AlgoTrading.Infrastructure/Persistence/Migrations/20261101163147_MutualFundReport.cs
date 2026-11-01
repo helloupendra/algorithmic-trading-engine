@@ -52,7 +52,7 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                 name: "mf_ter",
                 columns: table => new
                 {
-                    NsdlSchemeCode = table.Column<string>(type: "character varying(40)", maxLength: 40, nullable: false),
+                    NsdlSchemeCode = table.Column<string>(type: "character varying(120)", maxLength: 120, nullable: false),
                     Date = table.Column<DateOnly>(type: "date", nullable: false),
                     SchemeName = table.Column<string>(type: "character varying(300)", maxLength: 300, nullable: false),
                     NameKey = table.Column<string>(type: "character varying(300)", maxLength: 300, nullable: false),

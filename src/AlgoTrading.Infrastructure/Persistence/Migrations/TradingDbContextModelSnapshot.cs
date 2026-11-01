@@ -3672,8 +3672,8 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MutualFundTer", b =>
                 {
                     b.Property<string>("NsdlSchemeCode")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
 
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date");

@@ -143,8 +143,10 @@ public static class SystemSettingKeys
     public const string MutualFundsBackfill = "mutualfunds.backfill";
 
     /// <summary>
-    /// The fund report's nightly jobs, as JSON: the benchmark (TRI) sync and its one-time backfill, the TER sync and
-    /// the category statistics: when each last ran, whether it worked and what it reached.
+    /// The prefix of the fund report's nightly jobs' records, as JSON, one key each so every value stays well under
+    /// the column's 2,000 characters: ".benchmarks" (the last TRI sync), ".benchmarks.history" (each index's one-time
+    /// history fetch), ".ter" (the last TER sync), ".stats" (the last category ranking) and ".requested" (jobs an
+    /// admin asked for).
     /// </summary>
     public const string MutualFundsAnalytics = "mutualfunds.analytics";
 

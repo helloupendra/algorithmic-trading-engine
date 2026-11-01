@@ -72,7 +72,7 @@ public class MutualFundTerConfiguration : IEntityTypeConfiguration<MutualFundTer
     {
         builder.ToTable("mf_ter");
         builder.HasKey(x => new { x.NsdlSchemeCode, x.Date });
-        builder.Property(x => x.NsdlSchemeCode).HasMaxLength(40);
+        builder.Property(x => x.NsdlSchemeCode).HasMaxLength(120);
         builder.Property(x => x.SchemeName).IsRequired().HasMaxLength(300);
         builder.Property(x => x.NameKey).IsRequired().HasMaxLength(300);
         builder.Property(x => x.SchemeType).IsRequired().HasMaxLength(40);
