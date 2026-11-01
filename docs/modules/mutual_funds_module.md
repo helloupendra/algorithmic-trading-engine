@@ -30,8 +30,10 @@ Code:
 
 AMFI's own page says 90 days per history request; the server answered a
 105-day window too, but the backfill keeps to 90. A 90-day open-ended window
-is 40–80 MB of text (113,000 NAVs in 2006, 445,000 in 2023, 540,000 in 2026),
-and AMFI takes from a few seconds to two minutes to produce it.
+is 40–80 MB of text, and AMFI takes from a few seconds to two minutes to
+produce it. A whole window, all three types, held 113,000 NAVs in 2006,
+578,000 in 2020 (close-ended FMPs were many then), 445,000 in 2023 and
+540,000 in 2026.
 
 ## Schedule
 
@@ -124,19 +126,20 @@ earlier), each window as open-ended, close-ended and interval schemes in turn.
 - **Out of market hours.** It does not run 09:00–15:40 IST on trading days
   (15:55 from 7 Dec 2026); a window in progress at 09:00 finishes its current
   request.
-- **Failures.** A request that fails is tried again after 30 s, 2 and 5
-  minutes; then the backfill waits an hour and tries that window again. An
-  open-ended window that comes back empty is a failure, never a gap: every
-  window since 2006 has open-ended NAVs.
+- **Failures.** A request that fails, or takes longer than 20 minutes, is
+  tried again after 30 s, 2 and 5 minutes; then the backfill waits an hour and
+  tries that window again. An open-ended window that comes back empty is a
+  failure, never a gap: every window since 2006 has open-ended NAVs.
 - **Compression as it goes.** After each window it compresses the chunks it has
   finished with, so it never leaves gigabytes for the 12-hourly policy job to
   compress in one go, perhaps during a session.
 - `maxWindows=N` stops after N windows (a trial); `restart=true` starts again
   from yesterday.
 
-Measured on a Mac against AMFI (1 Nov 2026): 17 s to 2 minutes a window. From
-yesterday back to April 2006 is 84 windows: expect about 25–30 million NAVs,
-two to four hours, and roughly 350 MB once compressed. Follow it on the
+Measured on a Mac against AMFI (1 Nov 2026), six windows: 17 s to 2 minutes
+a window. From yesterday back to April 2006 is 84 windows: expect about 30–40
+million NAVs, two to four hours on the server, and roughly 400 MB once
+compressed (3–4 GB before). Follow it on the
 coverage page or in `coverage` → `backfill`; check a few schemes with
 `GET api/MutualFunds/{code}/check` when it is done.
 

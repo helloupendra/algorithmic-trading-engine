@@ -48,6 +48,9 @@ public sealed class MutualFundHistory
 
     private static readonly TimeSpan[] RetryAfter = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5)];
 
+    /// <summary>The longest one history request may take, download and writes included (AMFI takes up to two minutes to start).</summary>
+    public static readonly TimeSpan RequestDeadline = TimeSpan.FromMinutes(20);
+
     /// <summary>After a request fails for good, the backfill waits this long before it tries the window again.</summary>
     public static readonly TimeSpan FailedPause = TimeSpan.FromHours(1);
 
@@ -223,28 +226,40 @@ public sealed class MutualFundHistory
             bool noData = false;
             string url = Url(_options.HistoryUrl, type, from, to);
 
-            using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName)
-                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-
+            // HttpClient's timeout ends at the headers; this one covers the whole
+            // download, so a stream that stalls half-way is given up and retried.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(RequestDeadline);
             try
             {
+                using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName)
+                    .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+                response.EnsureSuccessStatusCode();
+                await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+
+                var lines = new AmfiNavLineReader(counts);
                 var batch = new List<AmfiNavRow>(MutualFundStore.BatchSize);
-                foreach (var row in AmfiNavParser.Parse(reader, counts))
+                string? line;
+                while ((line = await reader.ReadLineAsync(deadline.Token)) is not null)
                 {
+                    if (lines.Read(line) is not { } row) continue;
                     batch.Add(row);
                     if (batch.Count < MutualFundStore.BatchSize) continue;
                     written += await WriteBatchAsync(batch, ct);
                     batch.Clear();
                 }
 
+                lines.Finish();
                 if (batch.Count > 0) written += await WriteBatchAsync(batch, ct);
             }
             catch (AmfiNoDataException)
             {
                 noData = true;
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                throw new TimeoutException($"AMFI's answer took longer than {RequestDeadline.TotalMinutes:N0} minutes.");
             }
 
             if (type == 1 && (noData || counts.Rows == 0))

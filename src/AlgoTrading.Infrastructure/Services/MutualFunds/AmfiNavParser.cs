@@ -81,38 +81,37 @@ public static partial class AmfiNavParser
     /// <exception cref="FormatException">Not an AMFI NAV file, or one without the columns this needs.</exception>
     public static IEnumerable<AmfiNavRow> Parse(TextReader reader, AmfiParseCounts? counts = null)
     {
-        counts ??= new AmfiParseCounts();
-        var columns = ReadHeader(reader);
-
-        string category = string.Empty, amc = string.Empty;
+        var lines = new AmfiNavLineReader(counts ?? new AmfiParseCounts());
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
-            string text = line.Trim();
-            if (text.Length == 0) continue;
-
-            if (!text.Contains(';'))
-            {
-                if (SectionLine().Match(text) is { Success: true } section)
-                    category = $"{Tidy(section.Groups["type"].Value)}({Tidy(section.Groups["category"].Value)})";
-                else
-                    amc = Tidy(text);
-                continue;
-            }
-
-            var fields = text.Split(';');
-            if (fields.Length < columns.Width || !int.TryParse(fields[columns.Code].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int code))
-            {
-                counts.Unreadable++;
-                continue;
-            }
-
-            var row = ToRow(fields, columns, code, category, amc);
-            counts.Rows++;
-            if (row.Nav is null || row.Date is null) counts.RowsWithoutNav++;
-            yield return row;
+            if (lines.Read(line) is { } row) yield return row;
         }
+
+        lines.Finish();
     }
+
+    /// <summary>The scheme line as a row, or null for a line that is not one (it is counted).</summary>
+    internal static AmfiNavRow? ReadSchemeLine(string text, Columns columns, string category, string amc, AmfiParseCounts counts)
+    {
+        var fields = text.Split(';');
+        if (fields.Length < columns.Width || !int.TryParse(fields[columns.Code].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int code))
+        {
+            counts.Unreadable++;
+            return null;
+        }
+
+        var row = ToRow(fields, columns, code, category, amc);
+        counts.Rows++;
+        if (row.Nav is null || row.Date is null) counts.RowsWithoutNav++;
+        return row;
+    }
+
+    /// <summary>A section line's category, written as the daily file writes it, or null for an AMC line.</summary>
+    internal static string? SectionOf(string text) =>
+        SectionLine().Match(text) is { Success: true } section
+            ? $"{Tidy(section.Groups["type"].Value)}({Tidy(section.Groups["category"].Value)})"
+            : null;
 
     private static AmfiNavRow ToRow(string[] fields, Columns columns, int code, string category, string amc)
     {
@@ -199,19 +198,12 @@ public static partial class AmfiNavParser
         return IsinShape().IsMatch(value) ? value : null;
     }
 
-    private static string Tidy(string text) => Whitespace().Replace(text, " ").Trim();
+    internal static string Tidy(string text) => Whitespace().Replace(text, " ").Trim();
 
-    private static Columns ReadHeader(TextReader reader)
+    /// <summary>The columns of AMFI's header line, the file's first non-blank line.</summary>
+    internal static Columns Header(string line)
     {
-        string? line;
-        do
-        {
-            line = reader.ReadLine();
-        } while (line is not null && line.Trim().Length == 0);
-
-        if (line is null) throw new FormatException("AMFI's answer was empty.");
-
-        string first = line.Trim().TrimStart('﻿');
+        string first = line.Trim().TrimStart('\uFEFF');
         if (!first.StartsWith(HeaderStart, StringComparison.OrdinalIgnoreCase))
         {
             if (first.StartsWith('<'))
@@ -240,7 +232,7 @@ public static partial class AmfiNavParser
 
     private static string Truncate(string text, int length) => text.Length <= length ? text : text[..length] + "…";
 
-    private sealed record Columns(int Code, int Name, int IsinGrowth, int IsinReinvest, int Plan, int Option, int Nav, int Date)
+    internal sealed record Columns(int Code, int Name, int IsinGrowth, int IsinReinvest, int Plan, int Option, int Nav, int Date)
     {
         /// <summary>How many fields a scheme line needs for every column found.</summary>
         public int Width { get; } = new[] { Code, Name, IsinGrowth, IsinReinvest, Plan, Option, Nav, Date }.Max() + 1;
@@ -274,4 +266,51 @@ public static partial class AmfiNavParser
 
     [GeneratedRegex(@"\bgrowth\s+(?:fund|opportunit\w*|companies|leaders)\b|\bdividend\s+(?:yield|leaders|opportunit\w*)\b|\bstable\s+dividend\b", RegexOptions.IgnoreCase)]
     private static partial Regex FundNameWords();
+}
+
+/// <summary>
+/// Reads an AMFI NAV file one line at a time, for a caller that reads the lines
+/// itself: the history import reads them from the network asynchronously, so a
+/// stalled download can be cancelled. <see cref="AmfiNavParser.Parse"/> is the
+/// same over a <see cref="TextReader"/>.
+/// </summary>
+public sealed class AmfiNavLineReader
+{
+    private readonly AmfiParseCounts _counts;
+    private AmfiNavParser.Columns? _columns;
+    private string _category = string.Empty;
+    private string _amc = string.Empty;
+
+    public AmfiNavLineReader(AmfiParseCounts counts) => _counts = counts;
+
+    /// <summary>The row on this line, or null for a header, section, AMC, blank or unreadable line.</summary>
+    /// <exception cref="AmfiNoDataException">The first line is AMFI's download form.</exception>
+    /// <exception cref="FormatException">The first line is not AMFI's header.</exception>
+    public AmfiNavRow? Read(string line)
+    {
+        string text = line.Trim();
+        if (text.Length == 0) return null;
+
+        if (_columns is null)
+        {
+            _columns = AmfiNavParser.Header(text);
+            return null;
+        }
+
+        if (!text.Contains(';'))
+        {
+            if (AmfiNavParser.SectionOf(text) is { } category) _category = category;
+            else _amc = AmfiNavParser.Tidy(text);
+            return null;
+        }
+
+        return AmfiNavParser.ReadSchemeLine(text, _columns, _category, _amc, _counts);
+    }
+
+    /// <summary>At the end of the file: one that held nothing but blanks is not a NAV file.</summary>
+    /// <exception cref="FormatException">The file was empty.</exception>
+    public void Finish()
+    {
+        if (_columns is null) throw new FormatException("AMFI's answer was empty.");
+    }
 }

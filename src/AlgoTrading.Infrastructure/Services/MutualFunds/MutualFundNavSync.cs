@@ -1,4 +1,3 @@
-using System.Text;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.Enums;
@@ -71,13 +70,14 @@ public sealed class MutualFundNavSync
         {
             var counts = new AmfiParseCounts();
             List<AmfiNavRow> rows;
-            using (var response = await _http.CreateClient(MutualFundsOptions.HttpClientName)
-                       .GetAsync(_options.DailyUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
+                // The whole download, not only the headers HttpClient's timeout covers.
+                deadline.CancelAfter(TimeSpan.FromMinutes(5));
+                using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName).GetAsync(_options.DailyUrl, deadline.Token);
                 response.EnsureSuccessStatusCode();
-                await using var stream = await response.Content.ReadAsStreamAsync(ct);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                rows = AmfiNavParser.Parse(reader, counts).ToList();
+                string text = await response.Content.ReadAsStringAsync(deadline.Token);
+                rows = AmfiNavParser.Parse(new StringReader(text), counts).ToList();
             }
 
             if (rows.Count < MinimumRows)
