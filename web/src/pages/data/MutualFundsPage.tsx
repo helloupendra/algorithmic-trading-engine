@@ -6,6 +6,8 @@
  * analytics yet (docs/modules/mutual_funds_module.md).
  */
 
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '../../lib/api'
 import { useMutualFundCoverage } from '../../lib/queries'
 import { formatDateTime, formatNumber } from '../../lib/format'
 import {
@@ -80,6 +82,37 @@ function CategoryTable({ rows }: { rows: MutualFundCount[] }) {
   )
 }
 
+/** Start or pause the history backfill (admin; the API checks). It resumes where it stopped. */
+function BackfillControls({ backfill }: { backfill: MutualFundCoverage['backfill'] }) {
+  const queryClient = useQueryClient()
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['mutualFunds', 'coverage'] })
+  const start = useMutation({ mutationFn: () => api.post('/api/MutualFunds/backfill'), onSuccess: refresh })
+  const pause = useMutation({ mutationFn: () => api.delete('/api/MutualFunds/backfill'), onSuccess: refresh })
+  if (!backfill.enabled || backfill.state === 'done') return null
+  const active = ['queued', 'running', 'waiting'].includes(backfill.state)
+  const failed = start.error ?? pause.error
+  return (
+    <Panel title="History backfill">
+      <p className="small-note">
+        Reads AMFI's history from 1 Apr 2006, newest first: one request every few seconds, never in market hours, and it
+        picks up where it stopped after a pause or a restart. About 2–4 hours in all.
+      </p>
+      <div className="toolbar">
+        {active ? (
+          <button type="button" className="btn btn--ghost btn--sm" disabled={pause.isPending} onClick={() => pause.mutate()}>
+            Pause
+          </button>
+        ) : (
+          <button type="button" className="btn btn--primary btn--sm" disabled={start.isPending} onClick={() => start.mutate()}>
+            {backfill.state === 'paused' || backfill.state === 'failed' ? 'Resume the backfill' : 'Start the backfill'}
+          </button>
+        )}
+      </div>
+      {failed && <p className="neg">{failed instanceof Error ? failed.message : String(failed)}</p>}
+    </Panel>
+  )
+}
+
 function Coverage({ data }: { data: MutualFundCoverage }) {
   const fresh = freshness(data.nav)
   const history = backfillSummary(data.backfill)
@@ -102,6 +135,8 @@ function Coverage({ data }: { data: MutualFundCoverage }) {
         <StatTile label="Freshness" value={fresh.label} tone={toneOf(fresh.tone)} sub={fresh.detail} />
         <StatTile label="History" value={history.label} tone={toneOf(history.tone)} sub={history.detail} />
       </div>
+
+      <BackfillControls backfill={data.backfill} />
 
       <Panel title="Last sync">
         {last ? (
