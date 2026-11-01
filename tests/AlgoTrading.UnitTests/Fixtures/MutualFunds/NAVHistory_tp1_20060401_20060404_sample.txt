@@ -1,0 +1,13 @@
+Scheme Code;NAV Name;Plan;Option;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Net Asset Value;Date
+
+Open Ended Schemes ( Income )
+
+
+ABN  AMRO Mutual Fund
+102652;ABN AMRO  Monthly Income Plan-Regular Plan-Growth Option;;;;;11.7436;03-Apr-2006
+102652;ABN AMRO  Monthly Income Plan-Regular Plan-Growth Option;;;;;11.738;04-Apr-2006
+102653;ABN AMRO  Monthly Income Plan-Regular Plan-Monthly Dividend Option;;;;;10.5045;03-Apr-2006
+102653;ABN AMRO  Monthly Income Plan-Regular Plan-Monthly Dividend Option;;;;;10.4995;04-Apr-2006
+102645;ABN AMRO  Short Term Income Fund-Institutional Plan-Daily Dividend Option;;;;;10;02-Apr-2006
+102645;ABN AMRO  Short Term Income Fund-Institutional Plan-Daily Dividend Option;;;;;10;03-Apr-2006
+102645;ABN AMRO  Short Term Income Fund-Institutional Plan-Daily Dividend Option;;;;;10;04-Apr-2006

@@ -1,0 +1,50 @@
+Scheme Code;NAV Name;Plan;Option;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Net Asset Value;Date
+
+Open Ended Schemes ( Equity Scheme - Multi Cap Fund )
+
+
+Aditya Birla Sun Life Mutual Fund
+148921;Aditya Birla Sun Life Multi-Cap Fund-Direct Growth;Direct Plan;GROWTH;INF209KB1Y49;;21.75;29-Oct-2026
+148921;Aditya Birla Sun Life Multi-Cap Fund-Direct Growth;Direct Plan;GROWTH;INF209KB1Y49;;21.63;30-Oct-2026
+148920;Aditya Birla Sun Life Multi-Cap Fund-Direct IDCW Payout;Direct Plan;IDCW Payout;INF209KB1Y56;;17.90;29-Oct-2026
+148920;Aditya Birla Sun Life Multi-Cap Fund-Direct IDCW Payout;Direct Plan;IDCW Payout;INF209KB1Y56;;17.80;30-Oct-2026
+
+Open Ended Schemes ( Equity Scheme - Large Cap Fund )
+
+
+Aditya Birla Sun Life Mutual Fund
+119527;Aditya Birla Sun Life Large Cap Fund-DIRECT - IDCW;;;INF209K01YX9;INF209K01YW1;88.90;29-Oct-2026
+119527;Aditya Birla Sun Life Large Cap Fund-DIRECT - IDCW;;;INF209K01YX9;INF209K01YW1;89.19;30-Oct-2026
+
+Edelweiss Mutual Fund
+111938;Edelweiss Large Cap Fund - Plan B - IDCW Option;;;INF754K01053;INF754K01061;73.73;29-Oct-2026
+111938;Edelweiss Large Cap Fund - Plan B - IDCW Option;;;INF754K01053;INF754K01061;73.94;30-Oct-2026
+111935;Edelweiss Large Cap Fund -Plan B - Growth option;;;INF754K01087;;80.53;29-Oct-2026
+111935;Edelweiss Large Cap Fund -Plan B - Growth option;;;INF754K01087;;80.76;30-Oct-2026
+
+Open Ended Schemes ( Debt Scheme - Liquid Fund )
+
+
+Bandhan Mutual Fund
+139582;BANDHAN LIQUID Fund - Unclaimed IDCW Less than 3 years;;Unclaimed IDCW Less than 3 years;INF194KA14C0;;1.8395;29-Oct-2026
+139582;BANDHAN LIQUID Fund - Unclaimed IDCW Less than 3 years;;Unclaimed IDCW Less than 3 years;INF194KA14C0;;1.8399;30-Oct-2026
+
+Motilal Oswal Mutual Fund
+145834;Motilal Oswal Liquid Fund - Direct Growth;;;INF247L01734;;15.0481;29-Oct-2026
+145834;Motilal Oswal Liquid Fund - Direct Growth;;;INF247L01734;;15.0510;30-Oct-2026
+
+Open Ended Schemes ( Other Scheme - Index Funds )
+
+
+UTI Mutual Fund
+120716;UTI Nifty 50 Index Fund - Growth Option- Direct;Direct Plan;Growth;INF789F01XA0;;161.5569;29-Oct-2026
+120716;UTI Nifty 50 Index Fund - Growth Option- Direct;Direct Plan;Growth;INF789F01XA0;;162.3751;30-Oct-2026
+100822;UTI Nifty 50 Index Fund - Regular Plan - Growth Option;Regular Plan;Growth;INF789F01JN2;;159.0748;29-Oct-2026
+100822;UTI Nifty 50 Index Fund - Regular Plan - Growth Option;Regular Plan;Growth;INF789F01JN2;;159.8799;30-Oct-2026
+
+Open Ended Schemes ( Exchange Traded Funds (ETFs) - Equity ETF )
+
+
+Kotak Mahindra Mutual Fund
+106929;Kotak Nifty PSU Bank ETF;;;INF174KA1A86;;83.1734;29-Oct-2026
+106929;Kotak Nifty PSU Bank ETF;;;INF174KA1A86;;82.3958;30-Oct-2026

@@ -51,3 +51,5 @@ Dockerfile      text eol=lf
 # Captured exchange answers stay byte for byte: NSE serves some files with CRLF,
 # and the parsers are tested on what the exchange actually sends.
 tests/AlgoTrading.UnitTests/Fixtures/MarketIntelligence/** -text
+# AMFI's NAV files likewise: CRLF and a UTF-8 curly apostrophe, as AMFI sends them.
+tests/AlgoTrading.UnitTests/Fixtures/MutualFunds/** -text
