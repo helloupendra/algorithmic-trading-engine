@@ -856,6 +856,62 @@ def recorders(inp: Inputs) -> list[Item]:
                  if sources else "")]
 
 
+MUTUAL_FUNDS_PATH = "/api/MutualFunds/coverage"
+MUTUAL_FUNDS_PAGE = "/data/mutual-funds"
+#: Business days without a new NAV day before it is worth a look. AMFI publishes
+#: by about 23:00 IST and the sync runs at 23:30 with a retry at 07:00, so one
+#: missing day at 08:55 is AMFI late or one failed night; two is a pattern.
+MF_STALE_BUSINESS_DAYS = 2
+
+
+def _day_month(day: date) -> str:
+    return f"{day.day} {day.strftime('%b')}"
+
+
+def mutual_funds(inp: Inputs) -> list[Item]:
+    """
+    AMFI's daily NAVs (docs/modules/mutual_funds_module.md): the newest day
+    with NAVs for most schemes against the business day due by now, both from
+    the API, which reads the NSE calendar. A Sunday with only the liquid funds'
+    NAVs is not counted as a new day.
+    """
+    body = inp.api(MUTUAL_FUNDS_PATH)
+    if not isinstance(body, dict):
+        raise Unavailable("the API's mutual fund coverage was not a report", problem=True)
+    if body.get("syncEnabled") is False:
+        raise Unavailable("the mutual fund sync is switched off (MutualFunds:SyncEnabled)")
+    nav = body.get("nav") if isinstance(body.get("nav"), dict) else {}
+    last = body.get("lastSync") if isinstance(body.get("lastSync"), dict) else None
+    latest, expected = _iso_day(nav.get("latestFullDate")), _iso_day(nav.get("expectedDate"))
+    behind = nav.get("businessDaysBehind")
+    key, title = "mutual-funds", "Mutual fund NAVs"
+
+    if last is None:
+        said = "No sync has run yet."
+    else:
+        when = _when(_parse_utc(last.get("startedUtc")), inp.now)
+        message = " ".join(str(last.get("message") or "").split())[:160]
+        said = f"Last sync {when}: {message}" if last.get("ok") else f"Last sync {when} failed: {message}"
+    run_now = ("POST /api/MutualFunds/sync runs it now; logs/api.log has each sync's line. AMFI's own file, "
+               "portal.amfiindia.com/spages/NAVAll.txt, shows the day AMFI is on.")
+
+    if latest is None or expected is None:
+        return [Item(key, DATA, title, State.WARN, f"No NAVs stored. {said}", run_now, MUTUAL_FUNDS_PAGE)]
+    if isinstance(behind, int) and behind >= MF_STALE_BUSINESS_DAYS:
+        return [Item(key, DATA, title, State.WARN,
+                     f"No new NAV day for {_n(behind, 'business day')}: the newest is {_day_month(latest)}, "
+                     f"{_day_month(expected)}'s was due. {said}",
+                     "AMFI may be late, or the sync failing. " + run_now, MUTUAL_FUNDS_PAGE)]
+    if isinstance(behind, int) and behind == 1:
+        return [Item(key, DATA, title, State.INFO,
+                     f"NAVs to {_day_month(latest)}; {_day_month(expected)}'s are not in yet. {said}",
+                     "The sync tries again at 23:30 IST, and an hour after a failure.", MUTUAL_FUNDS_PAGE)]
+    detail = f"NAVs to {_day_month(latest)} for {int(body.get('activeSchemes') or 0):,} active schemes."
+    if last is not None and not last.get("ok"):
+        return [Item(key, DATA, title, State.INFO, f"{detail} {said}", "It tries again within the hour.", MUTUAL_FUNDS_PAGE)]
+    return [Item(key, DATA, title, State.OK, detail)]
+
+
 # ------------------------------------------------------------------ analysis
 
 def _forecasts_today(inp: Inputs) -> list[dict]:
@@ -1298,6 +1354,7 @@ CHECKS: dict[str, tuple[str, str, Check]] = {
     "feeds": (DATA, "Live feeds", feeds),
     "failover": (DATA, "Feed failover", failover),
     "recorders": (DATA, "Market data recorders", recorders),
+    "mutual-funds": (DATA, "Mutual fund NAVs", mutual_funds),
     "plan": (STRATEGIES, "Morning plan", plan),
     "runs-after-close": (STRATEGIES, "Runs after the close", runs_after_close),
     "runs-overnight": (STRATEGIES, "Runs overnight", runs_overnight),

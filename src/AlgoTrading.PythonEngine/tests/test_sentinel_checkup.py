@@ -712,6 +712,63 @@ class RecorderTests(Base):
         self.assertIn("breadth 1,738 sessions to go", item.detail)
 
 
+class MutualFundTests(Base):
+    """AMFI's NAVs: two business days without a new NAV day is worth a look (docs/modules/mutual_funds_module.md)."""
+
+    PATH = checks.MUTUAL_FUNDS_PATH
+
+    def coverage(self, latest="2026-09-25", expected="2026-09-25", behind=0, ok=True, message="NAVs for 25 Sep 2026."):
+        return {"schemes": 14441, "activeSchemes": 9045, "syncEnabled": True,
+                "nav": {"rows": 14200, "latestFullDate": latest, "expectedDate": expected, "businessDaysBehind": behind},
+                "lastSync": {"ok": ok, "startedUtc": iso(ist(23, 30, day=27)), "message": message}}
+
+    def check(self, body, now=None):
+        return self.one(checks.mutual_funds(self.inputs("morning", {self.PATH: body}, now=now)))
+
+    def test_navs_for_the_day_due_are_fine(self):
+        item = self.check(self.coverage())
+        self.assertIs(State.OK, item.state)
+        self.assertEqual("NAVs to 25 Sep for 9,045 active schemes.", item.detail)
+
+    def test_one_business_day_behind_is_a_note(self):
+        item = self.check(self.coverage(expected="2026-09-28", behind=1))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("NAVs to 25 Sep; 28 Sep's are not in yet.", item.detail)
+
+    def test_two_business_days_without_a_new_nav_day_is_worth_a_look(self):
+        body = self.coverage(latest="2026-09-24", expected="2026-09-28", behind=2, ok=False,
+                             message="Failed: Response status code does not indicate success: 503")
+        item = self.check(body)
+        self.assertIs(State.WARN, item.state)
+        self.assertIn("No new NAV day for 2 business days: the newest is 24 Sep, 28 Sep's was due.", item.detail)
+        self.assertIn("Last sync 23:30 yesterday failed: Failed: Response status code", item.detail)
+        self.assertIn("POST /api/MutualFunds/sync", item.action)
+        self.assertEqual(checks.MUTUAL_FUNDS_PAGE, item.link)
+
+    def test_nothing_stored_is_worth_a_look(self):
+        body = self.coverage(latest=None, behind=None)
+        body["lastSync"] = None
+        item = self.check(body)
+        self.assertIs(State.WARN, item.state)
+        self.assertIn("No NAVs stored. No sync has run yet.", item.detail)
+
+    def test_a_failed_last_sync_with_current_navs_is_a_note(self):
+        item = self.check(self.coverage(ok=False, message="Failed: timeout"))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("failed: Failed: timeout", item.detail)
+
+    def test_a_switched_off_sync_is_not_checked(self):
+        body = self.coverage()
+        body["syncEnabled"] = False
+        items = run_checks(self.inputs("morning", {self.PATH: body}), ("mutual-funds",))
+        self.assertIs(State.SKIP, self.one(items).state)
+
+    def test_it_is_in_the_morning_weekly_and_on_request_checkups(self):
+        for slot in (MORNING, WEEKLY, ON_REQUEST):
+            self.assertIn("mutual-funds", slot.checks)
+        self.assertNotIn("mutual-funds", CLOSE.checks)
+
+
 class RuleChangesTests(Base):
     """SEBI's circular of 15 Oct 2026: index F&O trade until 3:45 p.m. from 7 Dec 2026, para 4.8 from 8 Feb 2027."""
 

@@ -42,8 +42,8 @@ class Slot:
 MORNING = Slot(
     "morning", "before the open", "Before the open", time(8, 55), time(12, 0), "trading",
     ("dhan-token", "dhan-plan", "option-contracts", "fyers-backup", "feeds", "plan", "forecasts-issued", "recorders",
-     "manual-books", "stale-runs", "orphaned-legs", "incidents", "deploy", "disk", "archive", "calendar-today",
-     "rule-changes"))
+     "mutual-funds", "manual-books", "stale-runs", "orphaned-legs", "incidents", "deploy", "disk", "archive",
+     "calendar-today", "rule-changes"))
 
 CLOSE = Slot(
     "close", "after the close", "After the close", time(16, 0), time(20, 0), "trading",
@@ -58,17 +58,17 @@ NIGHT = Slot(
 
 WEEKLY = Slot(
     "weekly", "for the week ahead", "Weekly review", time(18, 0), time(23, 0), "sunday",
-    ("dhan-token", "dhan-plan", "option-contracts", "calendar-week", "recorders", "stale-runs", "orphaned-legs",
-     "manual-books", "incidents", "incident-notes", "failover", "deploy", "desk-code", "disk", "archive",
-     "rule-changes"))
+    ("dhan-token", "dhan-plan", "option-contracts", "calendar-week", "recorders", "mutual-funds", "stale-runs",
+     "orphaned-legs", "manual-books", "incidents", "incident-notes", "failover", "deploy", "desk-code", "disk",
+     "archive", "rule-changes"))
 
 # Asked for from the console: everything that means something at any hour;
 # the time-bound checks (the plan, the forecasts) decide for themselves.
 ON_REQUEST = Slot(
     "on-request", "right now", "On request", checks=(
-        "dhan-token", "dhan-plan", "option-contracts", "fyers-backup", "feeds", "plan", "recorders", "manual-books",
-        "stale-runs", "orphaned-legs", "incidents", "failover", "deploy", "desk-code", "disk", "archive",
-        "rule-changes"),
+        "dhan-token", "dhan-plan", "option-contracts", "fyers-backup", "feeds", "plan", "recorders", "mutual-funds",
+        "manual-books", "stale-runs", "orphaned-legs", "incidents", "failover", "deploy", "desk-code", "disk",
+        "archive", "rule-changes"),
     telegram=False)
 
 SCHEDULED = (MORNING, CLOSE, NIGHT, WEEKLY)
