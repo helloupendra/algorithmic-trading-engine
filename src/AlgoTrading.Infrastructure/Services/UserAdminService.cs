@@ -18,17 +18,21 @@ public class UserAdminService : IUserAdminService
     private readonly PasswordHasher<AppUser> _passwordHasher;
     private readonly ITokenValidityService _tokenValidity;
     private readonly ILogger<UserAdminService> _logger;
+    private readonly ILiveConnectionCloser? _liveConnections;
 
+    /// <param name="liveConnections">The live feed's connections; the API has them, a worker does not.</param>
     public UserAdminService(
         TradingDbContext dbContext,
         PasswordHasher<AppUser> passwordHasher,
         ITokenValidityService tokenValidity,
-        ILogger<UserAdminService> logger)
+        ILogger<UserAdminService> logger,
+        ILiveConnectionCloser? liveConnections = null)
     {
         _dbContext = dbContext;
         _passwordHasher = passwordHasher;
         _tokenValidity = tokenValidity;
         _logger = logger;
+        _liveConnections = liveConnections;
     }
 
     public async Task<IReadOnlyList<UserAdminResponse>> ListAsync(CancellationToken cancellationToken = default)
@@ -81,6 +85,8 @@ public class UserAdminService : IUserAdminService
             .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
             ?? throw new InvalidOperationException($"No account with id {userId}.");
 
+        bool endSessions = false;
+
         if (request.Role is not null)
         {
             string role = UserRoles.Normalize(request.Role)
@@ -94,6 +100,12 @@ public class UserAdminService : IUserAdminService
             }
 
             await GuardLastAdminAsync(user, role, user.IsActive, cancellationToken);
+
+            // AdminOnly reads the role from the token, which is good for an hour.
+            // Until 2 Nov a demoted admin kept the whole admin API for that hour,
+            // promoting themselves back included. Only a real change: the same
+            // role sent again signs nobody out.
+            endSessions |= !string.Equals(user.Role, role, StringComparison.Ordinal);
 
             user.Role = role;
         }
@@ -109,12 +121,9 @@ public class UserAdminService : IUserAdminService
 
             user.IsActive = request.IsActive.Value;
 
-            if (!user.IsActive)
-            {
-                // A disabled account must stop being signed in, not merely stop
-                // being able to sign in again.
-                await RevokeSessionsAsync(userId, cancellationToken);
-            }
+            // A disabled account must stop being signed in, not merely stop being
+            // able to sign in again.
+            endSessions |= !user.IsActive;
         }
 
         if (request.TotalCapital is not null)
@@ -151,6 +160,13 @@ public class UserAdminService : IUserAdminService
 
         user.UpdatedUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // After the save: it saves on the same context, so called earlier it wrote
+        // half a request that a later check then refused.
+        if (endSessions)
+        {
+            await RevokeSessionsAsync(userId, cancellationToken);
+        }
 
         _logger.LogInformation("Account {UserName} updated by {Actor}.", user.UserName, actingUserName);
 
@@ -277,6 +293,10 @@ public class UserAdminService : IUserAdminService
         user.UpdatedUtc = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Refresh tokens rotate, so one stolen before the change would otherwise
+        // outlive it indefinitely.
+        await RevokeSessionsAsync(userId, cancellationToken);
     }
 
     public async Task<int> RevokeSessionsAsync(long userId, CancellationToken cancellationToken = default)
@@ -300,6 +320,8 @@ public class UserAdminService : IUserAdminService
         // Refresh tokens are only half of it: without this the access token the
         // account already holds keeps working until it expires.
         await _tokenValidity.InvalidateExistingTokensAsync(userId, cancellationToken);
+
+        _liveConnections?.CloseConnectionsOf(userId);
 
         return live.Count;
     }

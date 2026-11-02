@@ -11,7 +11,9 @@ namespace AlgoTrading.Api.Controllers;
 /// Accounts: who exists, what they may do, and how much rope they have.
 /// </summary>
 /// <remarks>
-/// Admin-only, except <c>me/password</c>, which is how anyone changes their own.
+/// Admin-only, all of it. Changing your own password is
+/// <see cref="OwnPasswordController"/>: a class-level policy cannot be relaxed
+/// for one action, only added to.
 /// </remarks>
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
@@ -126,33 +128,5 @@ public class UsersController : ControllerBase
     {
         int revoked = await _users.RevokeSessionsAsync(id, cancellationToken);
         return Ok(new { message = $"Signed out {revoked} session(s)." });
-    }
-
-    /// <summary>Anyone may change their own password, knowing the current one.</summary>
-    [Authorize]
-    [HttpPost("me/password")]
-    public async Task<IActionResult> ChangeOwnPassword(
-        [FromBody] ChangeOwnPasswordRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
-        {
-            return BadRequest(new { message = "The new password must be at least 8 characters." });
-        }
-
-        try
-        {
-            await _users.ChangeOwnPasswordAsync(
-                User.GetRequiredUserId(),
-                request.CurrentPassword,
-                request.NewPassword,
-                cancellationToken);
-
-            return Ok(new { message = "Password changed." });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
     }
 }

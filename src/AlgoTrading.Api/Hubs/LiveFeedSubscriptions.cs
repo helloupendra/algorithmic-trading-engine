@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AlgoTrading.Application.Interfaces;
 
 namespace AlgoTrading.Api.Hubs;
 
@@ -28,7 +29,7 @@ namespace AlgoTrading.Api.Hubs;
 /// for a connection that is not open now changes nothing.
 /// </para>
 /// </remarks>
-public sealed class LiveFeedSubscriptions
+public sealed class LiveFeedSubscriptions : ILiveConnectionCloser
 {
     /// <summary>
     /// The most symbols one connection may follow. An option chain at ±20
@@ -44,15 +45,33 @@ public sealed class LiveFeedSubscriptions
     public static string? KeyOf(string? symbol)
         => string.IsNullOrWhiteSpace(symbol) ? null : symbol.Trim().ToUpperInvariant();
 
-    /// <summary>Records a connection as it opens: whose it is, and whether they are an admin.</summary>
-    public void Connect(string connectionId, long? userId, bool isAdmin)
-        => _connections[connectionId] = new LiveFeedConnection(connectionId, userId, isAdmin);
+    /// <summary>Records a connection as it opens: whose it is, whether they are an admin, and how to close it.</summary>
+    public void Connect(string connectionId, long? userId, bool isAdmin, Action? abort = null)
+        => _connections[connectionId] = new LiveFeedConnection(connectionId, userId, isAdmin, abort);
 
     /// <summary>Forgets a connection and everything it subscribed.</summary>
     public void Disconnect(string connectionId) => _connections.TryRemove(connectionId, out _);
 
     /// <summary>How many connections are open.</summary>
     public int ConnectionCount => _connections.Count;
+
+    /// <summary>
+    /// Closes every connection of the account. Each is forgotten as it closes
+    /// (<see cref="LiveFeedHub.OnDisconnectedAsync"/>), and SignalR drops it from
+    /// role:admin; one that comes back meets the sign-out cutoff at the handshake,
+    /// and the account row decides its groups again.
+    /// </summary>
+    public int CloseConnectionsOf(long userId)
+    {
+        int closed = 0;
+        foreach (var pair in _connections)
+        {
+            if (pair.Value.UserId != userId) continue;
+            pair.Value.Abort?.Invoke();
+            closed++;
+        }
+        return closed;
+    }
 
     /// <summary>
     /// Adds <paramref name="symbols"/> to the connection's set, all or none:
@@ -129,11 +148,12 @@ public sealed class LiveFeedConnection
     private readonly HashSet<string> _symbols = new(StringComparer.Ordinal);
     private volatile bool _all;
 
-    public LiveFeedConnection(string connectionId, long? userId, bool isAdmin)
+    public LiveFeedConnection(string connectionId, long? userId, bool isAdmin, Action? abort = null)
     {
         ConnectionId = connectionId;
         UserId = userId;
         IsAdmin = isAdmin;
+        Abort = abort;
     }
 
     public string ConnectionId { get; }
@@ -142,6 +162,9 @@ public sealed class LiveFeedConnection
     public long? UserId { get; }
 
     public bool IsAdmin { get; }
+
+    /// <summary>Closes the connection; null for an entry made without one.</summary>
+    internal Action? Abort { get; }
 
     /// <summary>Receives every symbol (<see cref="LiveFeedHub.SubscribeAll"/>).</summary>
     public bool All

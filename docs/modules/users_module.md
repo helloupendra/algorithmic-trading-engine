@@ -41,14 +41,17 @@ passes only with a grant, and a **disabled account never passes**.
 
 * **Role** — with two guards that cannot be overridden: you cannot remove your own admin role, and
   the last active admin cannot be demoted or disabled. Both are unrecoverable without editing the
-  database by hand.
+  database by hand. A change of role signs the account out everywhere: `AdminOnly` reads the role from
+  the token, so a demoted admin must not keep the one they hold.
 * **Enable / disable** — disabling revokes every refresh token immediately, so the account stops
   being signed in rather than merely being unable to sign in again.
 * **Capital** and **max concurrent runs** — per trader; a blank run cap falls back to the
   platform-wide limit in Risk.
 * **Module grants** — ticked per account.
 * **Password reset** — sets a new password and signs that account out everywhere, so an old password
-  cannot keep a live session. Anyone can change their own via `POST /api/Users/me/password`.
+  cannot keep a live session. A person (an admin or a trader, not the Service account) changes their
+  own via `POST /api/Users/me/password`, which signs them out everywhere too, the session that asked
+  included: they sign in again with the new password. Five attempts per account in 15 minutes.
 * **Sessions** — how many refresh tokens are live, and a button to revoke them.
 
 Accounts are **disabled, not deleted**: the runs and orders they made keep their owner.
@@ -56,8 +59,10 @@ Accounts are **disabled, not deleted**: the runs and orders they made keep their
 ## Ending a session actually ends it
 
 `AppUser.TokensValidFromUtc` is a per-account cutoff: **access tokens issued before it are refused**,
-whatever their expiry says. Disabling an account, resetting its password or signing it out sets it to
-now, so an existing token stops working immediately rather than lasting out its hour.
+whatever their expiry says. Changing an account's role, disabling it, changing or resetting its password
+or signing it out sets it to now, so an existing token stops working immediately rather than lasting out
+its hour. The same moment closes the account's live feed websockets, which were authorized at their
+handshake and would otherwise keep their desk events until the socket closes.
 
 A cutoff rather than a denylist of token ids: one nullable column instead of a table that grows
 forever, and "everything before now" is exactly what those three actions mean. Tokens carry an `iat`
@@ -94,7 +99,7 @@ Console: the **Invites** tab of System → People (`/system/people/invites`). Th
 
 ## API
 
-Admin-only under `api/Users`, except `me/password`.
+Admin-only under `api/Users`, except `me/password`, which is `OwnPasswordController`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -105,7 +110,7 @@ Admin-only under `api/Users`, except `me/password`.
 | PUT | `/api/Users/{id}/grants` | replace the account's grants |
 | POST | `/api/Users/{id}/password` | admin reset (also signs out everywhere) |
 | POST | `/api/Users/{id}/revoke-sessions` | sign the account out |
-| POST | `/api/Users/me/password` | change your own, knowing the current one |
+| POST | `/api/Users/me/password` | change your own, knowing the current one (also signs out everywhere) |
 
 Account creation is still `POST /api/UserAuth/register`, admin-only.
 

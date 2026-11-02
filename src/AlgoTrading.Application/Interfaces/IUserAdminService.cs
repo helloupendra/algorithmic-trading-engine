@@ -42,7 +42,10 @@ public interface IUserAdminService
         string actingUserName,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Changes the caller's own password after checking the current one.</summary>
+    /// <summary>
+    /// Changes the caller's own password after checking the current one, and ends
+    /// every session of the account.
+    /// </summary>
     /// <exception cref="InvalidOperationException">The current password is wrong.</exception>
     Task ChangeOwnPasswordAsync(
         long userId,
@@ -50,7 +53,10 @@ public interface IUserAdminService
         string newPassword,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Revokes every refresh token for an account, ending its sessions.</summary>
+    /// <summary>
+    /// Ends every session of an account: its refresh tokens, the access tokens it
+    /// holds, and its open live connections.
+    /// </summary>
     Task<int> RevokeSessionsAsync(long userId, CancellationToken cancellationToken = default);
 
     /// <summary>

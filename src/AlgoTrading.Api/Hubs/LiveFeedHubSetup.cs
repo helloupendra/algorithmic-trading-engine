@@ -41,6 +41,7 @@ public static class LiveFeedHubSetup
         // each one its prices every LiveFeed:PushIntervalMs, coalesced.
         services.Configure<LiveFeedOptions>(configuration.GetSection(LiveFeedOptions.SectionName));
         services.AddSingleton<LiveFeedSubscriptions>();
+        services.AddSingleton<ILiveConnectionCloser>(sp => sp.GetRequiredService<LiveFeedSubscriptions>());
         services.AddSingleton<LiveTickDispatcher>();
 
         // "Something on the desk changed" (an order, fill, run, risk, position
@@ -68,6 +69,11 @@ public static class LiveFeedHubSetup
     /// when the token expires, the console reconnects with a fresh one, the
     /// sign-out cutoff is applied to it at the handshake, and
     /// <see cref="LiveFeedHub.OnConnectedAsync"/> reads the account row again.
+    /// </para>
+    /// <para>
+    /// Ending an account's sessions closes its sockets at once
+    /// (<see cref="ILiveConnectionCloser"/>): token expiry alone left a demoted
+    /// admin the desk's events for the rest of the hour.
     /// </para>
     /// </remarks>
     public static HubEndpointConventionBuilder MapLiveFeedHub(this IEndpointRouteBuilder endpoints)

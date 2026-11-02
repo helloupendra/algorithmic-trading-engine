@@ -57,7 +57,8 @@ public class LiveFeedHub : Hub
     /// role:admin once, at connect, until 28 Sep, and the socket kept every
     /// account's desk events for as long as it stayed up. A connection now
     /// also closes when its token expires (<see cref="LiveFeedHubSetup"/>), so
-    /// this runs again at least once an hour.
+    /// this runs again at least once an hour, and at once when the account's
+    /// sessions are ended (<see cref="LiveFeedSubscriptions.CloseConnectionsOf"/>).
     /// </remarks>
     public override async Task OnConnectedAsync()
     {
@@ -92,7 +93,7 @@ public class LiveFeedHub : Hub
         }
 
         bool admin = string.Equals(account.Role, UserRoles.Admin, StringComparison.Ordinal);
-        _subscriptions.Connect(Context.ConnectionId, id, admin);
+        _subscriptions.Connect(Context.ConnectionId, id, admin, Context.Abort);
 
         await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.User(id));
 

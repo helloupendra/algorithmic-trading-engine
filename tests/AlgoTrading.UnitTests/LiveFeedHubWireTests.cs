@@ -7,6 +7,7 @@ using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Hubs;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
+using AlgoTrading.Contracts.Users;
 using AlgoTrading.Domain.Constants;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -238,6 +239,66 @@ public class LiveFeedHubWireTests
     internal static object?[] Symbols(params string[] symbols) => new object?[] { symbols };
 
     /// <summary>The hub on an in-process server, signed in by a request header.</summary>
+    /// <summary>SignalR queues an abort on the thread pool: room for a busy CI box, spent only by a failure.</summary>
+    private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(30);
+
+    [Fact]
+    public async Task A_demoted_admin_loses_their_open_socket_at_once_and_the_desks_events_with_it()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var demoted = await host.ConnectAsync(WireHost.SecondAdmin);
+        await using var phone = await host.ConnectAsync(WireHost.SecondAdmin);
+        await using var stays = await host.ConnectAsync(WireHost.AdminId);
+        foreach (var wire in new[] { demoted, phone, stays }) await wire.InvokeAsync("Subscribe", Symbols(Nifty));
+
+        await host.DeskEvents.SendAsync(new DeskEvent(DeskEventKinds.Fill, 42, WireHost.Owner, Nifty, DateTime.UtcNow, "BUY 2 at 99.50"));
+        await demoted.NextAsync("DeskEvent");
+        await stays.NextAsync("DeskEvent");
+
+        await host.WithUsersAsync(users => users.UpdateAsync(
+            WireHost.SecondAdmin, new UpdateUserRequest { Role = UserRoles.Trader }, WireHost.AdminId, "admin"));
+
+        Assert.True(await demoted.ClosedWithinAsync(CloseBudget));
+        Assert.True(await phone.ClosedWithinAsync(CloseBudget));
+
+        // Nobody else is touched, and the admin who made the change still hears the desk.
+        await host.DeskEvents.SendAsync(new DeskEvent(DeskEventKinds.Fill, 43, WireHost.Owner, Nifty, DateTime.UtcNow, "SELL 2 at 99.50"));
+        await stays.NextAsync("DeskEvent");
+    }
+
+    [Theory]
+    [InlineData("reset")]
+    [InlineData("revoke")]
+    [InlineData("disable")]
+    public async Task Ending_a_session_closes_the_socket(string how)
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var tab = await host.ConnectAsync(WireHost.PlainTrader);
+        await tab.InvokeAsync("Subscribe", Symbols(Nifty));
+
+        await host.WithUsersAsync(users => how switch
+        {
+            "reset" => users.ResetPasswordAsync(WireHost.PlainTrader, "new-password-1", "admin"),
+            "revoke" => users.RevokeSessionsAsync(WireHost.PlainTrader),
+            _ => users.UpdateAsync(WireHost.PlainTrader, new UpdateUserRequest { IsActive = false }, WireHost.AdminId, "admin"),
+        });
+
+        Assert.True(await tab.ClosedWithinAsync(CloseBudget));
+    }
+
+    [Fact]
+    public async Task A_change_that_ends_no_session_leaves_the_socket_open()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var tab = await host.ConnectAsync(WireHost.PlainTrader);
+        await tab.InvokeAsync("Subscribe", Symbols(Nifty));
+
+        await host.WithUsersAsync(users => users.UpdateAsync(
+            WireHost.PlainTrader, new UpdateUserRequest { TotalCapital = 500_000m, Role = UserRoles.Trader }, WireHost.AdminId, "admin"));
+
+        Assert.False(await tab.ClosedWithinAsync(TimeSpan.FromMilliseconds(500)));
+    }
+
     internal sealed class WireHost : IAsyncDisposable
     {
         public const long AdminId = 1;
@@ -245,6 +306,7 @@ public class LiveFeedHubWireTests
         public const long PlainTrader = 8;
         public const long Disabled = 9;
         public const long GrantedTrader = 11;
+        public const long SecondAdmin = 12;
 
         /// <summary>A Trader in the row, whose token was issued while it was an admin.</summary>
         public const long DemotedAdmin = 10;
@@ -266,6 +328,13 @@ public class LiveFeedHubWireTests
 
         public SignalRDeskEventPublisher DeskEvents => (SignalRDeskEventPublisher)_app.Services.GetRequiredService<IDeskEventPublisher>();
 
+        /// <summary>The account service as the API resolves it, for a change an admin makes on the Users page.</summary>
+        public async Task WithUsersAsync(Func<IUserAdminService, Task> act)
+        {
+            using var scope = _app.Services.CreateScope();
+            await act(scope.ServiceProvider.GetRequiredService<IUserAdminService>());
+        }
+
         /// <param name="configure">Extra registrations.</param>
         public static async Task<WireHost> StartAsync(Action<IServiceCollection>? configure = null)
         {
@@ -279,7 +348,8 @@ public class LiveFeedHubWireTests
                 new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true },
                 new AppUser { Id = Disabled, UserName = "gone", Role = UserRoles.Admin, IsActive = false },
                 new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true },
-                new AppUser { Id = GrantedTrader, UserName = "granted", Role = UserRoles.Trader, IsActive = true });
+                new AppUser { Id = GrantedTrader, UserName = "granted", Role = UserRoles.Trader, IsActive = true },
+                new AppUser { Id = SecondAdmin, UserName = "second", Role = UserRoles.Admin, IsActive = true });
             db.UserModuleGrants.Add(new UserModuleGrant { UserId = GrantedTrader, ModuleKey = PlatformModules.MarketData, GrantedBy = "admin" });
             await db.SaveChangesAsync();
 
@@ -294,9 +364,10 @@ public class LiveFeedHubWireTests
             builder.Services.AddAuthorization();
             // One context per hub call, as in the API: tabs connect at once.
             builder.Services.AddScoped(_ => new TradingDbContext(options));
-            builder.Services.AddScoped<IUserAdminService>(sp => new UserAdminService(
-                sp.GetRequiredService<TradingDbContext>(), new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(),
-                NullLogger<UserAdminService>.Instance));
+            // Registered as the API registers it, so ILiveConnectionCloser reaches it the same way.
+            builder.Services.AddSingleton(new PasswordHasher<AppUser>());
+            builder.Services.AddSingleton(RecapClockTests.Inert<ITokenValidityService>.Create());
+            builder.Services.AddScoped<IUserAdminService, UserAdminService>();
             configure?.Invoke(builder.Services);
 
             var app = builder.Build();
