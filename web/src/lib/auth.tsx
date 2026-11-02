@@ -6,9 +6,9 @@
  * nav link is a usability choice, never a security control.
  */
 
+import { useQueryClient } from '@tanstack/react-query'
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -21,6 +21,7 @@ import {
   tokenStore,
   type MeResponse,
 } from './api'
+import { sessionActions } from './session'
 
 interface AuthContextValue {
   user: MeResponse | null
@@ -35,7 +36,9 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<MeResponse | null>(null)
+  const actions = useMemo(() => sessionActions(queryClient, setUser), [queryClient])
   // Only a stored token needs verifying; with none there is nothing to probe,
   // so anonymous visitors never render a loading state.
   const [isLoading, setIsLoading] = useState(() => !!tokenStore.access)
@@ -69,25 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // The API client signals an unrecoverable 401; drop the user so guards redirect.
   useEffect(() => {
-    setSessionExpiredHandler(() => setUser(null))
+    setSessionExpiredHandler(actions.expired)
     return () => setSessionExpiredHandler(() => {})
-  }, [])
-
-  const login = useCallback(async (userNameOrEmail: string, password: string) => {
-    const result = await authApi.login(userNameOrEmail, password)
-    tokenStore.set(result.accessToken, result.refreshToken)
-
-    // Prefer /me over the login payload: it is the same shape the rest of the
-    // app consumes, including capital and status.
-    const me = await authApi.me()
-    setUser(me)
-    return me
-  }, [])
-
-  const logout = useCallback(async () => {
-    await authApi.logout()
-    setUser(null)
-  }, [])
+  }, [actions])
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -95,10 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       isAuthenticated: user !== null,
       isAdmin: user?.role === 'Admin',
-      login,
-      logout,
+      login: actions.login,
+      logout: actions.logout,
     }),
-    [user, isLoading, login, logout],
+    [user, isLoading, actions],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
