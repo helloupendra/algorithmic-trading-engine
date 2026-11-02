@@ -450,7 +450,8 @@ been squared off at it.
   used, so on 2026-09-17 the same-day contract is traded; the future the
   lines are read from expires on the 21st.
 - **The future rolls the day after the option expiry.** Crude options expire
-  about four days before their future. From the day after the option expiry
+  two to four days before their future (in the 2026 master: 17 Sep and 21 Sep,
+  15 Oct and 19 Oct, 17 Nov and 19 Nov). From the day after the option expiry
   until the future expires, the run trades next month's options, so its strike
   and its lines come from next month's future, chosen when the run starts.
   Until 2 Nov 2026 they came from the expiring future: the "ATM" call was off by
