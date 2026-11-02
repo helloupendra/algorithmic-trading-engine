@@ -9,6 +9,10 @@
     -Install), not left running as a daemon - a scheduled one-shot has nothing
     to babysit and nothing to leak.
 
+    It keeps the Linux desk's rules (scripts/desk.sh, scripts/lib/desk-common.sh)
+    as far as is simple here. Not carried over: the desk's last good build, and
+    its wait for a database migration under way.
+
     Polling rather than a webhook is deliberate. A webhook would have to arrive
     on the Cloudflare quick tunnel, whose hostname changes every time
     cloudflared restarts, so the hook would silently break on the next reboot.
@@ -20,11 +24,19 @@
       * uncommitted local changes    -> skips, touches nothing
       * local commits not on origin  -> skips (a merge here could lose work)
       * not a fast-forward           -> skips (git itself refuses)
-      * a strategy is running        -> deploys the frontend, but will NOT
-                                        restart the API, because a restart drops
-                                        the in-memory run registry and with it
-                                        the risk guard enforcing that run's
-                                        stop-loss
+      * market hours on a weekday,   -> a commit that changes the console or
+        or a strategy is running        the API is not even pulled, and goes out
+                                        by itself at a later check once the desk
+                                        is quiet; a restart drops the in-memory
+                                        run registry and with it the risk guard
+                                        enforcing that run's stop-loss. The API
+                                        is only asked outside market hours, so
+                                        waiting signs in nobody through a session
+      * an API that does not build   -> the running API is left alone, nothing of
+                                        the commit goes out, and the checkout goes
+                                        back. The commit is not tried again until
+                                        logs\auto-deploy-failed-sha is deleted;
+                                        the next commit gets its own attempt
 
     Every outcome is announced on the platform's own alert path
     (Redis alerts:new -> Telegram), so a deploy that landed and a deploy that
@@ -62,6 +74,26 @@ $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $TaskName = 'AlgoTrading auto-deploy'
 $LogFile = Join-Path $RepoRoot 'logs\auto-deploy.log'
+# The commit whose wait was already announced, once per commit; and the commit
+# whose API did not build. logs\ is not tracked, so neither dirties the checkout.
+$DeferredShaFile = Join-Path $RepoRoot 'logs\auto-deploy-deferred-sha'
+$FailedShaFile = Join-Path $RepoRoot 'logs\auto-deploy-failed-sha'
+. (Join-Path $PSScriptRoot 'lib\deploy-window.ps1')
+
+function Read-ShaFile {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return '' }
+    return (Get-Content $Path -Raw -EA SilentlyContinue | Out-String).Trim()
+}
+
+function Write-ShaFile {
+    param([string]$Path, [string]$Sha)
+    try {
+        Set-Content -Path $Path -Value $Sha -Encoding ascii
+    } catch {
+        Write-Log "  (could not write $Path`: $($_.Exception.Message))" 'Yellow'
+    }
+}
 
 function Write-Log {
     param([string]$Message, [string]$Colour = 'Gray')
@@ -237,6 +269,26 @@ if ($Install) {
     exit 0
 }
 
+# How many strategy runs are live; -1 when the API cannot be asked.
+function Get-LiveRunCount {
+    try {
+        $env_ = @{}
+        Get-Content (Join-Path $RepoRoot '.env') -EA Stop | ForEach-Object {
+            if ($_ -match '^\s*([A-Z_0-9]+)\s*=\s*(.*)$') { $env_[$Matches[1]] = $Matches[2].Trim() }
+        }
+        $auth = Invoke-RestMethod -Uri 'http://localhost:5025/api/UserAuth/login' -Method Post `
+            -ContentType 'application/json' -TimeoutSec 10 `
+            -Body (@{ userNameOrEmail = $env_['ADMIN_USERNAME']; password = $env_['ADMIN_PASSWORD'] } | ConvertTo-Json)
+        $runs = Invoke-RestMethod -Uri 'http://localhost:5025/api/Strategy/runs' -TimeoutSec 15 `
+            -Headers @{ Authorization = "Bearer $($auth.accessToken)" }
+        return @($runs | Where-Object { $_.isActive }).Count
+    } catch {
+        # If the API cannot be asked, assume the worst and protect the restart.
+        Write-Log "  could not check for live runs ($($_.Exception.Message)); treating as live." 'Yellow'
+        return -1
+    }
+}
+
 # ------------------------------------------------------------------ run -----
 Set-Location $RepoRoot
 
@@ -255,7 +307,13 @@ if ($local -eq $remote) {
     exit 0
 }
 
-Write-Log "origin/main moved: $($local.Substring(0,7)) -> $($remote.Substring(0,7))" 'Cyan'
+# Its API did not build. Silent like the case above: said once, when it failed.
+if ($remote -eq (Read-ShaFile $FailedShaFile)) { exit 0 }
+
+$alreadyDeferred = $remote -eq (Read-ShaFile $DeferredShaFile)
+if (-not $alreadyDeferred) {
+    Write-Log "origin/main moved: $($local.Substring(0,7)) -> $($remote.Substring(0,7))" 'Cyan'
+}
 
 # --- refuse to destroy local work ------------------------------------------
 $dirty = git status --porcelain
@@ -284,6 +342,37 @@ if ($DryRun) {
     exit 0
 }
 
+# --- may it go out now? -----------------------------------------------------
+# What the commit changes, with the same patterns as the Linux desk (desk.sh,
+# api_build_inputs; desk-common.sh, console_build_inputs). Until 2 Nov only *.cs
+# counted for the API, so a csproj or appsettings change was never rebuilt.
+$incoming = git diff --name-only $local $remote
+$webChanged = @($incoming | Where-Object { $_ -match '^(web/|docs/|scripts/aws/README\.md$)' }).Count -gt 0
+$apiChanged = @($incoming | Where-Object { $_ -match '^(src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/|Directory\.(Build|Packages)\.[^/]+$|global\.json$|[Nn][Uu][Gg]et\.[Cc]onfig$)' }).Count -gt 0
+$engineChanged = @($incoming | Where-Object { $_ -like 'src/AlgoTrading.PythonEngine/*' }).Count -gt 0
+
+# Decided before the pull. A commit pulled and then held was lost until 2 Nov:
+# the next check found this machine level with origin and had nothing left to
+# do, so the change was never built. Now it stays behind and every check asks.
+if ($webChanged -or $apiChanged) {
+    $blocked = Get-DeployBlockReason
+    if (-not $blocked) {
+        $liveRuns = Get-LiveRunCount
+        if ($liveRuns -lt 0) { $blocked = 'the live-run count is unknown, so runs are assumed live' }
+        elseif ($liveRuns -gt 0) { $blocked = "$liveRuns run(s) are live" }
+    }
+    if ($blocked) {
+        if (-not $alreadyDeferred) {
+            Write-Log "  deferred - $blocked. Nothing is pulled; it goes out by itself when the desk is quiet." 'Yellow'
+            Add-Step 'Pulled from GitHub' 'skipped' "Not pulled until the deploy can go out: $blocked"
+            Send-Alert 'Deploy deferred' "$($remote.Substring(0,7)) waits: $blocked." 'info'
+            Write-DeployRecord -Outcome 'skipped' -ToCommit $remote.Substring(0,7) -Summary "Deferred: $blocked"
+            Write-ShaFile $DeferredShaFile $remote
+        }
+        exit 0
+    }
+}
+
 # --- fast-forward -----------------------------------------------------------
 $before = $local
 git merge --ff-only origin/main --quiet
@@ -301,51 +390,37 @@ $subjects = git log --oneline "$before..$after"
 Write-Log "Fast-forwarded to $($after.Substring(0,7)) - $(($changed | Measure-Object -Line).Lines) file(s) changed." 'Green'
 Add-Step 'Pulled from GitHub' 'ok' "$($before.Substring(0,7)) -> $($after.Substring(0,7)), $(($changed | Measure-Object -Line).Lines) file(s)"
 
-$webChanged = @($changed | Where-Object { $_ -like 'web/*' }).Count -gt 0
-$apiChanged = @($changed | Where-Object { $_ -like 'src/*' -and $_ -like '*.cs' }).Count -gt 0
-$engineChanged = @($changed | Where-Object { $_ -like 'src/AlgoTrading.PythonEngine/*' }).Count -gt 0
-
-# --- is anything trading right now? ----------------------------------------
-$liveRuns = 0
-try {
-    $env_ = @{}
-    Get-Content (Join-Path $RepoRoot '.env') -EA Stop | ForEach-Object {
-        if ($_ -match '^\s*([A-Z_0-9]+)\s*=\s*(.*)$') { $env_[$Matches[1]] = $Matches[2].Trim() }
-    }
-    $auth = Invoke-RestMethod -Uri 'http://localhost:5025/api/UserAuth/login' -Method Post `
-        -ContentType 'application/json' -TimeoutSec 10 `
-        -Body (@{ userNameOrEmail = $env_['ADMIN_USERNAME']; password = $env_['ADMIN_PASSWORD'] } | ConvertTo-Json)
-    $runs = Invoke-RestMethod -Uri 'http://localhost:5025/api/Strategy/runs' -TimeoutSec 15 `
-        -Headers @{ Authorization = "Bearer $($auth.accessToken)" }
-    $liveRuns = @($runs | Where-Object { $_.isActive }).Count
-} catch {
-    # If the API cannot be asked, assume the worst and protect the restart.
-    Write-Log "  could not check for live runs ($($_.Exception.Message)); treating as live." 'Yellow'
-    $liveRuns = -1
-}
-
 $done = New-Object System.Collections.Generic.List[string]
 $deferred = New-Object System.Collections.Generic.List[string]
 
+# The API first, as on the desk: a commit whose API does not build is not
+# deployed at all. -Force because the window was decided above, and must not
+# change its mind between that check and this line.
+if ($apiChanged) {
+    Write-Log "  the API changed and the desk is quiet - building, then restarting it." 'Cyan'
+    & (Join-Path $PSScriptRoot 'deploy.ps1') -Api -Force
+    $apiExit = $LASTEXITCODE
+    if ($apiExit -eq 2) {
+        Write-Log "  the API build FAILED - nothing of $($after.Substring(0,7)) goes out; the running API was left alone." 'Red'
+        git reset --keep --quiet $before
+        if ($LASTEXITCODE -eq 0) { Write-Log "  checkout put back to $($before.Substring(0,7))." }
+        else { Write-Log "  could not put the checkout back to $($before.Substring(0,7))." 'Red' }
+        Write-ShaFile $FailedShaFile $remote
+        Add-Step 'API build' 'failed' "dotnet build failed - nothing of $($after.Substring(0,7)) went out; the API keeps running $($before.Substring(0,7))"
+        Send-Alert 'Deploy FAILED' "$($after.Substring(0,7)) did not build, so nothing of it went out and the API keeps running $($before.Substring(0,7)). The next commit is tried by itself." 'error'
+        Write-DeployRecord -Outcome 'failed' -FromCommit $before.Substring(0,7) -ToCommit $after.Substring(0,7) `
+            -Commits @($subjects) -FilesChanged (($changed | Measure-Object -Line).Lines) -Summary 'API build FAILED - not deployed'
+        exit 0
+    }
+    if ($apiExit -eq 0) { $done.Add('API rebuilt and restarted'); Add-Step 'API rebuilt and restarted' 'ok' 'Backend is live on the new build' }
+    else { $deferred.Add('API restart FAILED - it did not answer after the restart'); Add-Step 'API rebuilt and restarted' 'failed' 'It built, but did not answer after the restart - see logs/api-stdout.log' }
+}
+
 if ($webChanged) {
-    Write-Log "  web/ changed - rebuilding the console (no restart needed)." 'Cyan'
+    Write-Log "  the console changed - rebuilding it (no restart needed)." 'Cyan'
     & (Join-Path $PSScriptRoot 'deploy.ps1') -Web
     if ($LASTEXITCODE -eq 0) { $done.Add('console rebuilt'); Add-Step 'Console rebuilt' 'ok' 'New bundle is being served - no restart needed' }
     else { $deferred.Add('console build FAILED'); Add-Step 'Console rebuilt' 'failed' 'Build failed - the old bundle is still being served' }
-}
-
-if ($apiChanged) {
-    if ($liveRuns -eq 0) {
-        Write-Log "  src/**.cs changed and nothing is running - rebuilding and restarting the API." 'Cyan'
-        & (Join-Path $PSScriptRoot 'deploy.ps1') -Api
-        if ($LASTEXITCODE -eq 0) { $done.Add('API rebuilt and restarted'); Add-Step 'API rebuilt and restarted' 'ok' 'Backend is live on the new build' }
-        else { $deferred.Add('API build FAILED'); Add-Step 'API rebuilt and restarted' 'failed' 'Build failed - see logs/api-stdout.log' }
-    } else {
-        $who = if ($liveRuns -lt 0) { 'the API could not be reached' } else { "$liveRuns run(s) are live" }
-        Write-Log "  src/**.cs changed but $who - NOT restarting." 'Yellow'
-        $deferred.Add("API changes are pulled but NOT built or restarted ($who). Run: .\scripts\deploy.ps1 -Api")
-        Add-Step 'API restart' 'skipped' $who
-    }
 }
 
 if ($engineChanged) {

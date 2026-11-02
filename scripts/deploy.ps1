@@ -15,6 +15,13 @@
       src/**/*.cs       -> -Api   (rebuild + restart; a few seconds of downtime)
       both              -> -All
 
+    -Api follows the same rules as the Linux desk (scripts/lib/desk-common.sh):
+    it builds first with the API still running, stops the API only when that
+    build passed, and does nothing in market hours on a weekday without -Force.
+
+    Exit codes for -Api: 0 done; 2 the build failed and the running API was left
+    alone; 3 the API did not answer after the restart; 4 refused, market hours.
+
     The public URL does NOT change here. It belongs to the cloudflared process,
     not to the API - restarting the API leaves the tunnel connected and it
     resumes as soon as the API answers again. Only stopping cloudflared itself
@@ -25,14 +32,17 @@
     Build the React client with relative API URLs and copy it into wwwroot.
 
 .PARAMETER Api
-    Rebuild the .NET solution and restart the API process.
+    Build the API and, when that passes, restart it.
 
 .PARAMETER All
     Both of the above.
 
 .PARAMETER NoRestart
-    With -Api, build but leave the running API alone. Useful when the market is
-    live and you would rather restart during a quiet moment.
+    With -Api, check that it builds and leave the running API alone.
+
+.PARAMETER Force
+    With -Api, go ahead in market hours. A build on a busy box has cost a session's
+    ticks before now (scripts/lib/desk-common.sh has the dates): only for a hotfix.
 
 .EXAMPLE
     .\scripts\deploy.ps1 -Web
@@ -45,7 +55,8 @@ param(
     [switch]$Web,
     [switch]$Api,
     [switch]$All,
-    [switch]$NoRestart
+    [switch]$NoRestart,
+    [switch]$Force
 )
 
 # Deliberately not 'Stop'. Windows PowerShell 5.1 turns anything a native exe
@@ -56,6 +67,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
+. (Join-Path $PSScriptRoot 'lib\deploy-window.ps1')
 
 if ($All) { $Web = $true; $Api = $true }
 if (-not $Web -and -not $Api) {
@@ -124,6 +136,12 @@ if ($Web) {
 
 # ---------------------------------------------------------------- api ------
 if ($Api) {
+    $blocked = Get-DeployBlockReason
+    if ($blocked -and -not $Force) {
+        Write-Host "==> NOT building or restarting the API: $blocked. Run it after the close, or give -Force for a hotfix." -ForegroundColor Yellow
+        exit 4
+    }
+
     Write-Host "==> Checking for live runs before touching the API..." -ForegroundColor Cyan
     # Restarting drops the in-memory run registry, which is what the risk guard
     # sweeps. Stopping the API under a live run means nothing is enforcing that
@@ -137,27 +155,33 @@ if ($Api) {
         Write-Host "    (API not answering; continuing.)" -ForegroundColor DarkGray
     }
 
-    Write-Host "==> Building the solution..." -ForegroundColor Cyan
-    $apiProcs = Get-CimInstance Win32_Process -Filter "Name='AlgoTrading.Api.exe'" -EA SilentlyContinue
-    if ($apiProcs -and -not $NoRestart) {
-        # The build cannot overwrite a running exe, so it has to stop first.
-        Write-Host "    Stopping the running API so the build can write to bin..." -ForegroundColor DarkGray
-        foreach ($p in $apiProcs) { Stop-Process -Id $p.ProcessId -Force -EA SilentlyContinue }
-        Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
-            Where-Object { $_.CommandLine -like '*run --project src/AlgoTrading.Api*' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
-        Start-Sleep -Seconds 3
-    } elseif ($apiProcs -and $NoRestart) {
-        Write-Host "    -NoRestart with the API running: the build will fail on a locked exe." -ForegroundColor Yellow
+    # Into a folder of its own: the running exe keeps bin\ locked, which is why
+    # the API used to be stopped first, and a build that then failed left it down
+    # with nothing to bring it back. `dotnet run` below compiles for bin\ from the
+    # same source, once the API is stopped.
+    Write-Host "==> Building the API, with the running one left alone..." -ForegroundColor Cyan
+    $buildCheckDir = Join-Path $env:TEMP 'algotrading-api-build-check'
+    if (Test-Path $buildCheckDir) { Remove-Item -Recurse -Force $buildCheckDir -EA SilentlyContinue }
+    dotnet build "$RepoRoot\src\AlgoTrading.Api\AlgoTrading.Api.csproj" -v q --nologo -o $buildCheckDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    dotnet build FAILED. The running API was not touched." -ForegroundColor Red
+        exit 2
     }
-
-    dotnet build "$RepoRoot\src\AlgoTrading.Api\AlgoTrading.Api.csproj" -v q --nologo
-    if ($LASTEXITCODE -ne 0) { Write-Error "dotnet build failed."; exit 1 }
     Write-Host "    Build succeeded." -ForegroundColor Green
 
     if ($NoRestart) {
-        Write-Host "    -NoRestart given; the API was not started." -ForegroundColor Yellow
+        Write-Host "    -NoRestart given; the API was not restarted." -ForegroundColor Yellow
     } else {
+        $apiProcs = Get-CimInstance Win32_Process -Filter "Name='AlgoTrading.Api.exe'" -EA SilentlyContinue
+        if ($apiProcs) {
+            Write-Host "    Stopping the running API..." -ForegroundColor DarkGray
+            foreach ($p in $apiProcs) { Stop-Process -Id $p.ProcessId -Force -EA SilentlyContinue }
+            Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
+                Where-Object { $_.CommandLine -like '*run --project src/AlgoTrading.Api*' } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
+            Start-Sleep -Seconds 3
+        }
+
         Write-Host "==> Starting the API..." -ForegroundColor Cyan
         # Production, and without the launch profile: launchSettings.json pins
         # ASPNETCORE_ENVIRONMENT to Development for both profiles, which leaves
@@ -175,7 +199,10 @@ if ($Api) {
         if (Wait-ForApi) {
             Write-Host "    API is up on $ApiUrl" -ForegroundColor Green
         } else {
-            throw "The API did not answer in time. See logs\api-stdout.log."
+            # An exit code, not a throw: a throw ends auto-deploy.ps1 too, before
+            # it can say what happened.
+            Write-Host "    The API did not answer in time. See logs\api-stdout.log." -ForegroundColor Red
+            exit 3
         }
     }
 }

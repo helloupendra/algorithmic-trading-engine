@@ -100,6 +100,19 @@ jobs:
           scandir: ./scripts
           severity: warning
 
+      # Parsed, not run: nothing here executes the Windows deploy scripts. The
+      # runner has PowerShell; a developer's Mac or the Linux server may not.
+      - name: PowerShell syntax check
+        shell: pwsh
+        run: |
+          $failed = 0
+          foreach ($file in Get-ChildItem scripts -Recurse -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "$($file.Name):$($e.Extent.StartLineNumber): $($e.Message)"; $failed++ }
+          }
+          exit $failed
+
   # The console: its type check, lint, unit tests (web/src/lib) and production build, which also
   # builds the docs site from docs/*.md. Until 3 Oct none of this ran here, only on a developer's machine.
   web:
