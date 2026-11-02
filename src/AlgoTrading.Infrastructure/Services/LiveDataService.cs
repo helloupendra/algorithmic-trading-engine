@@ -29,6 +29,7 @@ public class LiveDataService : ILiveDataService
     private readonly TradingDbContext _dbContext;
     private readonly IProviderCatalog _providerCatalog;
     private readonly IMarketSessionService _sessions;
+    private readonly TimeProvider _time;
 
     /// <summary>Lazily resolved once; the catalog is static metadata, not a query.</summary>
     private string? _defaultSourceKey;
@@ -36,11 +37,13 @@ public class LiveDataService : ILiveDataService
     public LiveDataService(
         TradingDbContext dbContext,
         IProviderCatalog providerCatalog,
-        IMarketSessionService sessions)
+        IMarketSessionService sessions,
+        TimeProvider? time = null)
     {
         _dbContext = dbContext;
         _providerCatalog = providerCatalog;
         _sessions = sessions;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -275,7 +278,7 @@ public class LiveDataService : ILiveDataService
         CancellationToken cancellationToken = default)
     {
         string sourceKey = ResolveSourceKey(request.SourceKey);
-        var quoteClockUtc = DateTime.UtcNow;
+        var quoteClockUtc = _time.GetUtcNow().UtcDateTime;
         var incomingExchangeUtc = ExchangeStamps.Usable(request.ExchangeTimestampUtc?.ToUniversalTime(), request.IsReplay, quoteClockUtc);
 
         var existing = await _dbContext.LiveQuotesLatest
@@ -472,7 +475,7 @@ public class LiveDataService : ILiveDataService
 
         try
         {
-            var nowUtc = DateTime.UtcNow;
+            var nowUtc = _time.GetUtcNow().UtcDateTime;
             string sourceKey = ResolveSourceKey(request.SourceKey);
 
             // A stamp from the future is no stamp: it files the bar and the tick
@@ -693,7 +696,7 @@ public class LiveDataService : ILiveDataService
                 held.Add(gate);
             }
 
-            var nowUtc = DateTime.UtcNow;
+            var nowUtc = _time.GetUtcNow().UtcDateTime;
 
             foreach (var request in batch)
             {
@@ -838,7 +841,7 @@ public class LiveDataService : ILiveDataService
         // first TrueData recap froze all 49 of its contracts on exactly this
         // check: entries filled at a stale price and no leg target could fire.
         // A stored stamp from the future does the same (ExchangeStamps).
-        var clockUtc = DateTime.UtcNow;
+        var clockUtc = _time.GetUtcNow().UtcDateTime;
         if (ExchangeStamps.IsOlderThanStored(incomingExchangeUtc, existing.ExchangeTimestampUtc, request.IsReplay, clockUtc))
         {
             return;

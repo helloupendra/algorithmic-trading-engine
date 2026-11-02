@@ -268,7 +268,8 @@ public class DerivativesCloseTests
     public async Task From_7_December_an_option_keeps_its_last_quarter_hour_of_bars_and_the_index_does_not()
     {
         using var db = Db();
-        var service = new LiveDataService(db, new NoCatalog(), Sessions());
+        // Its ticks are stamped on a day that has to have come: a stamp from the future is no stamp.
+        var service = new LiveDataService(db, new NoCatalog(), Sessions(), new TheNextMorning(MondayFrom));
 
         await service.AppendLiveTickAsync(Tick(NiftyWeeklyCall, Ist(MondayFrom, 15, 40, 5), 101m));
         await service.AppendLiveTickAsync(Tick(Nifty, Ist(MondayFrom, 15, 40, 5), 25_000m));
@@ -330,6 +331,11 @@ public class DerivativesCloseTests
     }
 
     // ---------- helpers ----------
+
+    private sealed class TheNextMorning(DateOnly day) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => new(day.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+    }
 
     private static TradingDbContext Db() => new(new DbContextOptionsBuilder<TradingDbContext>()
         .UseInMemoryDatabase($"derivatives-close-{Guid.NewGuid():N}")
