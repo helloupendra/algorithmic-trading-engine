@@ -14,6 +14,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 
 import requests
+from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 import _bootstrap  # noqa: F401
 
@@ -46,11 +47,13 @@ class FakeApi:
     """
     POST /api/Simulator/signals. Each call takes the next step of ``script``:
 
-      None       booked (or the booked row, for an id it holds) and answered
-      "lost"     booked, but the answer never arrives (ReadTimeout)
-      "down"     not reached at all (ConnectionError)
-      int        answered with that HTTP status, nothing booked
-      (int, str) the same, with a body
+      None        booked (or the booked row, for an id it holds) and answered
+      "lost"      booked, but the answer never arrives (ReadTimeout)
+      "lost-too"  not booked, and the answer never arrives: nobody can tell it from "lost"
+      "down"      not reached, but the booker cannot know that (a bare ConnectionError)
+      "refused"   the connection itself failed, as requests reports it: nothing was sent
+      int         answered with that HTTP status, nothing booked
+      (int, str)  the same, with a body
     """
 
     def __init__(self, *script: Any) -> None:
@@ -66,6 +69,11 @@ class FakeApi:
 
         if step == "down":
             raise requests.exceptions.ConnectionError("Connection refused")
+        if step == "refused":
+            raise requests.exceptions.ConnectionError(
+                MaxRetryError(None, "/api/Simulator/signals", NewConnectionError(None, "Connection refused")))
+        if step == "lost-too":
+            raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=10)")
         if isinstance(step, int):
             raise http_error(step)
         if isinstance(step, tuple):
@@ -330,8 +338,8 @@ class TickTests(unittest.TestCase):
         clock.now = 11
         self.assertTrue(book.book(signal("OPEN_GROUP", "C", leg(CALL, "BUY", 100.0))).booked)
 
-        # An API that never answered refused nothing: the next OPEN is posted.
-        down = FakeApi(*["down"] * 20)
+        # An API that was never reached refused nothing: the next OPEN is posted.
+        down = FakeApi(*["refused"] * 20)
         book = booker(down, Clock())
         self.assertFalse(book.book(signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0))).booked)
         posts = len(down.posts)

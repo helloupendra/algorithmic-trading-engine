@@ -102,9 +102,10 @@ from strategies.signal_booking import (
     SignalBooker,
     report as report_booking,
     run_tick,
+    settle_tick,
 )
-from backtest.run_spec import parse_risk_rules
 from strategies.session_gate import SessionGate
+from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
 from core.recap_session import RecapSession
@@ -1161,7 +1162,6 @@ if __name__ == "__main__":
     # was refused puts the strategy back) is not enriched, posted or published.
     closed_groups = ClosedGroups()
 
-    def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
     # A live run's OPENs wait for their market, which is why a run started before
     # the open can post nothing until it opens (strategies/session_gate.py). A
     # recap trades a past session, on the replay's clock, and does not ask.
@@ -1180,6 +1180,7 @@ if __name__ == "__main__":
             return None
         return session_gate.why_closed([leg.get("symbol") for leg in sig.legs or []] or [args.spot_symbol])
 
+    def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         """The strategy's on_bar for one tick, timed and printed."""
         t_start = time.time()
         emitted = strategy.on_bar(tick_state, inp)
@@ -1227,7 +1228,6 @@ if __name__ == "__main__":
         if sig.signal_type not in {"OPEN_GROUP", "CLOSE_GROUP"}:
             return None
 
-        # Keyed on the legs as the strategy emitted them: enrichment below
         # Before the filters and the wait for a quote, neither of which means
         # anything until the market has opened. Held, the strategy is put back and
         # asks again on its next tick. Closes never reach this.
@@ -1243,6 +1243,7 @@ if __name__ == "__main__":
             market_wait_announced[0] = False
             print(f"[{args.underlying}] The market is open: OPENs are being posted.", flush=True)
 
+        # Keyed on the legs as the strategy emitted them: enrichment below
         # rewrites them with resolved symbols and prices.
         legs_key = ClosedGroups.legs_key(sig)
         if booker is not None:
@@ -1271,8 +1272,15 @@ if __name__ == "__main__":
         print(json.dumps(sig.legs, indent=2, default=str))
 
         booking = booker.book(sig) if booker is not None else None
+        if booking is not None and booking.unconfirmed:
+            unconfirmed_signal[0] = (sig, legs_key)
         if booking is not None and not booking.booked:
             return booking
+        note_booked(sig, legs_key, booking)
+        return booking
+
+    def note_booked(sig: StrategySignal, legs_key: Any, booking: Optional[Booking]) -> None:
+        """What follows a signal the book has: at once, or when an unconfirmed OPEN turns out to be in it."""
         if booking is not None:
             closed_groups.booked(sig, legs_key)
 
@@ -1290,7 +1298,45 @@ if __name__ == "__main__":
             ui_signals.publish(signal_to_ui_payload(sig, datetime.now(timezone.utc).isoformat()))
         except Exception as e:
             print(f"WARN: Could not publish live signal to UI: {e}")
-        return booking
+
+    # A tick stopped at an OPEN_GROUP whose answer was lost, with what it needs to
+    # finish: the signal itself and how to post the ones after it. The strategy is
+    # not evaluated until the API has said what became of that OPEN (signal_booking.py).
+    unsettled_tick: list[Any] = [None]
+    unsettled_post: list[Any] = [None]
+    unconfirmed_signal: list[Any] = [None]
+
+    def poster_for(inp: StrategyInput, atm_ce: Optional[OptionContract], atm_pe: Optional[OptionContract]) -> Any:
+        """Posts one tick's signals, later too: the rest of a tick waiting behind an unconfirmed OPEN keeps its input."""
+        return lambda sig: post_signal(sig, inp, atm_ce, atm_pe)
+
+    def recheck_open() -> Optional[Booking]:
+        answer = booker.recheck()
+        if answer is not None and answer.booked:
+            note_booked(*unconfirmed_signal[0], answer)
+        return answer
+
+    def finish_tick(outcome: Any, post: Any) -> None:
+        """The state a tick leaves, and its log lines; a tick left unconfirmed waits for settle_unconfirmed_open."""
+        global state
+        state = outcome.state
+        report_booking(outcome, log=lambda line: print(line, flush=True))
+        unsettled_tick[0] = outcome if outcome.unconfirmed else None
+        unsettled_post[0] = post if outcome.unconfirmed else None
+        # Saved when the tick's signals are in the book; a state put back is the
+        # one the tick began with, and an unconfirmed one is saved once it is known.
+        if outcome.signals and not outcome.restored and not outcome.unconfirmed:
+            save_state()
+
+    def settle_unconfirmed_open() -> bool:
+        """Asks about the unconfirmed OPEN when that is due. True while the answer is still out."""
+        tick_left = unsettled_tick[0]
+        if tick_left is None:
+            return False
+        settled = settle_tick(tick_left, recheck_open, unsettled_post[0])
+        if settled.last_answer is not None:
+            finish_tick(settled, unsettled_post[0])
+        return unsettled_tick[0] is not None
 
     # Ticks a recap run refused because they fell outside the replayed session.
     recap_refused = [0]
@@ -1310,15 +1356,29 @@ if __name__ == "__main__":
         if announce_recap_listening(redis_client, run_id):
             print(f"[{args.underlying}] RECAP listening: set {RECAP_LISTENING_KEY.format(run_id=run_id)} "
                   f"for the replay player.", flush=True)
+    else:
+        # A run started before the open is normal: say so once, in plain words.
+        before_open = session_gate.why_closed([args.spot_symbol])
+        if before_open is not None:
+            print(f"[{args.underlying}] Started outside the session: {before_open}. OPEN signals wait for the "
+                  f"market; closes are not held.", flush=True)
 
     try:
         for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
             if tick is None:
                 # Empty read: nothing on the stream for block_ms.
                 housekeeping()
+                try:
+                    settle_unconfirmed_open()
+                except Exception as ex:
+                    print(f"[{args.underlying}] WARN: could not ask about the unconfirmed OPEN: {ex}", flush=True)
                 continue
 
             try:
+                # Before anything can pass this tick over: the question is about
+                # the API, and has nothing to do with what this tick carries.
+                settle_unconfirmed_open()
+
                 # The replay shares the live stream. A live run must never trade
                 # a replayed price, nor a recap run a live one.
                 if not tick_is_for_this_run(tick, recap is not None):
@@ -1356,12 +1416,6 @@ if __name__ == "__main__":
                         recap_closed[0] = True
                         print(f"[{args.underlying}] RECAP reached the replayed {recap.close_ist:%H:%M} — the strategy takes no "
                               f"further entries or exits. Stop run {args.run_id} from the console to square "
-    else:
-        # A run started before the open is normal: say so once, in plain words.
-        before_open = session_gate.why_closed([args.spot_symbol])
-        if before_open is not None:
-            print(f"[{args.underlying}] Started outside the session: {before_open}. OPEN signals wait for the "
-                  f"market; closes are not held.", flush=True)
                               f"off at the replay's closing prices (a Market Replay stops its runs itself "
                               f"when it ends).", flush=True)
                         housekeeping()
@@ -1402,6 +1456,12 @@ if __name__ == "__main__":
                         print(f"[{args.underlying}] WARN: ticks are {lag:.0f}s behind the exchange.",
                               flush=True)
 
+                # While the API has not said what became of an OPEN, the strategy
+                # is left exactly where it was: nothing it could decide now can be
+                # ordered around that OPEN, and it cannot emit a second one.
+                if unsettled_tick[0] is not None:
+                    housekeeping()
+                    continue
 
                 # Every contract the strategy declared (ATM, OTM, ITM), resolved
                 # on the underlying's real strike grid. A key the master lacks is
@@ -1462,19 +1522,11 @@ if __name__ == "__main__":
 
                 # Every signal of the tick is booked, or the strategy's state
                 # goes back to what it was before on_bar and it emits them again
-                # on a later tick (strategies/signal_booking.py).
-                tick_outcome = run_tick(
-                    state,
-                    lambda tick_state: evaluate_tick(tick_state, inp),
-                    lambda sig: post_signal(sig, inp, atm_ce_contract, atm_pe_contract),
-                )
-                state = tick_outcome.state
-                report_booking(tick_outcome, log=lambda line: print(line, flush=True))
-
-                # Saved when the tick's signals are in the book; a state put
-                # back is the one the tick began with.
-                if tick_outcome.signals and not tick_outcome.restored:
-                    save_state()
+                # on a later tick; an OPEN whose answer is lost keeps the state and
+                # is asked about until the API answers (strategies/signal_booking.py).
+                post_for_tick = poster_for(inp, atm_ce_contract, atm_pe_contract)
+                finish_tick(run_tick(state, lambda tick_state: evaluate_tick(tick_state, inp), post_for_tick),
+                            post_for_tick)
 
             except Exception as ex:
                 import traceback
@@ -1485,6 +1537,10 @@ if __name__ == "__main__":
 
     finally:
         keepalive_running = False
+        if unsettled_tick[0] is not None:
+            # Nothing can ask any more. The run's stop closes whatever the book holds.
+            print(f"SIGNAL UNCONFIRMED: {unsettled_tick[0].bookings[-1].describe()} — the runner is ending and the "
+                  f"API never answered. Check the book of run {run_id}: it may or may not be there.", flush=True)
         if recap is not None:
             forget_recap_listening(redis_client, run_id)
         try:
