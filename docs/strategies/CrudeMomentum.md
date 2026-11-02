@@ -8,8 +8,9 @@ under Limitations.
 
 ## Idea
 
-Intraday momentum on MCX crude. On the 5-minute chart of the near-month crude
-future — the run's "spot", because a commodity has no spot on this feed — the
+Intraday momentum on MCX crude. On the 5-minute chart of the crude future its
+nearest options are written on — the run's "spot", because a commodity has no
+spot on this feed — the
 strategy tracks the volume-weighted average price of the current session and a
 9-period EMA, and buys the ATM call when a bullish 5-minute candle closes with
 its whole body above both lines. The bet is that a candle whose open and close
@@ -23,7 +24,7 @@ below.
 
 | What | Symbol(s) | Resolution | History before the first signal | Where the platform gets it |
 |------|-----------|------------|---------------------------------|----------------------------|
-| index candles | the run's `Symbol`: the nearest unexpired crude future (`MCX:CRUDEOIL26SEPFUT` in runs 99 and 104). `UnderlyingCatalog.SpotSymbolFor` returns nothing for a commodity, so `StrategyController` stores `GetNearestFutureSymbolAsync(underlying)` on the run at launch. | 5m | `on_bar` needs `ema_period + 2` = 11 buckets in the list (`len(bars) < self.ema_period + 2`) and `min_session_bars` = 12 buckets of the signal bar's IST date; all of them come from `live_bars` — the FYERS warm-up bars are fed and ignored (see Timeframe). | Live: `live_bars` 1m rows aggregated to 5m on read (`GET /api/LiveData/bars?resolution=5m&take=500`, `LiveDataService.GetRecentBarsAsync`), newest bucket still forming; volume per bucket is the sum of the 1m rows' `VolumeDelta` (the tick's cumulative volume minus the previously stored one, `LiveDataService`). Backtest: `candles` (backfill). |
+| index candles | the run's `Symbol`: the future the nearest options are written on, which is the first future expiring on or after the first option expiry that has not passed (`MCX:CRUDEOIL26SEPFUT` in runs 99 and 104). `UnderlyingCatalog.SpotSymbolFor` returns nothing for a commodity, so `StrategyStartService` stores `GetFutureOfNearestOptionsAsync(underlying)` on the run at launch. | 5m | `on_bar` needs `ema_period + 2` = 11 buckets in the list (`len(bars) < self.ema_period + 2`) and `min_session_bars` = 12 buckets of the signal bar's IST date; all of them come from `live_bars` — the FYERS warm-up bars are fed and ignored (see Timeframe). | Live: `live_bars` 1m rows aggregated to 5m on read (`GET /api/LiveData/bars?resolution=5m&take=500`, `LiveDataService.GetRecentBarsAsync`), newest bucket still forming; volume per bucket is the sum of the 1m rows' `VolumeDelta` (the tick's cumulative volume minus the previously stored one, `LiveDataService`). Backtest: `candles` (backfill). |
 | ticks | the same future | every tick | none | ingestor → Redis stream `market:ticks`; each tick is one call of `on_bar`, and its LTP picks the ATM strike |
 | option quotes | the ATM CE of the nearest option expiry — the only requirement `get_contract_requirements` declares (`ContractRequirement(key="atm_ce", option_type="CE")`; no put is subscribed) | latest quote | none | the runner puts the resolved contract on the ingestor watchlist (`ensure_contracts_tracked`); fills use `live_quotes_latest` |
 
@@ -448,6 +449,16 @@ been squared off at it.
 - **Expiry-day contracts.** The nearest option expiry on or after today is
   used, so on 2026-09-17 the same-day contract is traded; the future the
   lines are read from expires on the 21st.
+- **The future rolls the day after the option expiry.** Crude options expire
+  about four days before their future. From the day after the option expiry
+  until the future expires, the run trades next month's options, so its strike
+  and its lines come from next month's future, chosen when the run starts.
+  Until 2 Nov 2026 they came from the expiring future: the "ATM" call was off by
+  the calendar spread, and the lines described a contract whose volume had
+  moved on. Runs 99 and 104 below were not on those days. The first day on the
+  new future has only what the ingestor has recorded of it, as any first day
+  does; the feed's universe holds the two nearest futures, so that is normally
+  the whole session.
 - **Wrong underlying is only a warning.** `supported_underlyings` disables
   other underlyings in the launch dialog, but the API only logs a warning:
   run 103 started this strategy on `NSE:NIFTYBANK-INDEX` (no `underlying`

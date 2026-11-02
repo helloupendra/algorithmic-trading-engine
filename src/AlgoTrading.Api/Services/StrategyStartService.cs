@@ -217,19 +217,20 @@ public sealed class StrategyStartService(
         }
 
         // What the run prices itself against. For an index that is a fixed spot
-        // symbol; for a commodity there is no spot at all, so the near-month
-        // future stands in - resolved now and stored on the run, because it is a
-        // different contract every month and a run must not silently follow a
-        // symbol that expires under it.
+        // symbol; for a commodity there is no spot at all, so the future its
+        // nearest options are written on stands in - resolved now and stored on
+        // the run, because it is a different contract every month and a run must
+        // not silently follow a symbol that expires under it. The morning job
+        // deploys afresh each day, so this rolls the day after the option expiry.
         var spotSymbol = UnderlyingCatalog.SpotSymbolFor(underlying);
         if (string.IsNullOrWhiteSpace(spotSymbol))
         {
-            spotSymbol = await derivatives.GetNearestFutureSymbolAsync(underlying, cancellationToken) ?? string.Empty;
+            spotSymbol = await derivatives.GetFutureOfNearestOptionsAsync(underlying, cancellationToken) ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(spotSymbol))
             {
                 return StrategyStartOutcome.Refused(StrategyStartKind.BadRequest,
-                    $"{underlying} has no unexpired futures contract in the instrument master, "
+                    $"{underlying} has no future in the instrument master that its nearest options are written on, "
                     + "so there is nothing to price it against. Import the master and try again.");
             }
         }

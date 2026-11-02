@@ -15,15 +15,19 @@ namespace AlgoTrading.Application.Interfaces
         /// Retrieves all available expiry dates for a given underlying asset.
         /// </summary>
         /// <summary>
-        /// The nearest futures contract of this underlying that has not expired,
-        /// e.g. "MCX:CRUDEOIL26SEPFUT". Null when the master holds none.
+        /// The future the underlying's nearest options are written on, e.g.
+        /// "MCX:CRUDEOIL26SEPFUT": the first future expiring on or after the first
+        /// option expiry that has not passed. Null when the master holds none.
         /// </summary>
         /// <remarks>
         /// This is what stands in for a spot price on MCX, where no spot quote
         /// exists. It is resolved rather than configured because the answer
-        /// changes every month.
+        /// changes every month. It is not simply the nearest future: crude options
+        /// expire on the 17th and their future on the 21st, and a run on those days
+        /// trades next month's options, whose strikes and lines come from next
+        /// month's future.
         /// </remarks>
-        Task<string?> GetNearestFutureSymbolAsync(
+        Task<string?> GetFutureOfNearestOptionsAsync(
             string underlying,
             CancellationToken cancellationToken = default);
 

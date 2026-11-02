@@ -5,8 +5,8 @@ Crude Oil intraday momentum: a 5-minute candle whose whole body clears both the
 session VWAP and the 9-period EMA buys the ATM call.
 
 The indicators are read off the MCX crude FUTURE - the run's spot symbol, since
-a commodity has no spot and the near-month future stands in for it - and the
-trade is expressed in that underlying's options, the only instrument this
+a commodity has no spot and the future its nearest options are written on stands
+in for it - and the trade is expressed in those options, the only instrument this
 account trades.
 
 There is no exit here on purpose. The platform already enforces premium stops,
@@ -44,7 +44,7 @@ class CrudeMomentumStrategy(BaseStrategy):
 
     name = "CrudeMomentum"
     description = (
-        "Intraday momentum on MCX crude. On the 5-minute chart of the near-month crude future it tracks the "
+        "Intraday momentum on MCX crude. On the 5-minute chart of the future its options are written on it tracks the "
         "session VWAP and a 9-period EMA, and buys the ATM call when a bullish candle (close > open) closes "
         "with its ENTIRE body above both lines - open and close each above VWAP and above the EMA. Runs the "
         "whole MCX session with no time-of-day filter. It has no exit of its own: the run's risk rules close "

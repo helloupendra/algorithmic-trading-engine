@@ -543,7 +543,7 @@ read gets.
 | --- | --- | --- |
 | `Enabled` | false | On only on the host that records. Dhan's chain limit is per account, so two hosts polling would starve each other. |
 | `IntervalSeconds` | 60 | Between the starts of two rounds. |
-| `Underlyings` | NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, CRUDEOIL, NATURALGAS | An MCX commodity is chained on its nearest future. |
+| `Underlyings` | NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, CRUDEOIL, NATURALGAS | An MCX commodity is chained on the future its options are written on: the first expiring on or after the nearest option expiry. |
 | `LaterExpiryUnderlyings` | NIFTY, BANKNIFTY, SENSEX | Also record the next expiry and the nearest monthly. Meant for indices; empty records the nearest only. |
 | `LaterExpiryIntervalSeconds` | 300 | Between two captures of the same later expiry; never less than `IntervalSeconds`. |
 

@@ -554,7 +554,7 @@ public sealed class DhanChainRecorder
 
         try
         {
-            var underlying = await ResolveAsync(name, IstTime.DateOf(now), cut.Token);
+            var underlying = await ResolveAsync(name, IstTime.DateOf(now), cut.Token, expiry);
             if (underlying is null)
                 return new DhanChainOutcome(name, now, "failed", "no Dhan id for this underlying; run the Dhan instrument import", expiry);
 
@@ -631,10 +631,17 @@ public sealed class DhanChainRecorder
         ex.IsNotSubscribed ? "not-subscribed" : ex.IsAuthFailure ? "auth-failed" : "failed";
 
     /// <summary>
-    /// Indices from the fixed table; an MCX commodity by its nearest future,
-    /// which is what Dhan writes that commodity's options on.
+    /// Indices from the fixed table; an MCX commodity by the future its options
+    /// are written on: the first one expiring on or after <paramref name="expiry"/>,
+    /// or when that is not given, on or after the nearest option expiry.
     /// </summary>
-    private async Task<DhanChainUnderlying?> ResolveAsync(string name, DateOnly today, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Not simply the nearest future. Crude options expire on the 17th and their
+    /// future on the 21st, so for those four days the nearest future was the
+    /// expiring one: its chain either listed no current expiry, or carried next
+    /// month's options priced on the wrong month's future, as the runner's did.
+    /// </remarks>
+    private async Task<DhanChainUnderlying?> ResolveAsync(string name, DateOnly today, CancellationToken cancellationToken, DateOnly? expiry = null)
     {
         string key = name.Trim().ToUpperInvariant();
         if (DhanInstruments.IndexUnderlyings.TryGetValue(key, out var index))
@@ -643,12 +650,17 @@ public sealed class DhanChainRecorder
             return new DhanChainUnderlying(key, exchange, index);
         }
 
+        var writtenOnOrAfter = expiry ?? await _db.Instruments.AsNoTracking()
+            .Where(i => i.IsEnabled && i.Exchange == "MCX" && i.Underlying == key
+                        && (i.InstrumentType == "CE" || i.InstrumentType == "PE") && i.ExpiryDate >= today)
+            .MinAsync(i => i.ExpiryDate, cancellationToken) ?? today;
+
         var future = await (
                 from i in _db.Instruments.AsNoTracking()
                 join v in _db.InstrumentVendorSymbols.AsNoTracking() on i.Symbol equals v.CanonicalSymbol
                 where v.ProviderKey == DhanProvider.Key
                       && i.Exchange == "MCX" && i.Underlying == key && i.InstrumentType == "FUT"
-                      && i.ExpiryDate >= today
+                      && i.ExpiryDate >= writtenOnOrAfter
                 orderby i.ExpiryDate
                 select new { i.Symbol, v.VendorSymbol })
             .FirstOrDefaultAsync(cancellationToken);

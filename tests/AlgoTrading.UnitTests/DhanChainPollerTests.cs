@@ -144,6 +144,42 @@ public class DhanChainPollerTests
     }
 
     [Fact]
+    public async Task Between_the_option_expiry_and_the_futures_an_MCX_chain_is_asked_and_priced_on_next_months_future()
+    {
+        // Options expired yesterday, their future expires in two days: the 18th to 21st of a crude month.
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTime.Zone));
+        var nextOptions = today.AddDays(30);
+        await using var db = Db();
+        db.Instruments.AddRange(
+            new Instrument { Symbol = "MCX:CRUDEOILOLDFUT", Exchange = "MCX", Segment = "COM", InstrumentType = "FUT", Underlying = "CRUDEOIL", ExpiryDate = today.AddDays(2), IsEnabled = true },
+            new Instrument { Symbol = "MCX:CRUDEOILNEWFUT", Exchange = "MCX", Segment = "COM", InstrumentType = "FUT", Underlying = "CRUDEOIL", ExpiryDate = today.AddDays(34), IsEnabled = true },
+            new Instrument { Symbol = "MCX:CRUDEOILOLD9950CE", Exchange = "MCX", Segment = "COM", InstrumentType = "CE", OptionType = "CE", Underlying = "CRUDEOIL", ExpiryDate = today.AddDays(-1), StrikePrice = 9950m, IsEnabled = true },
+            new Instrument { Symbol = "MCX:CRUDEOILNEW9950CE", Exchange = "MCX", Segment = "COM", InstrumentType = "CE", OptionType = "CE", Underlying = "CRUDEOIL", ExpiryDate = nextOptions, StrikePrice = 9950m, IsEnabled = true });
+        db.InstrumentVendorSymbols.AddRange(
+            new InstrumentVendorSymbol { ProviderKey = "dhan", CanonicalSymbol = "MCX:CRUDEOILOLDFUT", VendorSymbol = "MCX_COMM:111111:FUTCOM" },
+            new InstrumentVendorSymbol { ProviderKey = "dhan", CanonicalSymbol = "MCX:CRUDEOILNEWFUT", VendorSymbol = "MCX_COMM:222222:FUTCOM" });
+        db.LiveQuotesLatest.AddRange(
+            new LiveQuoteLatest { Symbol = "MCX:CRUDEOILOLDFUT", LastTradedPrice = 9800m, UpdatedUtc = DateTime.UtcNow, SourceKey = "dhan" },
+            new LiveQuoteLatest { Symbol = "MCX:CRUDEOILNEWFUT", LastTradedPrice = 9971m, UpdatedUtc = DateTime.UtcNow, SourceKey = "dhan" });
+        await db.SaveChangesAsync();
+
+        var handler = new Routes
+        {
+            ["/optionchain/expirylist"] = $$"""{"data":["{{nextOptions:yyyy-MM-dd}}"],"status":"success"}""",
+            ["/optionchain"] = """{"data":{"last_price":9577,"oc":{"9950.000000":{"ce":{"last_price":302.3,"oi":1797,"security_id":7}}}},"status":"success"}""",
+        };
+        var recorder = Recorder(db, handler, State(), marketOpen: true);
+
+        var outcome = Assert.Single(await recorder.RecordAsync(new[] { "CRUDEOIL" }, onlyOpenMarkets: true, CancellationToken.None));
+
+        Assert.Equal("recorded", outcome.State);
+        Assert.Equal(nextOptions, outcome.Expiry);
+        Assert.Equal(9971m, outcome.Spot);
+        Assert.Contains(handler.Bodies, body => body.Contains("222222"));
+        Assert.DoesNotContain(handler.Bodies, body => body.Contains("111111"));
+    }
+
+    [Fact]
     public async Task A_closed_market_is_not_asked_and_says_why()
     {
         await using var db = Db();
@@ -749,6 +785,9 @@ public class DhanChainPollerTests
         private readonly Dictionary<string, string> _bodies = new();
         public List<string> Called { get; } = new();
 
+        /// <summary>Every request's body, as sent.</summary>
+        public List<string> Bodies { get; } = new();
+
         /// <summary>Every chain request as (when it was sent, the expiry it asked for).</summary>
         public List<(DateTime SentUtc, string Expiry)> Chains { get; } = new();
 
@@ -764,6 +803,11 @@ public class DhanChainPollerTests
         {
             string path = request.RequestUri!.AbsolutePath;
             Called.Add(path);
+            if (request.Content is not null)
+            {
+                string sent = await request.Content.ReadAsStringAsync(cancellationToken);
+                lock (Bodies) Bodies.Add(sent);
+            }
             if (path.EndsWith("/optionchain", StringComparison.Ordinal) && request.Content is not null)
             {
                 using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));

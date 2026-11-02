@@ -43,7 +43,7 @@ public static class UnderlyingCatalog
     /// every month. So there is deliberately no entry for these in
     /// SpotByUnderlying - asking for a fixed symbol would only ever return one
     /// that is right until the next expiry. Callers resolve the live contract
-    /// through IDerivativesInstrumentService.GetNearestFutureSymbolAsync.
+    /// through IDerivativesInstrumentService.GetFutureOfNearestOptionsAsync.
     /// </remarks>
     public static readonly IReadOnlyList<string> CommodityUnderlyings = new[]
     {

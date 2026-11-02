@@ -22,7 +22,7 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
         _optionHistory = optionHistory;
     }
 
-    public async Task<string?> GetNearestFutureSymbolAsync(
+    public async Task<string?> GetFutureOfNearestOptionsAsync(
         string underlying,
         CancellationToken cancellationToken = default)
     {
@@ -30,6 +30,19 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
 
         var key = underlying.Trim().ToUpperInvariant();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // The expiry the runner will trade: the first option expiry on or after
+        // today (choose_expiry), on the same UTC date. Between the 17th and the
+        // 21st that is next month's, and the expiring future says nothing about it.
+        var optionExpiry = await _dbContext.Instruments
+            .AsNoTracking()
+            .Where(x => x.IsEnabled
+                        && x.Underlying == key
+                        && (x.InstrumentType == "CE" || x.InstrumentType == "PE")
+                        && x.ExpiryDate.HasValue
+                        && x.ExpiryDate >= today)
+            .MinAsync(x => x.ExpiryDate, cancellationToken);
+        var writtenOnOrAfter = optionExpiry ?? today;
 
         // Matched on Underlying rather than a symbol prefix: "CRUDEOIL%" also
         // catches CRUDEOILM, whose contract is a tenth of the size, and picking
@@ -40,7 +53,7 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
                         && x.Underlying == key
                         && x.InstrumentType == "FUT"
                         && x.ExpiryDate.HasValue
-                        && x.ExpiryDate >= today)
+                        && x.ExpiryDate >= writtenOnOrAfter)
             .OrderBy(x => x.ExpiryDate)
             .Select(x => x.Symbol)
             .FirstOrDefaultAsync(cancellationToken);
