@@ -36,8 +36,9 @@ public enum TelegramChannel
 /// appsettings.Local.json (loaded with reloadOnChange) takes effect without a
 /// restart. Sending never throws: a Telegram outage is logged and reported as
 /// a failed send, never allowed to stop the thing being reported on. The token
-/// is part of the request URL, so a failure is logged by status or exception
-/// type only — never the exception text, which can carry the URL.
+/// is part of the request URL, so a failure is logged by status, Telegram's own
+/// description or exception type only — never the exception text, which can
+/// carry the URL.
 /// <para>
 /// Messages to one chat go out one at a time, about one a second, from a
 /// queue per chat. On 25 Sep 2026 the runners' feed alerts arrived in bursts
@@ -47,6 +48,16 @@ public enum TelegramChannel
 /// <c>retry_after</c> Telegram names and the same message is tried again. The
 /// queue is bounded: past <see cref="MaxQueuedPerChat"/> the oldest message is
 /// dropped, with a log line, rather than letting a flood grow without limit.
+/// </para>
+/// <para>
+/// A message Telegram refuses as such (HTTP 400, usually "can't parse entities"
+/// or "message is too long") goes once more as plain text, cut to fit: until
+/// 2 Nov 2026 one stray &lt; in a kill-switch reason or a quoted traceback lost
+/// the alert. A send that fails on the way, or on Telegram's side, is tried
+/// <see cref="MaxTransientAttempts"/> times. Every message that is still not
+/// delivered after that writes one line starting <see cref="LostLine"/>, which
+/// Sentinel's logs agent reports (sentinel/agents/logs.py); a test there reads
+/// these lines from this file, so changing one fails it.
 /// </para>
 /// </remarks>
 public sealed class TelegramSender : IDisposable
@@ -72,6 +83,15 @@ public sealed class TelegramSender : IDisposable
 
     /// <summary>A message refused with 429 this many times running is given up, so one message can never hold a chat forever.</summary>
     public const int MaxRateLimitAttempts = 10;
+
+    /// <summary>Tries for a message when the network or Telegram itself fails, each <see cref="TransientPause"/> apart. A duplicate is noise; a lost alert is not.</summary>
+    public const int MaxTransientAttempts = 3;
+
+    /// <summary>The wait after a send that failed on the way or got a 5xx.</summary>
+    public static readonly TimeSpan TransientPause = TimeSpan.FromSeconds(5);
+
+    /// <summary>How every log line for a message that was not delivered starts. Sentinel matches this phrase.</summary>
+    public const string LostLine = "Telegram alert lost";
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
@@ -145,10 +165,11 @@ public sealed class TelegramSender : IDisposable
     /// chat and waits up to <see cref="CallerWait"/> for the answer.
     /// </summary>
     /// <returns>
-    /// True when Telegram took it, or when it is still queued behind the pacing
-    /// and going out (a refusal after that is logged). False when Telegram is
-    /// not configured, refused it within the wait, or it was dropped from a
-    /// full queue.
+    /// True when Telegram took it, as HTML or as the plain-text retry, or when
+    /// it is still queued behind the pacing and going out (a loss after that is
+    /// logged, see <see cref="LostLine"/>). False when Telegram is not
+    /// configured, the message was lost within the wait, or it was dropped from
+    /// a full queue.
     /// </returns>
     public async Task<bool> SendHtmlAsync(string text, TelegramChannel channel, CancellationToken cancellationToken = default)
     {
@@ -230,7 +251,7 @@ public sealed class TelegramSender : IDisposable
             Interlocked.Decrement(ref _count);
             message.Complete(false);
             _owner._logger.LogWarning(
-                "Telegram queue for the {Channel} channel is full ({Max} waiting); dropped the oldest message: {Start}",
+                "Telegram alert lost: the {Channel} channel's queue is full ({Max} waiting); dropped the oldest message: {Start}",
                 message.Channel, MaxQueuedPerChat, Preview(message.Text));
         }
 
@@ -256,7 +277,7 @@ public sealed class TelegramSender : IDisposable
                     catch (Exception ex)
                     {
                         // The pump must outlive any one message.
-                        _owner._logger.LogWarning("Telegram send failed: {Type}.", ex.GetType().Name);
+                        _owner._logger.LogWarning("Telegram alert lost: {Failure} while sending: {Start}", ex.GetType().Name, Preview(message.Text));
                         message.Complete(false);
                     }
                     finally
@@ -271,70 +292,135 @@ public sealed class TelegramSender : IDisposable
             }
         }
 
-        /// <summary>One message: paced, and tried again after each 429 for as long as Telegram asks.</summary>
+        /// <summary>
+        /// One message: paced, tried again after each 429 for as long as Telegram
+        /// asks, once more as plain text if it refuses the message itself, and
+        /// again after a failure on the way.
+        /// </summary>
         private async Task<bool> DeliverAsync(Outgoing message, CancellationToken stopping)
         {
-            for (int attempt = 1; ; attempt++)
+            string text = message.Text;
+            bool html = true;
+            int rateLimited = 0;
+            int transient = 0;
+
+            while (true)
             {
                 var wait = _nextSendAt - _owner._time.GetUtcNow();
                 if (wait > TimeSpan.Zero) await _owner._delay(wait, stopping);
 
-                var (sent, retryAfter) = await _owner.PostAsync(_chatId, message.Text, stopping);
+                var answer = await _owner.PostAsync(_chatId, text, html, stopping);
                 var now = _owner._time.GetUtcNow();
-                if (retryAfter is null)
+
+                if (answer.RetryAfter is { } retryAfter)
                 {
-                    _nextSendAt = now + Spacing;
-                    return sent;
+                    _nextSendAt = now + retryAfter;
+                    if (++rateLimited >= MaxRateLimitAttempts)
+                    {
+                        _owner._logger.LogWarning(
+                            "Telegram alert lost: refused with 429 {Attempts} times running; giving it up: {Start}",
+                            rateLimited, Preview(message.Text));
+                        return false;
+                    }
+
+                    _owner._logger.LogWarning(
+                        "Telegram asked to slow down (429); holding the {Channel} channel for {Seconds:0} s and sending the same message again ({Waiting} waiting).",
+                        message.Channel, retryAfter.TotalSeconds, Count);
+                    continue;
                 }
 
-                _nextSendAt = now + retryAfter.Value;
-                if (attempt >= MaxRateLimitAttempts)
+                _nextSendAt = now + Spacing;
+                if (answer.Sent) return true;
+
+                if (answer.Status == (int)HttpStatusCode.BadRequest && html)
                 {
                     _owner._logger.LogWarning(
-                        "Telegram refused a message with 429 {Attempts} times running; giving it up: {Start}",
-                        attempt, Preview(message.Text));
-                    return false;
+                        "Telegram refused a message ({Refusal}); sending it again as plain text: {Start}",
+                        answer.Failure, Preview(message.Text));
+                    text = TelegramHtml.ToPlain(message.Text);
+                    html = false;
+                    continue;
                 }
 
-                _owner._logger.LogWarning(
-                    "Telegram asked to slow down (429); holding the {Channel} channel for {Seconds:0} s and sending the same message again ({Waiting} waiting).",
-                    message.Channel, retryAfter.Value.TotalSeconds, Count);
+                if (answer.Transient && ++transient < MaxTransientAttempts)
+                {
+                    _nextSendAt = now + TransientPause;
+                    _owner._logger.LogWarning(
+                        "Telegram could not take a message ({Problem}); trying again in {Seconds:0} s ({Attempt} of {Attempts}).",
+                        answer.Failure, TransientPause.TotalSeconds, transient + 1, MaxTransientAttempts);
+                    continue;
+                }
+
+                _owner._logger.LogWarning("Telegram alert lost: {Failure}: {Start}", answer.Failure, Preview(message.Text));
+                return false;
             }
         }
     }
 
+    /// <summary>What one POST to sendMessage came to.</summary>
+    /// <param name="Sent">Telegram took it.</param>
+    /// <param name="RetryAfter">How long a 429 asks for; set only for a 429.</param>
+    /// <param name="Status">The HTTP status of a refusal; null when no answer came.</param>
+    /// <param name="Transient">The network failed or Telegram did (5xx): the same message may go through later.</param>
+    /// <param name="Failure">What went wrong, without the URL: the token is part of it.</param>
+    private readonly record struct PostAnswer(bool Sent, TimeSpan? RetryAfter = null, int? Status = null, bool Transient = false, string? Failure = null);
+
     /// <summary>
-    /// One POST to sendMessage. RetryAfter is set only for a 429, from the
-    /// body's <c>parameters.retry_after</c> (or the Retry-After header).
+    /// One POST to sendMessage, with parse_mode HTML unless <paramref name="html"/>
+    /// is false. RetryAfter is set only for a 429, from the body's
+    /// <c>parameters.retry_after</c> (or the Retry-After header).
     /// </summary>
-    private async Task<(bool Sent, TimeSpan? RetryAfter)> PostAsync(string chatId, string text, CancellationToken cancellationToken)
+    private async Task<PostAnswer> PostAsync(string chatId, string text, bool html, CancellationToken cancellationToken)
     {
         var token = _configuration["Telegram:BotToken"];
-        if (string.IsNullOrWhiteSpace(token)) return (false, null);
+        if (string.IsNullOrWhiteSpace(token)) return new PostAnswer(false, Failure: "no bot token");
 
         try
         {
             var client = _httpClientFactory.CreateClient(HttpClientName);
+            object body = html
+                ? new { chat_id = chatId, text, parse_mode = "HTML", disable_web_page_preview = true }
+                : new { chat_id = chatId, text, disable_web_page_preview = true };
             using var response = await client.PostAsJsonAsync(
                 $"https://api.telegram.org/bot{token}/sendMessage",
-                new { chat_id = chatId, text, parse_mode = "HTML", disable_web_page_preview = true },
+                body,
                 cancellationToken);
 
-            if (response.IsSuccessStatusCode) return (true, null);
+            if (response.IsSuccessStatusCode) return new PostAnswer(true);
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                return (false, await RetryAfterAsync(response, cancellationToken));
+                return new PostAnswer(false, await RetryAfterAsync(response, cancellationToken));
             }
 
-            _logger.LogWarning("Telegram refused a message: HTTP {Status}.", (int)response.StatusCode);
-            return (false, null);
+            int status = (int)response.StatusCode;
+            return new PostAnswer(false, Status: status, Transient: status >= 500,
+                Failure: $"HTTP {status}{await DescriptionAsync(response, cancellationToken)}");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning("Telegram send failed: {Type}.", ex.GetType().Name);
-            return (false, null);
+            return new PostAnswer(false, Transient: true, Failure: ex.GetType().Name);
         }
+    }
+
+    /// <summary>" Bad Request: can't parse entities: …" from a refusal's body; empty when it has none.</summary>
+    private static async Task<string> DescriptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (body.RootElement.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String)
+            {
+                var words = description.GetString()!.ReplaceLineEndings(" ");
+                return " " + (words.Length <= 200 ? words : words[..199] + "…");
+            }
+        }
+        catch (JsonException)
+        {
+            // Not JSON: the status says what there is to say.
+        }
+
+        return string.Empty;
     }
 
     /// <summary>

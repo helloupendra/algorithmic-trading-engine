@@ -517,7 +517,7 @@ public static class DeskAnalysts
                         .Append($"{positive} positive, {negative} negative, {read.Count - positive - negative} inline or unclear.");
                     foreach (var d in read.Where(d => AiJson.Str(d, "surprise") is "positive" or "negative").Take(3))
                     {
-                        text.Append($"\n• {Escape(AiJson.Str(d, "symbol") ?? "?")}: {AiJson.Str(d, "surprise")}. {Escape(Cut(AiJson.Str(d, "summary"), 140))}".TrimEnd());
+                        text.Append($"\n• {AiJson.Str(d, "symbol") ?? "?"}: {AiJson.Str(d, "surprise")}. {Cut(AiJson.Str(d, "summary"), 140)}".TrimEnd());
                     }
 
                     break;
@@ -529,7 +529,7 @@ public static class DeskAnalysts
                         var parts = (slot["indices"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Select(i => key == AiCatalog.TechnicalAnalyst
                             ? $"{AiJson.Str(i, "underlying")} {AiJson.Str(i, "bias")} {AiJson.Str(i, "grade")}"
                             : $"{AiJson.Str(i, "underlying")} {AiJson.Str(i, "stance")}");
-                        text.Append($". Latest, {AiJson.Str(slot, "slot") ?? "?"}: {Escape(string.Join(" · ", parts))}.");
+                        text.Append($". Latest, {AiJson.Str(slot, "slot") ?? "?"}: {string.Join(" · ", parts)}.");
                     }
                     else
                     {
@@ -555,6 +555,4 @@ public static class DeskAnalysts
         return flat.Length <= max ? flat : flat[..(max - 1)] + "…";
     }
 
-    /// <summary>A model's words in a message Telegram reads as HTML (see <see cref="AiDailyDigest"/>).</summary>
-    private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 }

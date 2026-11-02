@@ -91,8 +91,7 @@ public class NightlyArchiveTests
         Assert.Equal([Mon02Nov], await archive.RunDueDaysAsync(Ist(Tue03Nov, 0, 15), CancellationToken.None));
         var sent = Assert.Single(notifier.Sent);
         Assert.Equal(VixBackfillReport.FailedTitle, sent.Title);
-        Assert.StartsWith("The nightly India VIX check through 2026-11-02 stopped: HTTP 502: &lt;html&gt;&lt;title&gt;502 Bad Gateway", sent.Message);
-        Assert.DoesNotContain("<", sent.Message);
+        Assert.StartsWith("The nightly India VIX check through 2026-11-02 stopped: HTTP 502: <html><title>502 Bad Gateway", sent.Message);
         // The day itself was archived, VIX's bars included.
         Assert.Equal(375, Candles(db, VixBackfillPlan.Symbol, "1").Count);
     }

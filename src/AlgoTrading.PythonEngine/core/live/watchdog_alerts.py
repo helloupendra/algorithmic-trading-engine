@@ -82,7 +82,7 @@ class WatchdogAlerts:
         name = vendor_name(self._key)
         minutes = int(round(self._repeat / 60))
         payload = {
-            # PascalCase: AlertSubscriberService binds case-sensitively.
+            # PascalCase, as AlertSubscriberService's AlertEventPayload names them.
             "Title": f"{name} feed reconnecting: {_CAUSE_TITLE.get(cause, cause)}",
             "Message": (f"{name} feed watchdog: {_trim(detail)} "
                         f"Further '{cause}' reconnects in the next {minutes} minutes are in the feed's log only."),

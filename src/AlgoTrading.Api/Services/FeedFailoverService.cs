@@ -643,9 +643,9 @@ public sealed class FeedFailoverService : BackgroundService
     }
 
     /// <summary>
-    /// Vendor text made safe for a Telegram HTML message (the subscriber sends
-    /// with parse_mode HTML, and a stray &lt; makes Telegram refuse the whole
-    /// message) and short enough to read.
+    /// Vendor text on one line, without anything that reads as markup, and short
+    /// enough to read: it goes into notices, and into the failover record that
+    /// the console shows as it stands.
     /// </summary>
     public static string Clean(string? text, int limit)
     {

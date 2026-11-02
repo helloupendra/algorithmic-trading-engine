@@ -380,12 +380,8 @@ class Telegram:
 # --------------------------------------------------------------------------- #
 class AlertPublisher:
     """
-    Publishes to "alerts:new" in the shape AlertSubscriberService expects.
-
-    The keys MUST be PascalCase. The subscriber calls
-    JsonSerializer.Deserialize<AlertEventPayload> with no options, so binding is
-    case-sensitive — lowercase keys bind to nothing and the row is written with
-    every field at its fallback ("Alert" / "system" / "UNKNOWN").
+    Publishes to "alerts:new" in the shape AlertSubscriberService expects, with
+    the PascalCase keys of its AlertEventPayload.
     """
 
     def __init__(self, client: redis.Redis) -> None:
@@ -1029,8 +1025,9 @@ def is_record_only(payload: dict[str, Any]) -> bool:
 # The first character of every message this process formats. A heading missing
 # here is escaped as if it were backend plain text: through the forwarder a
 # roll ("🔁") and the startup summary ("🔔") arrived as literal "<b>" tags
-# (found in review on 27 Sep).
-OWN_HEADINGS = ("▶️", "⏹️", "🔁", "🟢", "🔴", "✅", "🔻", "⚪", "📡", "🛑", "🔔")
+# (found in review on 27 Sep). The API's alert subscriber keeps the same list
+# (TelegramHtml.NotifierHeadings, and a test holds the two equal).
+OWN_HEADINGS = ("▶️", "⏹️", "🔁", "🟢", "🔴", "✅", "🔻", "⚪", "📡", "🛑", "🔔", "🌙")
 
 
 def render_for_telegram(payload: dict[str, Any]) -> str:

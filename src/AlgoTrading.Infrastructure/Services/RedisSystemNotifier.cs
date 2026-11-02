@@ -53,9 +53,9 @@ public class RedisSystemNotifier : ISystemNotifier
         => PublishAsync(Payload(category, severity, title, message, underlying, symbol, simulationRunId, recordOnly: true), title);
 
     /// <summary>
-    /// The JSON published on <c>alerts:new</c>, in the PascalCase shape
-    /// <c>AlertEventPayload</c> binds (the subscriber deserializes with no
-    /// options, so binding is case-sensitive).
+    /// The JSON published on <c>alerts:new</c>, in the PascalCase of
+    /// <c>AlertEventPayload</c>. Title and message are plain text: the subscriber
+    /// escapes them for Telegram.
     /// </summary>
     public static string Payload(
         NotificationCategory category,

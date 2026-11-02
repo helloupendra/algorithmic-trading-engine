@@ -416,7 +416,7 @@ public sealed class AiDailyDigest(
             int unclear = reviews.Count - followed - deviated.Count;
             if (unclear > 0) text.Append($", {unclear} unclear");
             text.Append('.');
-            foreach (var d in deviated.Take(DeviationsShown)) text.Append($"\n• #{d.RunId}: {Escape(d.Title)}");
+            foreach (var d in deviated.Take(DeviationsShown)) text.Append($"\n• #{d.RunId}: {d.Title}");
             if (deviated.Count > DeviationsShown) text.Append($"\n• and {deviated.Count - DeviationsShown} more");
         }
 
@@ -464,7 +464,7 @@ public sealed class AiDailyDigest(
         text.Append(findings.Count == 0 && ok.Count > 0 ? "nothing wrong." : $"{Count("high")} high, {Count("medium")} medium, {Count("low")} low.");
         foreach (var f in findings.Where(f => AiJson.Str(f, "severity") == "high").Take(DeviationsShown))
         {
-            text.Append($"\n• {Escape(Cut(AiJson.Str(f, "subject") ?? "?", 60))}: {Escape(Cut(AiJson.Str(f, "facts") ?? string.Empty, 140))}");
+            text.Append($"\n• {Cut(AiJson.Str(f, "subject") ?? "?", 60)}: {Cut(AiJson.Str(f, "facts") ?? string.Empty, 140)}");
         }
 
         int invalid = reports.Count(r => r.Status == AiReportStatus.Invalid);
@@ -485,7 +485,7 @@ public sealed class AiDailyDigest(
         text.Append(invalid > 0 ? $", {invalid} failed the quote check." : ".");
         foreach (var x in ok.Where(x => x.Applies == "yes").Take(DeviationsShown))
         {
-            text.Append($"\n• {Escape(Cut(x.Report.Title, 160))}");
+            text.Append($"\n• {Cut(x.Report.Title, 160)}");
         }
 
         return text.ToString();
@@ -496,12 +496,12 @@ public sealed class AiDailyDigest(
     {
         if (reports.Count == 0) return null;
         var latest = reports[^1];
-        if (latest.Status != AiReportStatus.Ok) return $"{Escape(Cut(latest.Title, 160))}. Read it on the Reports tab.";
-        var text = new StringBuilder(Escape(Cut(latest.Title, 200)));
+        if (latest.Status != AiReportStatus.Ok) return $"{Cut(latest.Title, 160)}. Read it on the Reports tab.";
+        var text = new StringBuilder(Cut(latest.Title, 200));
         var ideas = AiJson.Object(latest.DataJson)?["ideas"] as System.Text.Json.Nodes.JsonArray;
         foreach (var idea in (ideas ?? []).OfType<System.Text.Json.Nodes.JsonObject>().Take(3))
         {
-            text.Append($"\n• {Escape(AiJson.Str(idea, "strategy") ?? "?")}: {Escape(Cut(AiJson.Str(idea, "idea") ?? string.Empty, 160))}");
+            text.Append($"\n• {AiJson.Str(idea, "strategy") ?? "?"}: {Cut(AiJson.Str(idea, "idea") ?? string.Empty, 160)}");
         }
 
         return text.ToString();
@@ -530,12 +530,6 @@ public sealed class AiDailyDigest(
     private static decimal Whole(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
 
     private static string Clock(DateTime utc) => IstTime.ToIst(utc).ToString("HH:mm", CultureInfo.InvariantCulture);
-
-    /// <summary>
-    /// A model's words in a message Telegram reads as HTML: a bare <c>&lt;</c> or <c>&amp;</c> there makes it
-    /// refuse the whole message, and the sender has no plain-text retry.
-    /// </summary>
-    private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     private sealed record Look(string Mode, string Action, bool Allowed, string Rule, string ResultJson = "{}");
 

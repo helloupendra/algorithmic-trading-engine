@@ -319,27 +319,27 @@ public class VixBackfillTests
 
         Assert.Equal(60, result.GapDays.Count);
         var sent = Assert.Single(notifier.Sent);
-        // Telegram reads it as HTML: a bare "<" or "&" makes it refuse the whole message, and so does one over 4,096
-        // characters (with the subscriber's "ALERT" line in front of it).
-        Assert.DoesNotContain("<", sent.Message);
-        Assert.DoesNotMatch("&(?!amp;|lt;|gt;)", sent.Message);
+        // Telegram refuses one over 4,096 characters (with the subscriber's "ALERT" line in front of it). The text is
+        // plain: the subscriber escapes it.
         Assert.InRange(sent.Message.Length, 1, 3800);
-        Assert.Contains("HTTP 502: &lt;html&gt;&lt;head&gt;&lt;title&gt;502 Bad Gateway", sent.Message);
-        Assert.Contains("DH-905: &lt;securityId&gt; &amp; &lt;exchangeSegment&gt; are required", sent.Message);
+        Assert.Contains("HTTP 502: <html><head><title>502 Bad Gateway", sent.Message);
+        Assert.Contains("DH-905: <securityId> & <exchangeSegment> are required", sent.Message);
         // Every gap day is still named, and the log keeps the vendors' words as they came.
         Assert.All(result.GapDays, day => Assert.Contains(day.ToString("yyyy-MM-dd"), sent.Message));
         Assert.Contains(log.Lines, l => l.Level == LogLevel.Error && l.Text.Contains("DH-905: <securityId> & <exchangeSegment>", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void A_failed_check_s_message_is_safe_for_Telegram()
+    public void A_failed_check_s_message_reaches_Telegram_escaped_once()
     {
         var error = new InvalidOperationException("'<' is an invalid start of a value. Path: $ | LineNumber: 0 & more");
 
         string message = VixBackfillReport.FailedMessage(Thu01, error);
 
-        Assert.StartsWith("The nightly India VIX check through 2026-10-01 stopped: '&lt;' is an invalid start of a value. Path: $ | LineNumber: 0 &amp; more.", message);
-        Assert.DoesNotContain("<", message);
+        Assert.StartsWith("The nightly India VIX check through 2026-10-01 stopped: '<' is an invalid start of a value. Path: $ | LineNumber: 0 & more.", message);
+        Assert.Contains(
+            "stopped: '&lt;' is an invalid start of a value. Path: $ | LineNumber: 0 &amp; more.",
+            AlgoTrading.Api.Services.AlertSubscriberService.TelegramText(new() { Title = VixBackfillReport.FailedTitle, Message = message }));
     }
 
     [Fact]

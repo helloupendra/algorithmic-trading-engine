@@ -21,6 +21,8 @@ public class AlertSubscriberService : BackgroundService
     // — X on Y", "Feed recovered — X on Y" and the risk alerts still go out.
     private static readonly Regex BackendRunStartStop = new(@"\b(started|stopped) on \b", RegexOptions.CultureInvariant);
 
+    private static readonly JsonSerializerOptions PayloadJson = new() { PropertyNameCaseInsensitive = true };
+
     public AlertSubscriberService(
         IServiceProvider serviceProvider,
         IConnectionMultiplexer redis,
@@ -46,7 +48,7 @@ public class AlertSubscriberService : BackgroundService
 
             try
             {
-                var payload = JsonSerializer.Deserialize<AlertEventPayload>((string)message!);
+                var payload = ReadPayload((string)message!);
                 if (payload == null) return;
 
                 bool delivered = false;
@@ -69,6 +71,27 @@ public class AlertSubscriberService : BackgroundService
                 _logger.LogError(ex, "Failed to process alert event from Redis.");
             }
         });
+    }
+
+    /// <summary>
+    /// The event published on <c>alerts:new</c>, whatever the case of its keys.
+    /// Something that is not an event at all still goes out, as its own text.
+    /// </summary>
+    /// <remarks>
+    /// Binding was case-sensitive until 2 Nov 2026 and LogicEngine published
+    /// lowercase keys, so each of its alerts reached Telegram as "🚨 ALERT: !"
+    /// and was stored with no content.
+    /// </remarks>
+    public static AlertEventPayload? ReadPayload(string message)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<AlertEventPayload>(message, PayloadJson);
+        }
+        catch (JsonException)
+        {
+            return new AlertEventPayload { Title = "Alert in an unknown format", Message = message, Severity = "warning" };
+        }
     }
 
     /// <summary>
@@ -129,7 +152,25 @@ public class AlertSubscriberService : BackgroundService
     /// Telegram:BotToken / Telegram:ChatId and logs failures without the token.
     /// </summary>
     private Task<bool> SendToTelegramAsync(AlertEventPayload payload)
-        => _telegram.SendHtmlAsync($"🚨 ALERT: {payload.Title}!\n{payload.Message}", ChannelFor(payload.Source));
+        => _telegram.SendHtmlAsync(TelegramText(payload), ChannelFor(payload.Source));
+
+    /// <summary>
+    /// The Telegram message (parse_mode HTML) for an event. Whatever is published
+    /// on <c>alerts:new</c> is plain text, so title and message are escaped here,
+    /// the one place every alert passes; only a message the notifier formatted
+    /// itself keeps its markup.
+    /// </summary>
+    /// <remarks>
+    /// Sent unescaped until 2 Nov 2026, so a kill-switch reason "MTM &lt; -2L" or a
+    /// failure notice quoting Python's "'&lt;' not supported" was refused with a
+    /// 400 and lost.
+    /// </remarks>
+    public static string TelegramText(AlertEventPayload payload)
+    {
+        string title = TelegramHtml.Escape(string.IsNullOrWhiteSpace(payload.Title) ? "Alert" : payload.Title);
+        string message = payload.Message ?? string.Empty;
+        return $"🚨 ALERT: {title}!\n{(TelegramHtml.IsNotifierMessage(message) ? message : TelegramHtml.Escape(message))}";
+    }
 
     /// <summary>
     /// The channel a payload belongs in, by its source: the desk's own

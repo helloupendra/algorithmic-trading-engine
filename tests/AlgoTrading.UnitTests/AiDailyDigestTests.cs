@@ -53,7 +53,7 @@ public class AiDailyDigestTests
             Top refusals: stop (2), hours (1), size (1)
 
             1 run review written: 0 followed the spec, 1 did not.
-            • #1: Stop &amp; target moved after entry
+            • #1: Stop & target moved after entry
             Read them on the AI page, Reports tab.
             """.ReplaceLineEndings("\n"),
             sent.Message);
@@ -486,7 +486,7 @@ public class AiDailyDigestTests
         Assert.Equal(
             """
             Compliance triage: 3 circulars read: 1 applies, 0 unclear, 1 does not, 1 failed the quote check.
-            • Applies: Pre-Trade risk controls for algo orders &amp; APIs
+            • Applies: Pre-Trade risk controls for algo orders & APIs
             """.ReplaceLineEndings("\n").TrimEnd(),
             sent.Message);
     }

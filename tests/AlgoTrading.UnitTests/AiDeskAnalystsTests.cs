@@ -542,7 +542,7 @@ public sealed class AiDeskAnalystsTests
         Assert.Contains("Options/OI Analyst: 1 report (1 ok). Latest, 10:30: NIFTY range-bound.", message);
         Assert.Contains("Macro Analyst (1 ok): lean bullish, size ×0.80.", message);
         Assert.Contains("Fundamental Analyst: 1 results filing read since the last digest (1 ok): 1 positive, 0 negative, 0 inline or unclear.\n" +
-                        "• TCS: positive. Profit up 8.5% &amp; revenue up.", message);
+                        "• TCS: positive. Profit up 8.5% & revenue up.", message);
 
         // A day none of them ran has no analyst section; a results filing read after a digest goes in the next one.
         Assert.Empty(await DeskAnalysts.DigestSectionsAsync(ai.Db, Thu, At(Wed, 16, 5), default));

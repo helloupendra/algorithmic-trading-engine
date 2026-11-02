@@ -45,6 +45,11 @@ public enum NotificationCategory
 /// swallow their own failures and log them, so a Telegram outage cannot stop a
 /// strategy from starting.
 /// </para>
+/// <para>
+/// Title and message are plain text. The alert subscriber escapes them for
+/// Telegram, so a caller writes "&lt;" and "&amp;" as they are; escaping them here
+/// would show on the channel and in the console as "&amp;lt;".
+/// </para>
 /// </remarks>
 public interface ISystemNotifier
 {
