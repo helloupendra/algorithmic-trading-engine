@@ -49,9 +49,9 @@ namespace AlgoTrading.UnitTests;
 /// </remarks>
 public class DeskWriteAccessTests
 {
-    private const long AdminId = 1;
-    private const long ServiceId = 5;
-    private const long TraderId = 8;
+    internal const long AdminId = 1;
+    internal const long ServiceId = 5;
+    internal const long TraderId = 8;
 
     public static TheoryData<string, string, string?> RecordingListWrites => new()
     {
@@ -253,7 +253,7 @@ public class DeskWriteAccessTests
     /// One controller with the API's policies, over fakes that record every
     /// call into <see cref="Calls"/>. A caller is named by the X-Test-User header.
     /// </summary>
-    private sealed class Host : IAsyncDisposable
+    internal sealed class Host : IAsyncDisposable
     {
         private readonly WebApplication _app;
         private readonly HttpClient _client;
@@ -266,6 +266,8 @@ public class DeskWriteAccessTests
         }
 
         public ConcurrentQueue<string> Calls { get; }
+
+        public IServiceProvider Services => _app.Services;
 
         public static async Task<Host> StartAsync<TController>(Action<IServiceCollection> register)
         {
@@ -295,13 +297,19 @@ public class DeskWriteAccessTests
             return new Host(app, calls);
         }
 
-        public async Task<HttpStatusCode> SendAsync(string method, string path, string? body, long? userId)
+        public async Task<HttpStatusCode> SendAsync(string method, string path, string? body, long? userId, CancellationToken cancellationToken = default)
+        {
+            using var response = await ExchangeAsync(method, path, body, userId, cancellationToken);
+            return response.StatusCode;
+        }
+
+        /// <summary>The whole response, for a test that reads more than its status.</summary>
+        public async Task<HttpResponseMessage> ExchangeAsync(string method, string path, string? body, long? userId, CancellationToken cancellationToken = default)
         {
             using var request = new HttpRequestMessage(new HttpMethod(method), path);
             if (body is not null) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
             if (userId is { } id) request.Headers.Add(HeaderAuth.UserHeader, id.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            using var response = await _client.SendAsync(request);
-            return response.StatusCode;
+            return await _client.SendAsync(request, cancellationToken);
         }
 
         public async Task<int> CountChainRowsAsync()
@@ -389,9 +397,27 @@ public class RecordingFake<T> : DispatchProxy where T : class
     }
 }
 
+/// <summary>
+/// An <see cref="IUserAdminService"/> that says yes to every module: a caller who
+/// holds the grant, so a refusal can only be the check under test.
+/// </summary>
+public class EveryModuleGranted : DispatchProxy
+{
+    public static IUserAdminService Create() => DispatchProxy.Create<IUserAdminService, EveryModuleGranted>();
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        => targetMethod!.Name == nameof(IUserAdminService.IsModuleAllowedAsync)
+            ? Task.FromResult(true)
+            : RecordingFake<IUserAdminService>.Answer(targetMethod.ReturnType, new ConcurrentQueue<string>());
+}
+
 internal static class RecordingFakeRegistration
 {
     /// <summary>Registers a <see cref="RecordingFake{T}"/> that records into the host's queue.</summary>
     public static IServiceCollection AddFake<T>(this IServiceCollection services) where T : class
         => services.AddSingleton(sp => RecordingFake<T>.Create(sp.GetRequiredService<ConcurrentQueue<string>>()));
+
+    /// <summary>A type only stored by the controller under test, and never called by the endpoints it exercises.</summary>
+    public static IServiceCollection AddUnused<T>(this IServiceCollection services) where T : class
+        => services.AddSingleton(_ => (T)RuntimeHelpers.GetUninitializedObject(typeof(T)));
 }

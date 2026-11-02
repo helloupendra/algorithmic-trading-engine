@@ -263,6 +263,12 @@ public class SimulatorController : ControllerBase
     [HttpPost("runs/{id:long}/portfolio/refresh")]
     public async Task<IActionResult> RefreshPortfolio(long id, CancellationToken cancellationToken)
     {
+        // It answers what GET runs/{id}/portfolio answers, and writes marks and
+        // an equity point into the run. Until 2 Nov it checked nothing: a trader
+        // refused the GET could read any run's capital and P&L through this.
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         try
         {
             var result = await _refreshSimulationPortfolioUseCase.ExecuteAsync(id, cancellationToken);
@@ -370,10 +376,16 @@ public class SimulatorController : ControllerBase
     public async Task<IActionResult> ReportProgress(
         long id,
         [FromBody] RunProgressRequest? request,
-        [FromServices] BacktestRunControl runControl)
+        [FromServices] BacktestRunControl runControl,
+        CancellationToken cancellationToken)
     {
         if (request is null)
             return BadRequest(new { message = "A progress body is required." });
+
+        // The runner signs in as Service, which passes. A trader's console reads
+        // progress; it never writes it, least of all another account's.
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
 
         bool updated = _backtests.UpdateProgress(id, request.Percent, request.BarsProcessed, request.TotalBars,
             request.CurrentUtc, request.Trades, request.Message);
@@ -394,6 +406,11 @@ public class SimulatorController : ControllerBase
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Status))
             return BadRequest(new { message = "status (\"Completed\" | \"Failed\") is required." });
+
+        // The verdict and the summary are what a backtest's page shows: until
+        // 2 Nov any Strategies trader could write them into anyone's run.
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
 
         try
         {
