@@ -159,9 +159,9 @@ it as not signed in, the page shows **Dhan refused the token**, and the alert go
 within a minute (from 08:10 on a trading day; a token due to end by 08:40 is
 replaced first, and the alert waits for that). The row keeps its issue time, so
 the token's due end is still known, and the automatic sign-in still waits two
-minutes past that end: it never asks for a token mid-session on its own, while
-Dhan may still count that one as live. Connect or **Sign in now** replaces it at
-any time. A lapsed data plan (806) is not this; a new token would not fix it. The
+minutes past that end: it does not ask for another sooner, least of all in the
+session, while Dhan may still count that one as live. Connect or **Sign in now**
+replaces it at any time. A lapsed data plan (806) is not this; a new token would not fix it. The
 feed's own 807 to 810 do not reach this path: the chain recorder's next call, or
 the 08:10 question, does.
 

@@ -46,9 +46,9 @@ namespace AlgoTrading.Infrastructure.Providers.Dhan;
 /// </para>
 /// <para>
 /// A token Dhan refused before its time keeps its due end for this rule: the
-/// no-token alarm says so at once, but the machine does not ask for another in
-/// the middle of a session, while Dhan may still count that one as live. Nor does
-/// it undo a person's Disconnect (<see cref="DisconnectHold"/>).
+/// no-token alarm says so at once, but the machine does not ask for another
+/// before that end, while Dhan may still count that one as live. Nor does it undo
+/// a person's Disconnect (<see cref="DisconnectHold"/>).
 /// </para>
 /// </remarks>
 public static class DhanAutoSignInPolicy
