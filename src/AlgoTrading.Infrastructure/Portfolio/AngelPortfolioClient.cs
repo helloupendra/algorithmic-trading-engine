@@ -61,9 +61,6 @@ public sealed class AngelPortfolioClient(
 
     private const string Name = "Angel One";
 
-    /// <summary>SmartAPI's codes for a session it no longer accepts: invalid, expired or missing token, an ended session.</summary>
-    private static readonly HashSet<string> RejectedCodes = new(StringComparer.OrdinalIgnoreCase) { "AG8001", "AG8002", "AG8003", "AB1010", "AB8050", "AB8051" };
-
     public string Key => PortfolioBrokers.Angel;
 
     /// <summary>The SmartAPI app users sign in to; null when none is set up on this server.</summary>
@@ -226,7 +223,7 @@ public sealed class AngelPortfolioClient(
         string code = PortfolioJson.Str(root, "errorcode");
         string message = PortfolioJson.Clip(PortfolioJson.Str(root, "message"));
         doc.Dispose();
-        bool rejected = answer.Status == 401 || RejectedCodes.Contains(code);
+        bool rejected = AngelApiClient.IsRejectedSession(answer.Status, code);
         throw new PortfolioBrokerException(
             rejected
                 ? "Angel One no longer accepts this sign-in. Connect Angel One again."

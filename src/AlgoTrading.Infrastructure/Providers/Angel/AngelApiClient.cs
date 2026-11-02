@@ -13,6 +13,9 @@ public sealed record AngelResult(bool Ok, string Message, JsonElement? Data = nu
 {
     /// <summary>The vendor refused for pace alone: the same call works after a wait.</summary>
     public bool RateLimited { get; init; }
+
+    /// <summary>The vendor answered and said no, as opposed to not answering usefully at all.</summary>
+    public bool Refused { get; init; }
 }
 
 /// <summary>
@@ -21,8 +24,9 @@ public sealed record AngelResult(bool Ok, string Message, JsonElement? Data = nu
 /// <remarks>
 /// SmartAPI answers a refusal with HTTP 200 and <c>status:false</c>, so every
 /// call is unwrapped and the vendor's own message is carried up. The session
-/// (client code + PIN + TOTP) is held in memory for the trading day; a refusal
-/// clears it so the next call signs in again rather than repeating a dead token.
+/// (client code + PIN + TOTP) is held in memory for the trading day; a session
+/// Angel rejects is cleared so the next call signs in again rather than repeating
+/// a dead token. How often sign-ins may go is <see cref="AngelSignInGuard"/>'s rule.
 ///
 /// <para>Nothing here runs on a timer and nothing writes to the database. It is
 /// used by the Connectors page and by whatever is built on top later.</para>
@@ -39,6 +43,19 @@ public sealed class AngelApiClient
     private static string? _jwt;
     private static DateTimeOffset _jwtAt;
     private static DateTimeOffset _lastCall;
+
+    /// <summary>Process-wide, like the session it guards: the client itself is created per request.</summary>
+    internal static AngelSignInGuard SignInGuard { get; } = new();
+
+    /// <summary>SmartAPI's codes for a session it no longer accepts: invalid, expired or missing token, an ended session.</summary>
+    private static readonly HashSet<string> RejectedSessionCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AG8001", "AG8002", "AG8003", "AB1010", "AB8050", "AB8051",
+    };
+
+    /// <summary>True when an answer says the session is dead. The portfolio page's client asks the same question.</summary>
+    internal static bool IsRejectedSession(int statusCode, string? code)
+        => statusCode == 401 || (code is not null && RejectedSessionCodes.Contains(code));
 
     /// <summary>
     /// Smallest gap between two SmartAPI calls from this process.
@@ -103,18 +120,25 @@ public sealed class AngelApiClient
         return client;
     }
 
-    /// <summary>Sign in unless a live session is already held.</summary>
+    /// <summary>
+    /// Sign in unless a live session is already held. Only <paramref name="force"/> goes past
+    /// <see cref="AngelSignInGuard"/>, and only a person pressing the connector page's button sets it.
+    /// </summary>
     public async Task<AngelResult> LoginAsync(bool force, CancellationToken cancellationToken)
     {
         if (_settings.Missing().Count > 0)
             return new AngelResult(false, "Not configured: set " + string.Join(", ", _settings.Missing()) + ".");
 
         if (HasSession && !force) return new AngelResult(true, "Already signed in.");
+        if (!force && SignInGuard.HeldBecause(_time.GetUtcNow()) is { } waiting) return new AngelResult(false, waiting);
 
         await LoginGate.WaitAsync(cancellationToken);
         try
         {
             if (HasSession && !force) return new AngelResult(true, "Already signed in.");
+            // Asked again: whoever held the gate may just have been refused.
+            if (!force && SignInGuard.HeldBecause(_time.GetUtcNow()) is { } held) return new AngelResult(false, held);
+
             string totp;
             try
             {
@@ -127,14 +151,23 @@ public sealed class AngelApiClient
 
             var body = new { clientcode = _settings.ClientCode, password = _settings.Pin, totp };
             var result = await PostAsync(LoginPath, body, cancellationToken, signedIn: false);
-            if (!result.Ok) return result;
+            if (!result.Ok)
+            {
+                NoteSignInFailed(result);
+                return result;
+            }
 
             string? jwt = result.Data?.TryGetProperty("jwtToken", out var token) == true ? token.GetString() : null;
             if (string.IsNullOrWhiteSpace(jwt))
-                return new AngelResult(false, "Angel accepted the sign-in but returned no token.");
+            {
+                var noToken = new AngelResult(false, "Angel accepted the sign-in but returned no token.");
+                NoteSignInFailed(noToken);
+                return noToken;
+            }
 
             _jwt = jwt;
             _jwtAt = DateTimeOffset.UtcNow;
+            SignInGuard.NoteSignedIn();
             _logger.LogInformation("Angel One session started for {ClientCode}", _settings.ClientCode);
             return new AngelResult(true, "Signed in.", result.Data, result.ElapsedMs);
         }
@@ -142,6 +175,40 @@ public sealed class AngelApiClient
         {
             LoginGate.Release();
         }
+    }
+
+    private void NoteSignInFailed(AngelResult result)
+    {
+        var now = _time.GetUtcNow();
+        if (result.Refused)
+        {
+            var hold = SignInGuard.NoteRefused(result.Message, now);
+            if (hold is { } wait)
+            {
+                _logger.LogWarning("Angel One refused the sign-in ({Count} in a row): {Reason} No automatic sign-in for {Minutes:0} minutes.",
+                    SignInGuard.Refused, result.Message, wait.TotalMinutes);
+            }
+            else
+            {
+                _logger.LogWarning("Angel One refused the sign-in {Count} times in a row: {Reason} No more automatic sign-ins, so the account is not locked; the connector page's Sign in again can still try.",
+                    SignInGuard.Refused, result.Message);
+            }
+        }
+        else
+        {
+            var wait = SignInGuard.NoteFailed(result.Message, now);
+            _logger.LogWarning("Angel One sign-in did not complete: {Reason} No automatic sign-in for {Minutes:0} minutes.", result.Message, wait.TotalMinutes);
+        }
+    }
+
+    /// <summary>The session is dead: the next call signs in again, and if it had only just started, not at once.</summary>
+    private void RejectSession(string why)
+    {
+        if (_jwt is null) return;
+        bool young = DateTimeOffset.UtcNow - _jwtAt < AngelSignInGuard.YoungSession;
+        ForgetSession();
+        if (young) SignInGuard.NoteYoungSessionRejected(why, _time.GetUtcNow());
+        _logger.LogWarning("Angel One rejected the session{Young}: {Reason}", young ? " that had only just started" : string.Empty, why);
     }
 
     public async Task<AngelResult> ProfileAsync(CancellationToken cancellationToken)
@@ -272,17 +339,20 @@ public sealed class AngelApiClient
         var started = _time.GetTimestamp();
         await PaceAsync(cancellationToken);
 
+        int httpStatus = 0;
         try
         {
             using var client = Client();
             using var response = await client.SendAsync(request, cancellationToken);
             long elapsed = (long)_time.GetElapsedTime(started).TotalMilliseconds;
             string text = await response.Content.ReadAsStringAsync(cancellationToken);
+            httpStatus = (int)response.StatusCode;
+            if (IsRejectedSession(httpStatus, null)) RejectSession($"HTTP {httpStatus}");
             if (text.Length == 0)
-                return new AngelResult(false, $"Angel answered HTTP {(int)response.StatusCode} with an empty body.", null, elapsed);
+                return new AngelResult(false, $"Angel answered HTTP {httpStatus} with an empty body.", null, elapsed) { Refused = httpStatus == 401 };
 
             // A rate refusal is plain text, not JSON, and says so in words.
-            if (IsRateLimit((int)response.StatusCode, text))
+            if (IsRateLimit(httpStatus, text))
                 return new AngelResult(false, $"Angel is rate-limiting: {text.Trim()[..Math.Min(90, text.Trim().Length)]}",
                     null, elapsed) { RateLimited = true };
 
@@ -297,12 +367,12 @@ public sealed class AngelApiClient
 
             string message = root.TryGetProperty("message", out var m) ? m.GetString() ?? "refused" : "refused";
             string code = root.TryGetProperty("errorcode", out var c) ? c.GetString() ?? string.Empty : string.Empty;
-            if (code is "AB1010" or "AB8050" or "AB8051") ForgetSession();   // token no longer accepted
-            return new AngelResult(false, Explain(message, code), null, elapsed);
+            if (IsRejectedSession(httpStatus, code)) RejectSession(Explain(message, code));   // token no longer accepted
+            return new AngelResult(false, Explain(message, code), null, elapsed) { Refused = true };
         }
         catch (JsonException)
         {
-            return new AngelResult(false, "Angel answered with something that is not JSON.");
+            return new AngelResult(false, "Angel answered with something that is not JSON.") { Refused = httpStatus == 401 };
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
@@ -323,7 +393,7 @@ public sealed class AngelApiClient
             return $"{message}{suffix} — the TOTP secret or this machine's clock is wrong.";
         if (code is "AB1004" || message.Contains("block", StringComparison.OrdinalIgnoreCase))
             return $"{message}{suffix} — the app only answers from the static IP it was registered with.";
-        if (code is "AB1010" or "AB8050" or "AB8051")
+        if (RejectedSessionCodes.Contains(code))
             return $"{message}{suffix} — the session was rejected; the next call signs in again.";
         return message + suffix;
     }

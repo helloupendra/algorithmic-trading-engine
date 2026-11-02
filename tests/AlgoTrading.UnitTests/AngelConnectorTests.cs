@@ -84,6 +84,8 @@ public class AngelConnectorTests
     [InlineData("Invalid totp", "AB1050", "clock")]
     [InlineData("Client is blocked", "AB1004", "static IP")]
     [InlineData("Invalid Token", "AB1010", "signs in again")]
+    [InlineData("Invalid Token", "AG8001", "signs in again")]
+    [InlineData("Token Expired", "AG8002", "signs in again")]
     [InlineData("Something else", "", "Something else")]
     public void A_refusal_carries_the_vendors_words_and_the_cause(string message, string code, string expected)
     {
