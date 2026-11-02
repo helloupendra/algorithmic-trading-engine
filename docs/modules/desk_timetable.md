@@ -132,6 +132,14 @@ retries the failed one. Every API restart also builds first and stops the runnin
 an API that is down when the build fails is started from the last good build (`~/.local/state/algotrading/api-last-good`,
 one copy of about 70 MB).
 
+Pending migrations run as the API starts, before `/health` answers. While they run the API holds
+`~/.local/state/algotrading/api-migrating`, and with its process alive the desk neither counts failed checks nor
+restarts it, for up to 45 minutes (`API_MIGRATION_LIMIT_MIN`). A deploy or the morning job that needs a restart meanwhile
+waits for it to finish, so the morning can start late. Telegram hears when one starts and when it ends. Past the limit the API is restarted, which rolls the migration back and starts it again, and Telegram is told.
+A file whose process has gone means the migration failed or was killed: Telegram hears that at once, and the usual
+three failed checks restart the API. To everything else `/health` means what it always has: the pager and Sentinel
+report an API that is migrating as down, because it is not serving.
+
 A commit of scripts or Python alone rebuilds nothing and is never held. Python runners pick up new code at their
 next start. `desk.sh` and `desk-common.sh` load when the desk starts and the desk never re-executes itself, so a
 change to them reaches its loop only after `sudo systemctl restart algotrading-desk`; the morning and evening jobs
