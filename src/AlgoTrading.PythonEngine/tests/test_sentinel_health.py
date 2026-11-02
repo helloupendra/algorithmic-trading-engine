@@ -10,8 +10,10 @@ from unittest import mock
 import sentinel.agents.health as health
 from sentinel.agents.health import HealthAgent
 from sentinel.agents.trading import RUNNING_PATH
+from sentinel.engine import SentinelEngine
 from sentinel.model import Severity
-from _sentinel_fakes import make_context
+from sentinel.store import MemoryIncidentStore
+from _sentinel_fakes import RecordingNotifier, clock_ticks, make_context
 
 GB = 1024 ** 3
 NOW = datetime(2026, 9, 24, 6, 0, tzinfo=timezone.utc)   # Thursday 11:30 IST
@@ -917,12 +919,99 @@ class ContainerTests(HealthCase):
         f = self.only(self.check(NOW + timedelta(seconds=30)), "container-down")
         self.assertEqual("health:container-down:algotrading_db", f.fingerprint)
 
-    def test_no_docker_means_nothing_to_say(self):
-        for result in ((127, ""), (1, "")):
-            self.docker = result
-            self.ctx = None
-            self.check(NOW)
-            self.assertEqual([], self.check(NOW + timedelta(seconds=30)))
+    def test_no_docker_on_the_machine_means_nothing_to_say(self):
+        self.docker = (127, "")
+        self.check(NOW)
+        self.assertEqual([], self.check(NOW + timedelta(seconds=30)))
+
+    def test_a_failing_docker_is_reported_from_the_second_check(self):
+        for rc, how in ((1, "exited with code 1"), (124, "timed out"), (126, "exited with code 126")):
+            with self.subTest(rc):
+                self.docker = (rc, "")
+                self.ctx = None
+                self.assertEqual([], self.check(NOW))
+                f = self.only(self.check(NOW + timedelta(seconds=30)), "docker-failing")
+                self.assertEqual("health:docker-failing", f.fingerprint)
+                self.assertEqual(Severity.HIGH, f.severity)
+                self.assertIn(f"docker ps {how}", f.evidence)
+                self.assertIn("No container was reported down", f.summary)
+
+    def test_a_failing_docker_holds_a_container_that_was_down(self):
+        self.docker = (0, "algotrading_db\tUp 3 days\n")
+        self.check(NOW)
+        down = self.only(self.check(NOW + timedelta(seconds=30)), "container-down")
+        self.assertEqual("health:container-down:algotrading_redis", down.fingerprint)
+
+        self.docker = (1, "")
+        at = NOW + timedelta(seconds=30)
+        for _ in range(12):     # past STREAK_STALE: holding it does not depend on the streak's age
+            at += timedelta(seconds=30)
+            self.stream.add(at, "NSE").add(at, "MCX")
+            findings = self.check(at)
+            held = self.only(findings, "container-down")
+            self.assertEqual((down.fingerprint, Severity.CRITICAL), (held.fingerprint, held.severity))
+            self.assertIn("algotrading_redis: not in `docker ps`", held.evidence)
+            self.assertEqual(NOW + timedelta(seconds=30), held.observed_utc, "as last seen, not as seen now")
+        self.assertIn("1 container incident(s) already open are held", self.only(findings, "docker-failing").summary)
+
+        # Docker answers and Redis is still down: the same incident, seen now, and the docker one is over.
+        self.docker = (0, "algotrading_db\tUp 3 days\n")
+        at += timedelta(seconds=30)
+        self.stream.add(at, "NSE").add(at, "MCX")
+        findings = self.check(at)
+        self.assertEqual(["container-down"], self.rules(findings))
+        self.assertIsNone(findings[0].observed_utc)
+
+        # Docker answers and Redis is back: now it is over.
+        self.docker = (0, DOCKER_OK)
+        at += timedelta(seconds=30)
+        self.stream.add(at, "NSE").add(at, "MCX")
+        self.assertEqual([], self.check(at))
+
+    def test_a_container_that_came_up_before_docker_failed_is_not_held(self):
+        def check(seconds):
+            at = NOW + timedelta(seconds=seconds)
+            self.stream.add(at, "NSE").add(at, "MCX")
+            return self.check(at)
+
+        self.docker = (0, "algotrading_db\tUp 3 days\n")
+        check(0)
+        self.only(check(30), "container-down")
+        self.docker = (0, DOCKER_OK)
+        self.assertEqual([], check(60))
+        self.docker = (1, "")
+        self.assertEqual([], check(90))
+        self.assertEqual(["docker-failing"], self.rules(check(120)))
+
+    def test_docker_failing_is_never_announced_as_the_container_resolved(self):
+        # 2 Nov review's probe: NEW then RESOLVED for Redis while Redis stayed down.
+        store, notifier = MemoryIncidentStore(), RecordingNotifier()
+        self.check(NOW)
+        engine = SentinelEngine([self._agent], store, notifier, self.ctx, monotonic=clock_ticks())
+        at = [NOW]
+        self.ctx.clock = lambda: at[0]
+
+        def rounds(count):
+            for _ in range(count):
+                at[0] += timedelta(seconds=30)
+                self.stream.add(at[0] - timedelta(seconds=1), "NSE").add(at[0] - timedelta(seconds=1), "MCX")
+                engine.run_all_once()
+
+        self.docker = (0, "algotrading_db\tUp 3 days\n")
+        rounds(2)
+        self.assertTrue(any("NEW" in m and "Redis container is down" in m for m in notifier.sent), notifier.sent)
+
+        self.docker = (1, "")
+        rounds(6)
+        self.assertFalse([m for m in notifier.sent if "RESOLVED" in m], notifier.sent)
+        self.assertTrue(any("Docker is not answering" in m for m in notifier.sent), notifier.sent)
+
+        # It really is over: then it may say so, for both.
+        self.docker = (0, DOCKER_OK)
+        rounds(3)
+        resolved = [m for m in notifier.sent if "RESOLVED" in m]
+        self.assertTrue(any("Redis container is down" in m for m in resolved), notifier.sent)
+        self.assertTrue(any("Docker is not answering" in m for m in resolved), notifier.sent)
 
     def test_the_container_names_come_from_the_environment(self):
         self.env["SENTINEL_CONTAINERS"] = "algotrading_db, openfno-broker-postgres-1"

@@ -45,7 +45,7 @@ import os
 import re
 import traceback
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -96,6 +96,8 @@ LOAD_PER_CPU = 2.0
 LOAD_CLEAR_FRACTION = 0.8      # a reported load-high clears below 80% of its line
 
 STREAK_STALE = timedelta(minutes=5)   # a streak not extended for this long starts again
+
+DOCKER_NOT_INSTALLED = 127   # SentinelContext.run's answer for a tool that is not on the machine
 
 # Which exchanges each session covers. NSE and BSE open and close together.
 GROUPS = {"NSE": ("NSE", "BSE", "NFO", "BFO"), "MCX": ("MCX",)}
@@ -657,10 +659,8 @@ class HealthAgent(Agent):
         except PermissionError:
             return []
         if rc != 0:
-            # No docker here, or no permission to ask it: nothing can be said.
-            for name in wanted:
-                self._streak(data, f"container:{name}", False, now)
-            return []
+            return self._docker_failing(data, wanted, rc, now, down_out)
+        self._streak(data, "docker-ps", False, now)
 
         running: dict[str, str] = {}
         for line in out.splitlines():
@@ -669,6 +669,7 @@ class HealthAgent(Agent):
                 running[name.strip()] = status.strip()
 
         findings: list[Finding] = []
+        reported: dict[str, dict] = {}
         for name in wanted:
             status = running.get(name)
             down = status is None or status.lower().startswith("restarting")
@@ -677,21 +678,67 @@ class HealthAgent(Agent):
             count, since = self._streak(data, f"container:{name}", down, now)
             if count < 2:
                 continue
-            seen = f"{name}: {status}" if status else f"{name}: not in `docker ps`"
             others = ", ".join(sorted(running)) or "none"
-            findings.append(Finding(
-                agent=self.name, rule="container-down", severity=Severity.CRITICAL,
-                title=f"The {self._container_role(name)} container is down",
-                summary=(f"{name} has not been running for {count} checks, since {_ist(since, now)}. "
-                         f"{self._container_impact(name)}"),
-                fingerprint=f"health:container-down:{name}",
-                where=f"docker container {name}",
-                evidence=[seen, f"running containers: {others}"[:300], f"down since {_ist(since, now)}"],
-                suggestion=(f"Start it with `docker start {name}` (or `docker compose up -d` from the repository) "
-                            f"and read `docker logs --tail 50 {name}` for why it stopped — a full disk is the "
-                            "usual cause. Sentinel does not start containers itself."),
-            ))
+            findings.append(self._container_finding(name, status, others, count, since, now))
+            reported[name] = {"status": status, "others": others, "at": now.isoformat()}
+        data["containers_down"] = reported
         return findings
+
+    def _container_finding(self, name: str, status: Optional[str], others: str, count: int, since: datetime,
+                           now: datetime) -> Finding:
+        seen = f"{name}: {status}" if status else f"{name}: not in `docker ps`"
+        return Finding(
+            agent=self.name, rule="container-down", severity=Severity.CRITICAL,
+            title=f"The {self._container_role(name)} container is down",
+            summary=(f"{name} has not been running for {count} checks, since {_ist(since, now)}. "
+                     f"{self._container_impact(name)}"),
+            fingerprint=f"health:container-down:{name}",
+            where=f"docker container {name}",
+            evidence=[seen, f"running containers: {others}"[:300], f"down since {_ist(since, now)}"],
+            suggestion=(f"Start it with `docker start {name}` (or `docker compose up -d` from the repository) "
+                        f"and read `docker logs --tail 50 {name}` for why it stopped — a full disk is the "
+                        "usual cause. Sentinel does not start containers itself."),
+        )
+
+    def _docker_failing(self, data: dict, wanted: list[str], rc: int, now: datetime,
+                        down_out: set[str]) -> list[Finding]:
+        """
+        `docker ps` itself failed, so nothing is known about any container. Dockerd dying takes the
+        containers down and this command with them, and answering "none" here announced an open CRITICAL
+        "Redis is down" as RESOLVED while Redis stayed down (2 Nov 2026). What was reported down stays
+        reported, as last seen, and from the second failure in a row the failure is an incident of its own.
+        """
+        held: list[Finding] = []
+        reported = data.get("containers_down")
+        for name, seen in (reported.items() if isinstance(reported, dict) else ()):
+            if name not in wanted or not isinstance(seen, dict):
+                continue
+            down_out.add(name)
+            count, since = self._streak(data, f"container:{name}", True, now)
+            finding = self._container_finding(name, seen.get("status"), str(seen.get("others") or "none"),
+                                              count, since, now)
+            held.append(replace(finding, observed_utc=_parse_time(seen.get("at"))))
+        if rc == DOCKER_NOT_INSTALLED:
+            return held  # a machine without docker (a laptop, CI): the tool's absence is not a failure
+
+        count, since = self._streak(data, "docker-ps", True, now)
+        if count < 2:
+            return held
+        how = "timed out" if rc == 124 else f"exited with code {rc}"
+        return held + [Finding(
+            agent=self.name, rule="docker-failing", severity=Severity.HIGH,
+            title="Docker is not answering: Sentinel cannot see the containers",
+            summary=(f"`docker ps` has failed on {count} checks since {_ist(since, now)} ({how}). The database and "
+                     "Redis run in containers, so they may be down with it, and Sentinel cannot tell. "
+                     + (f"The {len(held)} container incident(s) already open are held as they were, not resolved."
+                        if held else "No container was reported down before this.")),
+            fingerprint="health:docker-failing",
+            where="docker ps",
+            evidence=[f"docker ps {how}", f"failing since {_ist(since, now)}"],
+            suggestion=("Check `systemctl status docker` and `journalctl -u docker -n 50` on the server: a dead daemon "
+                        "or a full disk is the usual cause. If docker answers for you but not for Sentinel, its user "
+                        "lost access to the docker socket. Sentinel does not restart docker itself."),
+        )]
 
     @staticmethod
     def _container_role(name: str) -> str:
