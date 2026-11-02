@@ -22,11 +22,13 @@ The ticket's orders go through the same paper-fill guards as a strategy's (`Pape
 
 | Order | Fills at | Refused when |
 |---|---|---|
-| **Market** BUY / SELL | the ask / the bid; with no book, the last trade plus / less half the spread (0.15%) | there is no quote; or, while the contract's market is open, its quote is older than `MaxQuoteAgeSeconds` (60 s) |
+| **Market** BUY / SELL | the ask / the bid; with no book, the last trade plus / less half the spread (0.15%) | the contract's market is closed; there is no quote; or its quote is older than `MaxQuoteAgeSeconds` (60 s) |
 | **Limit** BUY | the ask (as a market buy would), when the ask is **at or below** the limit | the ask is above the limit; or as for a market order |
 | **Limit** SELL | the bid, when the bid is **at or above** the limit | the bid is below the limit; or as for a market order |
 
-A limit is a cap, never the fill price: a BUY limit of 0.05 on an option offered at 150 is refused ("Not filled: a BUY limit of 0.05 is below the ask 150.00, so it would not fill now…"), and a BUY limit of 155 fills at the 150 ask. There are **no resting orders**: a limit the book has not reached is refused, not kept until it is. Out of the market's hours the last quote still prices an order, as it does a strategy's (every quote is old then, and the order's row says how old).
+A limit is a cap, never the fill price: a BUY limit of 0.05 on an option offered at 150 is refused ("Not filled: a BUY limit of 0.05 is below the ask 150.00, so it would not fill now…"), and a BUY limit of 155 fills at the 150 ask. There are **no resting orders**: a limit the book has not reached is refused, not kept until it is.
+
+Out of the contract's market hours an order is refused ("Not filled: MARKET NOT OPEN: NSE:NIFTY… opens 09:15 IST…"), as a strategy's opening signal is ([strategies module](strategies_module.md), section 11). Until 2 Nov it filled at the day's last quote, a price nobody could have had then. Closing a position by hand is not an order and stays allowed at any hour.
 
 The service asks the engine what the order would fill at (`IPaperTradingService.QuoteLiveFillAsync`), checks the limit, the stop and target against that price and refuses with a clear message; then books the leg *live*, not as final, so the engine prices it again on the same rules and holds it to the limit. Should the quote go stale, or the book move past the limit, in the moment between, the engine refuses the signal and nothing is booked ("Not filled: No fill price for …"). The reply quotes the price the engine booked. `CreateSimulationSignalRequest.LegPricesAreFinal` and the leg's `LimitPrice` are never read from a request body, so a runner cannot use either.
 
