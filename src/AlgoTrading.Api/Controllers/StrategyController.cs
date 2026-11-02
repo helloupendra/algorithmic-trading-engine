@@ -624,11 +624,13 @@ public class StrategyController : ControllerBase
     }
 
     /// <summary>
-    /// The execution runner confirms its own pid once it knows its run id. Any
-    /// signed-in user (the runner authenticates as the service account). The
-    /// API already recorded the pid at spawn time; a mismatch keeps the pid the
-    /// API launched. 404 when the run does not exist or is already closed.
+    /// The execution runner confirms its own pid once it knows its run id. The
+    /// runner signs in as the Service account; nobody else has a process to
+    /// report. The API already recorded the pid at spawn time; a mismatch keeps
+    /// the pid the API launched. 404 when the run does not exist or is already
+    /// closed.
     /// </summary>
+    [Authorize(Roles = LiveDataController.Writers)]
     [HttpPost("runs/{runId:long}/runner")]
     public async Task<ActionResult<RunnerRegistrationResponse>> RegisterRunner(
         long runId,
@@ -689,7 +691,15 @@ public class StrategyController : ControllerBase
     /// recovery only for a stall that was sent. Until 28 Sep every run sent
     /// both halves of every blip — 572 messages on 25 Sep, 350 of them refused.
     /// </para>
+    /// <para>
+    /// Only the runner reports this, as the Service account. Until 2 Nov any
+    /// trader with the Strategies grant could, for any run, naming the underlying
+    /// themselves: the words went into the Telegram title, and a new name each
+    /// call was a new key at the gate, so the ten-minute throttle held nothing
+    /// back. The underlying is now the run's own, whatever a body says.
+    /// </para>
     /// </remarks>
+    [Authorize(Roles = LiveDataController.Writers)]
     [HttpPost("runs/{runId:long}/feed")]
     public async Task<IActionResult> ReportFeedHealth(
         long runId,
@@ -702,7 +712,7 @@ public class StrategyController : ControllerBase
 
         var run = await _dbContext.SimulationRuns.AsNoTracking()
             .Where(x => x.Id == runId && x.Mode == LivePaperMode)
-            .Select(x => new { x.Id, x.Status, x.StrategyName, x.Symbol, x.UserId })
+            .Select(x => new { x.Id, x.Status, x.StrategyName, x.Symbol, x.UserId, x.ParametersJson })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (run is null)
@@ -720,7 +730,8 @@ public class StrategyController : ControllerBase
             .FirstOrDefaultAsync(cancellationToken);
         string tag = string.IsNullOrWhiteSpace(owner) ? string.Empty : $"[{owner}] ";
 
-        string underlying = request.Underlying ?? string.Empty;
+        string underlying = LiveRunHistoryBuilder.DeriveUnderlying(
+            _registry.Get(runId), exit: null, LiveRunParameters.Parse(run.ParametersJson), run.Symbol);
         int seconds = Math.Max(0, request.SilentSeconds);
 
         if (request.IsStalled)
@@ -1251,7 +1262,12 @@ public class StrategyController : ControllerBase
         return Ok(_registry.GetLogs(runId.Value, take));
     }
 
-    /// <summary>The runner pushes a copy of each signal here for the dashboard.</summary>
+    /// <summary>
+    /// The runner pushes a copy of each signal here for the dashboard, as the
+    /// Service account. Nobody else writes to a run's signal list: until 2 Nov
+    /// any Strategies trader could put anything on any live run's page.
+    /// </summary>
+    [Authorize(Roles = LiveDataController.Writers)]
     [HttpPost("runs/{runId:long}/signals")]
     public IActionResult AddRunSignal(long runId, [FromBody] object signal)
     {
@@ -1272,7 +1288,8 @@ public class StrategyController : ControllerBase
         return Ok(_registry.GetSignals(runId));
     }
 
-    /// <summary>Legacy: posts into the strategy's most recently started active run.</summary>
+    /// <summary>Legacy: posts into the strategy's most recently started active run. The runner's fallback route.</summary>
+    [Authorize(Roles = LiveDataController.Writers)]
     [HttpPost("{id:int}/signals")]
     public IActionResult AddSignal(int id, [FromBody] object signal)
     {

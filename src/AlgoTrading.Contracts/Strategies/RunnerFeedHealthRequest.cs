@@ -10,6 +10,10 @@ namespace AlgoTrading.Contracts.Strategies;
 /// the process, close the socket or fail a heartbeat — it simply stops
 /// delivering ticks, and everything downstream looks healthy while the strategy
 /// goes blind.
+/// <para>
+/// It does not name the underlying: that is the run's own, read on the server. A
+/// runner started before 2 Nov still sends one, and it is ignored.
+/// </para>
 /// </remarks>
 public class RunnerFeedHealthRequest
 {
@@ -18,7 +22,4 @@ public class RunnerFeedHealthRequest
 
     /// <summary>How long the feed has been (or was) silent.</summary>
     public int SilentSeconds { get; set; }
-
-    /// <summary>The underlying this run trades, for the alert's subject line.</summary>
-    public string? Underlying { get; set; }
 }

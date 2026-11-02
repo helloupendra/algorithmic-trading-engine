@@ -67,6 +67,8 @@ Runs are keyed by run id, so the same strategy can run on several underlyings at
 ### 5. Surviving an API restart
 The ingestor and every runner report their process id (heartbeat `processId`, `POST /api/Strategy/runs/{runId}/runner`), stored in `system_settings`. On startup the API adopts runners that are still alive (their cards come back) and closes the runs whose runner is gone; the ingestor's Stop button works for an adopted process too. A runner whose pid is alive but cannot be verified as that run's (its command line — `/proc/<pid>/cmdline` on Linux — cannot be read) is probed again after 2, 4 and 8 s; if it still cannot, its run is neither adopted nor closed, and an alert says so. Python processes write through a safe stdio wrapper: when the API's pipe closes their output moves to `logs/engine/*.log` instead of crashing the heartbeat or the runner. A strategy runner keeps `logs/engine/runner-<run>-<pid>.log` from its first line — every line stamped with its UTC time and stream — and ends it with `EXIT code=… reason=…`.
 
+What a runner reports (`runs/{runId}/runner`, `runs/{runId}/feed`, the `signals` POSTs) only the Service account, which every runner signs in as, and an admin may send: not a trader, whoever owns the run. A feed alert names the run's own underlying, read on the server, and the ten-minute throttle goes by it.
+
 ### 6. Live view
 `GET /api/Strategy/runs/{runId}/live` returns the run as:
 - header: underlying, spot LTP, lots, lot size, risk rules, started by/at, stop reason;

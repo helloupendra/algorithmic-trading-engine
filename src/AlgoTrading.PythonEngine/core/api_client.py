@@ -525,21 +525,19 @@ class PlatformApiClient:
         except Exception:
             return None
 
-    def report_feed_health(self, run_id: int, is_stalled: bool, silent_seconds: int,
-                           underlying: Optional[str] = None) -> Any:
+    def report_feed_health(self, run_id: int, is_stalled: bool, silent_seconds: int) -> Any:
         """
-        POST /api/Strategy/runs/{runId}/feed {isStalled, silentSeconds,
-        underlying}: the runner is the only thing that can see its tick feed go
-        dry, so it says so and the API raises the alert. 404 on an API that
-        predates the route; the caller treats every failure as non-fatal —
-        losing the warning must never take the strategy down with it.
+        POST /api/Strategy/runs/{runId}/feed {isStalled, silentSeconds}: the
+        runner is the only thing that can see its tick feed go dry, so it says
+        so and the API raises the alert, naming the run's own underlying. 404 on
+        an API that predates the route; the caller treats every failure as
+        non-fatal — losing the warning must never take the strategy down with it.
         """
         resp = self.http.post(
             f"{self.base_url}/api/Strategy/runs/{run_id}/feed",
             json={
                 "isStalled": bool(is_stalled),
                 "silentSeconds": int(silent_seconds),
-                "underlying": underlying,
             },
             verify=self.verify_ssl,
             timeout=15,

@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
         if args.run_id is None:
             return
         try:
-            api.report_feed_health(args.run_id, is_stalled, silent_for, args.underlying)
+            api.report_feed_health(args.run_id, is_stalled, silent_for)
         except Exception as ex:
             print(f"[{args.underlying}] WARN: could not report feed health: {ex}", flush=True)
 

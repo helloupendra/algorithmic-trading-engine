@@ -114,7 +114,7 @@ public class FeedStallAlertTests
             for (long id = 1; id <= 26; id++)
             {
                 var result = await controller.ReportFeedHealth(id,
-                    new RunnerFeedHealthRequest { IsStalled = stalled, SilentSeconds = seconds, Underlying = underlyings[id % 3] },
+                    new RunnerFeedHealthRequest { IsStalled = stalled, SilentSeconds = seconds },
                     gate, CancellationToken.None);
                 Assert.IsType<OkObjectResult>(result);
             }
