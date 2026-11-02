@@ -275,6 +275,8 @@ public class LiveDataService : ILiveDataService
         CancellationToken cancellationToken = default)
     {
         string sourceKey = ResolveSourceKey(request.SourceKey);
+        var quoteClockUtc = DateTime.UtcNow;
+        var incomingExchangeUtc = ExchangeStamps.Usable(request.ExchangeTimestampUtc?.ToUniversalTime(), request.IsReplay, quoteClockUtc);
 
         var existing = await _dbContext.LiveQuotesLatest
             .FirstOrDefaultAsync(x => x.Symbol == request.Symbol, cancellationToken);
@@ -299,7 +301,7 @@ public class LiveDataService : ILiveDataService
                 Gamma = request.Gamma,
                 Theta = request.Theta,
                 Vega = request.Vega,
-                ExchangeTimestampUtc = request.ExchangeTimestampUtc?.ToUniversalTime(),
+                ExchangeTimestampUtc = incomingExchangeUtc,
                 UpdatedUtc = DateTime.UtcNow
             };
 
@@ -318,18 +320,15 @@ public class LiveDataService : ILiveDataService
             //
             // Only enforced when both sides carry an exchange stamp. Without one
             // there is no order to preserve and last-writer-wins is all there is.
-            var incomingExchangeUtc = request.ExchangeTimestampUtc?.ToUniversalTime();
             // A replay runs behind the stamps the live session already wrote;
             // refusing it as out of order would freeze the quote at the close.
-            if (!request.IsReplay
-                && incomingExchangeUtc is not null
-                && existing.ExchangeTimestampUtc is not null
-                && incomingExchangeUtc < existing.ExchangeTimestampUtc)
+            // So would a stored stamp from the future (ExchangeStamps).
+            if (ExchangeStamps.IsOlderThanStored(incomingExchangeUtc, existing.ExchangeTimestampUtc, request.IsReplay, quoteClockUtc))
             {
                 return;
             }
 
-            existing.ExchangeTimestampUtc = incomingExchangeUtc ?? existing.ExchangeTimestampUtc;
+            existing.ExchangeTimestampUtc = ExchangeStamps.Applied(incomingExchangeUtc, existing.ExchangeTimestampUtc, quoteClockUtc);
             existing.DataType = request.DataType;
             existing.LastTradedPrice = request.LastTradedPrice;
             existing.Open = request.Open;
@@ -475,6 +474,10 @@ public class LiveDataService : ILiveDataService
         {
             var nowUtc = DateTime.UtcNow;
             string sourceKey = ResolveSourceKey(request.SourceKey);
+
+            // A stamp from the future is no stamp: it files the bar and the tick
+            // under their arrival, and orders nothing (ExchangeStamps).
+            request.ExchangeTimestampUtc = ExchangeStamps.Usable(request.ExchangeTimestampUtc, request.IsReplay, nowUtc);
 
             if (request.ExchangeTimestampUtc.HasValue)
             {
@@ -694,6 +697,9 @@ public class LiveDataService : ILiveDataService
 
             foreach (var request in batch)
             {
+                // As in the single-tick path: a stamp from the future is no stamp.
+                request.ExchangeTimestampUtc = ExchangeStamps.Usable(request.ExchangeTimestampUtc, request.IsReplay, nowUtc);
+
                 if (request.ExchangeTimestampUtc.HasValue)
                 {
                     var latency = (nowUtc - request.ExchangeTimestampUtc.Value).TotalSeconds;
@@ -831,15 +837,14 @@ public class LiveDataService : ILiveDataService
         // A replay runs behind the stamps the live session already wrote. The
         // first TrueData recap froze all 49 of its contracts on exactly this
         // check: entries filled at a stale price and no leg target could fire.
-        if (!request.IsReplay
-            && incomingExchangeUtc is not null
-            && existing.ExchangeTimestampUtc is not null
-            && incomingExchangeUtc < existing.ExchangeTimestampUtc)
+        // A stored stamp from the future does the same (ExchangeStamps).
+        var clockUtc = DateTime.UtcNow;
+        if (ExchangeStamps.IsOlderThanStored(incomingExchangeUtc, existing.ExchangeTimestampUtc, request.IsReplay, clockUtc))
         {
             return;
         }
 
-        existing.ExchangeTimestampUtc = incomingExchangeUtc ?? existing.ExchangeTimestampUtc;
+        existing.ExchangeTimestampUtc = ExchangeStamps.Applied(incomingExchangeUtc, existing.ExchangeTimestampUtc, clockUtc);
         existing.DataType = request.DataType;
         existing.LastTradedPrice = request.LastTradedPrice;
         existing.BidPrice = request.BidPrice;

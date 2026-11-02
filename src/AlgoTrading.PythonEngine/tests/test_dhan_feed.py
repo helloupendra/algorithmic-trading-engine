@@ -37,6 +37,7 @@ from market_data.live.vendors.dhan import (DhanFeed, DhanInstrument, ltt_encodes
 
 NOW = datetime(2026, 9, 14, 5, 0, 0, tzinfo=timezone.utc)          # 10:30 IST
 TRADE_UTC = int(datetime(2026, 9, 14, 4, 59, 58, tzinfo=timezone.utc).timestamp())
+# What Dhan sends for that trade: 10:29:58 IST written as an epoch.
 TRADE_IST = TRADE_UTC + 19800
 
 NSE_EQ, NSE_FNO, IDX_I, MCX_COMM = 1, 2, 0, 5
@@ -166,29 +167,85 @@ class Clock:
 
 
 class LttEncodingTests(unittest.TestCase):
-    def test_a_true_utc_trade_time_is_taken_as_it_is(self):
-        self.assertFalse(ltt_encodes_ist(TRADE_UTC, NOW))
-        self.assertEqual("2026-09-14T04:59:58Z", ltt_to_utc(TRADE_UTC, NOW))
-
-    def test_an_ist_wall_clock_trade_time_loses_its_five_thirty(self):
+    def test_a_trade_time_loses_its_five_thirty(self):
         self.assertTrue(ltt_encodes_ist(TRADE_IST, NOW))
         self.assertEqual("2026-09-14T04:59:58Z", ltt_to_utc(TRADE_IST, NOW))
+
+    def test_an_old_trade_time_is_ist_too_though_it_cannot_prove_it(self):
+        two_hours_old = TRADE_IST - 2 * 3600
+        self.assertFalse(ltt_encodes_ist(two_hours_old, NOW))
+        self.assertEqual("2026-09-14T02:59:58Z", ltt_to_utc(two_hours_old, NOW))
 
     def test_a_stamp_far_in_the_future_is_not_proof_of_ist(self):
         self.assertFalse(ltt_encodes_ist(TRADE_UTC + 9 * 3600, NOW))
 
+    def test_a_stamp_still_ahead_of_the_clock_is_dropped(self):
+        ahead_by = lambda seconds: int(NOW.timestamp()) + seconds + 19800
+        self.assertEqual("2026-09-14T05:01:30Z", ltt_to_utc(ahead_by(90), NOW), "clocks need not agree to the second")
+        self.assertIsNone(ltt_to_utc(ahead_by(10 * 60), NOW))
+        self.assertIsNone(ltt_to_utc(ahead_by(9 * 3600), NOW))
+
     def test_zero_is_no_time(self):
         self.assertIsNone(ltt_to_utc(0, NOW))
 
-    def test_the_feed_remembers_the_proof_for_stamps_too_old_to_carry_it(self):
+    def test_a_feed_restarted_mid_session_stamps_a_stale_snapshot_in_the_past(self):
+        """
+        The 2 Nov finding: restarted at 13:00 IST, an illiquid strike's snapshot
+        (last trade 10:00) came before any fresh trade and went out stamped 15:30.
+        The API then refused its real ticks as older and froze the quote.
+        """
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime(2026, 11, 2, 13, 0, tzinfo=ist).astimezone(timezone.utc)
+        epoch = lambda hour, minute, second=0: int(
+            datetime(2026, 11, 2, hour, minute, second, tzinfo=timezone.utc).timestamp())   # IST written as an epoch
+        far, near = "NSE:NIFTY2611025000CE", "NSE:NIFTY2611024000PE"
+
+        ticks = []
+        feed = DhanFeed(FAKE_CLIENT_ID, FAKE_TOKEN, now=lambda: now, ingest="inline", min_tick_interval_ms=0)
+        feed._on_ticks, feed._on_event = ticks.extend, lambda event, detail: None
+        for security_id, symbol in ((111, far), (222, near)):
+            instrument = DhanInstrument("NSE_FNO", security_id, "OPTIDX")
+            feed._subscribed[symbol] = instrument
+            feed._canonical_by_key[instrument.key] = symbol
+
+        feed._on_message(ticker(NSE_FNO, 111, 12.5, epoch(10, 0)))        # the stale snapshot comes first
+        feed._on_message(ticker(NSE_FNO, 222, 140.0, epoch(12, 59, 59)))  # then a fresh trade
+        feed._on_message(ticker(NSE_FNO, 111, 13.0, epoch(13, 1)))        # then the illiquid one really trades
+
+        self.assertEqual([
+            (far, "2026-11-02T04:30:00Z"),    # 10:00 IST, not 15:30
+            (near, "2026-11-02T07:29:59Z"),
+            (far, "2026-11-02T07:31:00Z"),
+        ], [(t["symbol"], t["exchangeTimestampUtc"]) for t in ticks])
+
+    def test_a_stamp_ahead_of_the_clock_is_said_once_and_the_tick_still_goes_out(self):
         feed, ticks, events, _ = _feed()
         feed.subscribe([OPTION])
+        ahead = int(NOW.timestamp()) + 19800 + 3600
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, ahead))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.5, ahead))
+        self.assertEqual([None, None], [t["exchangeTimestampUtc"] for t in ticks])
+        self.assertEqual([134.25, 134.5], [t["lastTradedPrice"] for t in ticks])
+        self.assertEqual(1, sum(1 for e, d in events if e == FeedEvent.ERROR and "ahead of the clock" in d))
+
+    def test_stamps_that_keep_reading_as_true_utc_are_said_once(self):
+        feed, _, events, _ = _feed()
+        feed.subscribe([OPTION])
+        said = lambda: sum(1 for e, d in events if e == FeedEvent.ERROR and "true UTC" in d)
+        for second in range(dhan.UTC_LOOKING_STAMPS_BEFORE_WARNING - 1):
+            feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25 + second, TRADE_UTC))
+        self.assertEqual(0, said(), "a few could be IST trades exactly 5h30m old")
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 300.0, TRADE_UTC))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 301.0, TRADE_UTC))
+        self.assertEqual(1, said())
+
+    def test_one_fresh_ist_stamp_ends_the_doubt(self):
+        feed, _, events, _ = _feed()
+        feed.subscribe([OPTION])
         feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
-        two_hours_old = TRADE_IST - 2 * 3600
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 130.0, two_hours_old))
-        self.assertEqual("2026-09-14T04:59:58Z", ticks[0]["exchangeTimestampUtc"])
-        self.assertEqual("2026-09-14T02:59:58Z", ticks[1]["exchangeTimestampUtc"])
-        self.assertEqual(1, sum(1 for e, _ in events if e == FeedEvent.INFO and "IST" in _))
+        for second in range(dhan.UTC_LOOKING_STAMPS_BEFORE_WARNING + 5):
+            feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25 + second, TRADE_UTC))
+        self.assertEqual(0, sum(1 for e, d in events if "true UTC" in d))
 
 
 class PacketTests(unittest.TestCase):
@@ -197,7 +254,7 @@ class PacketTests(unittest.TestCase):
         self.feed.subscribe([OPTION, EQUITY, CRUDE, "NSE:NIFTY50-INDEX"])
 
     def test_a_ticker_packet_is_a_price_and_a_time(self):
-        self.feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         tick = self.ticks[0]
         self.assertEqual(OPTION, tick["symbol"])
         self.assertEqual("symbolUpdate", tick["dataType"])
@@ -207,7 +264,7 @@ class PacketTests(unittest.TestCase):
         self.assertEqual({"type": "ticker", "dhan": f"NSE_FNO:{OPTION_ID}"}, json.loads(tick["rawPayload"]))
 
     def test_a_quote_packet_carries_the_day_and_no_book(self):
-        self.feed._on_message(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC, volume=1234567,
+        self.feed._on_message(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST, volume=1234567,
                                     day_open=2900.0, high=2920.4, low=2890.15))
         tick = self.ticks[0]
         self.assertEqual(EQUITY, tick["symbol"])
@@ -226,7 +283,7 @@ class PacketTests(unittest.TestCase):
         self.feed._on_message(oi(NSE_FNO, OPTION_ID, 6543875))
         self.assertEqual([], self.ticks, "no price known yet, so nothing to emit")
 
-        self.feed._on_message(quote(NSE_FNO, OPTION_ID, 133.6, TRADE_UTC))
+        self.feed._on_message(quote(NSE_FNO, OPTION_ID, 133.6, TRADE_IST))
         self.assertEqual(128.0, self.ticks[-1]["prevClose"])
         self.assertEqual(6543875, self.ticks[-1]["openInterest"])
 
@@ -242,7 +299,7 @@ class PacketTests(unittest.TestCase):
 
     def test_a_full_packet_carries_the_book_and_oi(self):
         depth = [(425, 300, 3, 2, 134.2, 134.5), (900, 650, 7, 5, 134.15, 134.55)] + [(0, 0, 0, 0, 0.0, 0.0)] * 3
-        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC, depth=depth))
+        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_IST, depth=depth))
         tick = self.ticks[0]
         self.assertEqual((134.2, 134.5, 425, 300),
                          (tick["bidPrice"], tick["askPrice"], tick["bidSize"], tick["askSize"]))
@@ -255,15 +312,15 @@ class PacketTests(unittest.TestCase):
         self.assertEqual((6600000, 5900000, 112.4), (raw["oi_high"], raw["oi_low"], raw["atp"]))
 
     def test_an_emptied_side_of_the_book_is_none_not_the_old_price(self):
-        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         empty_bid = [(0, 300, 0, 2, 0.0, 134.5)] + [(0, 0, 0, 0, 0.0, 0.0)] * 4
-        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC, depth=empty_bid))
+        self.feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_IST, depth=empty_bid))
         self.assertIsNone(self.ticks[-1]["bidPrice"])
         self.assertIsNone(self.ticks[-1]["bidSize"])
         self.assertEqual(134.5, self.ticks[-1]["askPrice"])
 
     def test_an_index_packet_is_read_as_far_as_it_goes(self):
-        self.feed._on_message(index_packet(13, 25012.35, TRADE_UTC))
+        self.feed._on_message(index_packet(13, 25012.35, TRADE_IST))
         tick = self.ticks[0]
         self.assertEqual("NSE:NIFTY50-INDEX", tick["symbol"])
         self.assertEqual(25012.35, tick["lastTradedPrice"])
@@ -275,11 +332,11 @@ class PacketTests(unittest.TestCase):
         self.assertEqual(25020.5, self.ticks[-1]["lastTradedPrice"])
 
     def test_a_price_for_something_never_asked_for_is_dropped(self):
-        self.feed._on_message(ticker(NSE_FNO, 99999, 10.0, TRADE_UTC))
+        self.feed._on_message(ticker(NSE_FNO, 99999, 10.0, TRADE_IST))
         self.assertEqual([], self.ticks)
 
     def test_a_truncated_packet_is_an_error_not_a_price(self):
-        self.feed._on_message(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC)[:30])
+        self.feed._on_message(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST)[:30])
         self.assertEqual([], self.ticks)
         self.assertEqual(FeedEvent.ERROR, self.events[-1][0])
 
@@ -301,14 +358,14 @@ class StackedFrameTests(unittest.TestCase):
         self.feed.subscribe([OPTION, EQUITY])
 
     def test_packets_stacked_in_one_frame_are_all_read(self):
-        frame = quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC) + oi(NSE_FNO, OPTION_ID, 10) \
-            + ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC)
+        frame = quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST) + oi(NSE_FNO, OPTION_ID, 10) \
+            + ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST)
         self.feed._on_message(frame)
         self.assertEqual([EQUITY, OPTION], [t["symbol"] for t in self.ticks])
         self.assertEqual(10, self.ticks[1]["openInterest"], "the OI packet before it was merged")
 
     def test_bytes_that_do_not_start_a_packet_are_ignored_and_said_once(self):
-        frame = ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC) + b"\xff" * 12
+        frame = ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST) + b"\xff" * 12
         self.feed._on_message(frame)
         self.feed._on_message(frame)
         self.assertEqual(2, len(self.ticks))
@@ -362,7 +419,7 @@ class SubscribeTests(unittest.TestCase):
         self.assertEqual({18: [{"ExchangeSegment": "IDX_I", "SecurityId": "13"}],
                           22: [{"ExchangeSegment": "NSE_FNO", "SecurityId": str(OPTION_ID)}]},
                          {m["RequestCode"]: m["InstrumentList"] for m in sent})
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual([], ticks, "an unsubscribed instrument's late packets are not stored")
 
     def test_the_limit_is_respected_and_the_left_out_are_named(self):
@@ -375,7 +432,7 @@ class SubscribeTests(unittest.TestCase):
         feed, ticks, _, _ = _feed()
         feed._send = lambda message: False
         self.assertEqual([], feed.subscribe([OPTION]))
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual([], ticks)
 
     def test_two_names_for_one_instrument_take_only_the_first(self):
@@ -416,7 +473,7 @@ class ResolutionTests(unittest.TestCase):
         self.assertIn("NSE:NOSUCH-EQ", events[-1][1])
         self.assertEqual("NSE_FNO:52000:OPTIDX", feed.to_vendor("NSE:BANKNIFTY26SEP56400CE"))
 
-        feed._on_message(ticker(NSE_FNO, 52000, 210.5, TRADE_UTC))
+        feed._on_message(ticker(NSE_FNO, 52000, 210.5, TRADE_IST))
         self.assertEqual("NSE:BANKNIFTY26SEP56400CE", ticks[-1]["symbol"])
 
     def test_answers_are_cached_and_the_unresolved_are_reported_once(self):
@@ -749,7 +806,7 @@ class ConflationTests(unittest.TestCase):
     def test_a_burst_collapses_to_one_tick_per_interval_carrying_the_latest_state(self):
         for i in range(10):
             depth = [(400 + i, 300 + i, 3, 2, 134.0 + i / 10, 134.5 + i / 10)] + [(0, 0, 0, 0, 0.0, 0.0)] * 4
-            self._at(i / 10, full(NSE_FNO, OPTION_ID, 134.25 + i / 10, TRADE_UTC + i, open_interest=6500000 + i,
+            self._at(i / 10, full(NSE_FNO, OPTION_ID, 134.25 + i / 10, TRADE_IST + i, open_interest=6500000 + i,
                                   depth=depth))
         self.assertEqual(1, len(self.ticks), "the first update goes out at once, the rest are held")
         self.assertEqual(134.25, self.ticks[0]["lastTradedPrice"])
@@ -770,16 +827,16 @@ class ConflationTests(unittest.TestCase):
         sent_at = []
         self.feed._on_ticks = lambda ticks: sent_at.extend([self.clock.t] * len(ticks))
         for step in range(35):                     # 3.5 s of a packet every 100 ms
-            self._at(step / 10, ticker(NSE_FNO, OPTION_ID, 130.0 + step, TRADE_UTC))
+            self._at(step / 10, ticker(NSE_FNO, OPTION_ID, 130.0 + step, TRADE_IST))
             self.feed.flush_due()
         self.assertEqual(4, len(sent_at))
         gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
         self.assertTrue(all(gap >= 0.999 for gap in gaps), gaps)
 
     def test_a_symbol_that_went_quiet_still_gets_its_last_state_out(self):
-        self._at(0.0, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        self._at(0.3, ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC + 1))
-        self._at(0.5, quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC))
+        self._at(0.0, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
+        self._at(0.3, ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_IST + 1))
+        self._at(0.5, quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST))
         self.assertEqual([OPTION, EQUITY], [t["symbol"] for t in self.ticks],
                          "instruments are conflated separately")
         # Nothing more arrives for the option, ever.
@@ -789,8 +846,8 @@ class ConflationTests(unittest.TestCase):
         self.assertEqual(3, len(self.ticks), "the equity sent once and had nothing held")
 
     def test_a_packet_without_a_price_arriving_last_keeps_the_book_in_the_tick(self):
-        self._at(0.0, full(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        self._at(0.2, full(NSE_FNO, OPTION_ID, 134.5, TRADE_UTC + 1))
+        self._at(0.0, full(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
+        self._at(0.2, full(NSE_FNO, OPTION_ID, 134.5, TRADE_IST + 1))
         self._at(0.4, prev_close(NSE_FNO, OPTION_ID, 128.0, prev_oi=5900000))
         self.clock.t = 1001.0
         self.feed.flush_due()
@@ -804,7 +861,7 @@ class ConflationTests(unittest.TestCase):
         feed, ticks, _, _ = _feed(interval_ms=0, clock=self.clock)
         feed.subscribe([OPTION])
         for i in range(5):
-            feed._on_message(ticker(NSE_FNO, OPTION_ID, 130.0 + i, TRADE_UTC))
+            feed._on_message(ticker(NSE_FNO, OPTION_ID, 130.0 + i, TRADE_IST))
         self.assertEqual([130.0, 131.0, 132.0, 133.0, 134.0], [t["lastTradedPrice"] for t in ticks])
         with mock.patch.object(dhan.websocket, "WebSocketApp"), mock.patch.object(dhan.threading, "Thread") as thread:
             feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), ticks.extend, lambda e, d="": None)
@@ -820,12 +877,12 @@ class ConflationTests(unittest.TestCase):
         self.assertEqual(["dhan-socket"], [c.kwargs["name"] for c in thread.call_args_list])
 
     def test_close_hands_on_what_is_held_and_starts_the_next_connection_afresh(self):
-        self._at(0.0, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        self._at(0.2, ticker(NSE_FNO, OPTION_ID, 135.0, TRADE_UTC))
+        self._at(0.0, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
+        self._at(0.2, ticker(NSE_FNO, OPTION_ID, 135.0, TRADE_IST))
         self.feed.close()
         self.assertEqual([134.25, 135.0], [t["lastTradedPrice"] for t in self.ticks])
         self.feed.subscribe([OPTION])
-        self._at(0.3, ticker(NSE_FNO, OPTION_ID, 135.5, TRADE_UTC))
+        self._at(0.3, ticker(NSE_FNO, OPTION_ID, 135.5, TRADE_IST))
         self.assertEqual(135.5, self.ticks[-1]["lastTradedPrice"], "a new connection's first update is not held")
 
 
@@ -863,7 +920,7 @@ class EmitterThreadTests(unittest.TestCase):
     def test_a_stored_packet_is_delivered_within_two_periods(self):
         feed, received = self._connected(interval_ms=1000, emit_period_ms=250)
         stored_at = time.monotonic()
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual([], received, "the socket thread hands nothing on itself")
         self.assertTrue(self._wait_for(lambda: len(received) == 1, seconds=0.5), received)
         self.assertLess(time.monotonic() - stored_at, 0.5, "within two 250 ms periods")
@@ -873,25 +930,25 @@ class EmitterThreadTests(unittest.TestCase):
         feed, received = self._connected(interval_ms=50, emit_period_ms=10)
         thread, _ = feed._emitter
         self.assertTrue(thread.is_alive())
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_IST))
         self.assertTrue(self._wait_for(lambda: len(received) == 2), received)
         self.assertEqual(136.0, received[-1]["lastTradedPrice"])
 
     def test_a_quiet_symbols_stored_state_goes_out_once_it_is_due(self):
         feed, received = self._connected(interval_ms=50, emit_period_ms=10)
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertTrue(self._wait_for(lambda: len(received) == 1), received)
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_IST))
         self.assertTrue(self._wait_for(lambda: len(received) == 2), received)
         self.assertEqual([134.25, 136.0], [t["lastTradedPrice"] for t in received])
 
     def test_close_joins_the_emitter_and_hands_on_everything_pending_and_held(self):
         feed, received = self._connected(interval_ms=60000, emit_period_ms=1000)
         thread, stop = feed._emitter
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))       # out at once
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))        # held for a minute
-        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC))       # stored, no pass yet
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))       # out at once
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_IST))        # held for a minute
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST))       # stored, no pass yet
         feed.close()
         self.assertFalse(thread.is_alive())
         self.assertTrue(stop.is_set())
@@ -924,9 +981,9 @@ class EmitterThreadTests(unittest.TestCase):
         events = []
         feed, _ = self._connected(interval_ms=0, emit_period_ms=10, on_ticks=on_ticks)
         feed._on_event = lambda e, d="": events.append((e, d))
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertTrue(self._wait_for(lambda: len(calls) == 1))
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_IST))
         self.assertTrue(self._wait_for(lambda: len(received) == 1), calls)
         thread, _ = feed._emitter
         self.assertTrue(thread.is_alive())
@@ -959,7 +1016,7 @@ class ReaderIsolationTests(unittest.TestCase):
             release.wait(10)
 
         feed._on_ticks = slow_on_ticks
-        feed._store_frame(ticker(NSE_FNO, 40000, 1.0, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, 40000, 1.0, TRADE_IST))
         blocked = threading.Thread(target=feed.emit_pass, daemon=True)
         blocked.start()
         self.assertTrue(entered.wait(5), "the pass is inside on_ticks, holding _emit_lock")
@@ -972,7 +1029,7 @@ class ReaderIsolationTests(unittest.TestCase):
             i, kind = n % 300, (n // 300) % 3
             price = 100.0 + n / 100
             make = (ticker, quote, full)[kind]
-            frames.append(make(NSE_FNO, 40000 + i, price, TRADE_UTC))
+            frames.append(make(NSE_FNO, 40000 + i, price, TRADE_IST))
             last_price[f"NSE:OPT{i}"] = round(price, 2)
 
         started = time.perf_counter()
@@ -1008,7 +1065,7 @@ class ReaderIsolationTests(unittest.TestCase):
              mock.patch.object(requests.Session, "request", refuse), \
              mock.patch.object(builtins, "print", refuse):
             for n in range(1000):
-                feed._store_frame(full(NSE_FNO, 40000 + n % 50, 100.0 + n, TRADE_UTC))
+                feed._store_frame(full(NSE_FNO, 40000 + n % 50, 100.0 + n, TRADE_IST))
         self.assertEqual(1000, feed._frames_in)
         self.assertEqual([], events)
 
@@ -1025,7 +1082,7 @@ class ReaderIsolationTests(unittest.TestCase):
         def packet():
             sid = rng.choice(ids)
             kind = rng.randrange(5)
-            ltt = TRADE_UTC + rng.randrange(1, 600)
+            ltt = TRADE_IST + rng.randrange(1, 600)
             if kind == 0:
                 return ticker(NSE_FNO, sid, price(), ltt)
             if kind == 1:
@@ -1059,9 +1116,9 @@ class ReaderIsolationTests(unittest.TestCase):
         # carried and the latest one leaves at zero is not seen at all.
         feed, ticks, _, _ = _feed()
         feed.subscribe([EQUITY])
-        feed._on_message(quote(NSE_EQ, EQUITY_ID, 2900.0, TRADE_UTC, high=2905.0))
-        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2910.0, TRADE_UTC, high=2920.0))
-        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2915.0, TRADE_UTC, high=0.0))
+        feed._on_message(quote(NSE_EQ, EQUITY_ID, 2900.0, TRADE_IST, high=2905.0))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2910.0, TRADE_IST, high=2920.0))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2915.0, TRADE_IST, high=0.0))
         feed.emit_pass()
         self.assertEqual(2915.0, ticks[-1]["lastTradedPrice"])
         self.assertEqual(2905.0, ticks[-1]["high"], "the 2920 high was superseded before the pass saw it")
@@ -1077,8 +1134,8 @@ class ReaderIsolationTests(unittest.TestCase):
             return original(code, *args)
 
         feed._merge = recording
-        feed._store_frame(quote(NSE_FNO, OPTION_ID, 133.0, TRADE_UTC))
-        feed._store_frame(full(NSE_FNO, OPTION_ID, 134.0, TRADE_UTC))
+        feed._store_frame(quote(NSE_FNO, OPTION_ID, 133.0, TRADE_IST))
+        feed._store_frame(full(NSE_FNO, OPTION_ID, 134.0, TRADE_IST))
         feed._store_frame(oi(NSE_FNO, OPTION_ID, 7000000))
         feed.emit_pass()
         self.assertEqual([dhan.QUOTE_PACKET, dhan.FULL_PACKET, dhan.OI_PACKET], merged)
@@ -1098,7 +1155,7 @@ class ReaderIsolationTests(unittest.TestCase):
         for _ in range(2):
             feed._store_frame(struct.pack("<BHBI", 7, 8, 0, 0))
             feed._store_frame("hello")
-            feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC)[:30])
+            feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST)[:30])
         self.assertEqual(1, sum(1 for e, d in events if "market status" in d))
         self.assertEqual(1, sum(1 for e, d in events if "unexpected text" in d))
         self.assertEqual(1, sum(1 for e, d in events if "needs 50" in d))
@@ -1107,14 +1164,14 @@ class ReaderIsolationTests(unittest.TestCase):
     def test_stacked_packets_become_one_entry_each(self):
         feed, _, _, _ = _feed()
         feed.subscribe([OPTION, EQUITY])
-        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC) + oi(NSE_FNO, OPTION_ID, 10)
-                          + ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST) + oi(NSE_FNO, OPTION_ID, 10)
+                          + ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual(3, sum(len(slot) for slot in feed._pending.values()))
         self.assertEqual(1, feed._frames_in)
 
     def test_packets_for_unknown_instruments_are_dropped_and_counted(self):
         feed, ticks, _, _ = _feed()
-        feed._store_frame(ticker(NSE_FNO, 99999, 10.0, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, 99999, 10.0, TRADE_IST))
         self.assertEqual({}, feed._pending)
         self.assertEqual(1, feed._dropped_unknown)
         feed.emit_pass()
@@ -1123,8 +1180,8 @@ class ReaderIsolationTests(unittest.TestCase):
     def test_an_instrument_unsubscribed_between_store_and_pass_emits_nothing(self):
         feed, ticks, _, _ = _feed()
         feed.subscribe([OPTION, EQUITY])
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_IST))
         feed.unsubscribe([OPTION])
         feed.emit_pass()
         self.assertEqual([EQUITY], [t["symbol"] for t in ticks])
@@ -1151,7 +1208,7 @@ class ReaderIsolationTests(unittest.TestCase):
         def flood():
             n = 0
             while not stop.is_set():
-                feed._store_frame(ticker(NSE_FNO, 40000 + n % 100, 100.0 + n % 7, TRADE_UTC))
+                feed._store_frame(ticker(NSE_FNO, 40000 + n % 100, 100.0 + n % 7, TRADE_IST))
                 n += 1
 
         flooder = threading.Thread(target=flood, daemon=True)
@@ -1196,13 +1253,13 @@ class ReaderIsolationTests(unittest.TestCase):
         feed, _, _, _ = _feed(clock=clock)
         feed.subscribe([OPTION])
         self.assertIsNone(feed.transport_idle_seconds(), "nothing yet")
-        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         clock.t += 30
         self.assertEqual(30, feed.transport_idle_seconds())
         feed._note_ping()
         self.assertEqual(0, feed.transport_idle_seconds(), "a ping is proof of life")
         clock.t += 12
-        feed._store_frame(ticker(NSE_FNO, 99999, 1.0, TRADE_UTC))
+        feed._store_frame(ticker(NSE_FNO, 99999, 1.0, TRADE_IST))
         self.assertEqual(0, feed.transport_idle_seconds(), "any frame is, even one for nobody")
         self.assertEqual({"frames": 2, "pings": 1, "dropped_unknown": 1},
                          {k: feed.stats()[k] for k in ("frames", "pings", "dropped_unknown")})
@@ -1242,7 +1299,7 @@ class ReaderIsolationTests(unittest.TestCase):
         self.addCleanup(feed.close)
         feed.subscribe([OPTION])
         on_message = app.call_args.kwargs["on_message"]
-        on_message(None, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        on_message(None, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual([134.25], [t["lastTradedPrice"] for t in received], "handed on inside the callback")
 
 
@@ -1314,7 +1371,7 @@ class RawPayloadTests(unittest.TestCase):
         runner = runner_for(feed, publisher=publisher)
         feed._on_ticks = runner.on_ticks
         feed.subscribe([OPTION])
-        feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._on_message(full(NSE_FNO, OPTION_ID, 134.25, TRADE_IST))
         self.assertEqual("", publisher.publish_tick.call_args.args[0]["rawPayload"])
         self.assertIn("depth", json.loads(runner.pump.drain(10)[0]["rawPayload"]))
 

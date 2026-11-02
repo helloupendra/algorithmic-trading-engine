@@ -228,20 +228,23 @@ DISCONNECT_REASONS = {
     810: (FeedEvent.CREDENTIALS_REJECTED, "client id invalid"),
 }
 
-#: What Dhan's trade times are ahead of the wall clock by, if they are IST
+#: What Dhan's trade times are ahead of the wall clock by: they are IST
 #: wall-clock time written as an epoch.
 IST_OFFSET_SECONDS = 19800
+
+#: How far ahead of our clock a converted stamp may be before it is called wrong.
+#: The two clocks need not agree to the second; no exchange prints minutes ahead.
+MAX_STAMP_AHEAD_SECONDS = 120
+
+#: Fresh-looking true-UTC stamps, with no IST one seen, before the feed says so.
+UTC_LOOKING_STAMPS_BEFORE_WARNING = 100
 
 
 def ltt_encodes_ist(ltt_epoch, now_utc: datetime) -> bool:
     """
-    True when a trade time sits roughly 5h30m ahead of now.
-
-    Dhan's SDK formats its trade times with timezone.utc as a time of day, which
-    only reads right if the epoch holds IST wall-clock time rather than true UTC.
-    That is not documented either way. No exchange stamps a trade four hours in
-    the future, so a stamp that far ahead is proof of the IST reading; the window
-    stops at seven hours so a stamp that is simply wrong is not taken as proof.
+    True when a trade time sits roughly 5h30m ahead of now, as a fresh IST stamp
+    does. It proves the IST reading; its absence proves nothing, because a stamp
+    from two hours ago no longer looks ahead at all.
     """
     if not ltt_epoch:
         return False
@@ -249,20 +252,26 @@ def ltt_encodes_ist(ltt_epoch, now_utc: datetime) -> bool:
     return 4 * 3600 < ahead < 7 * 3600
 
 
-def ltt_to_utc(ltt_epoch, now_utc: datetime, ist: bool | None = None) -> str | None:
+def ltt_to_utc(ltt_epoch, now_utc: datetime) -> str | None:
     """
     A Dhan trade time as ISO-8601 UTC, like every other adapter's stamp.
 
-    `ist` is what the caller already knows about the encoding. None asks this one
-    stamp — which only works on a fresh stamp: an IST-encoded trade from two hours
-    ago no longer looks 5h30m ahead. DhanFeed therefore remembers the first proof
-    and passes it on.
+    Always read as IST wall-clock time, which is what Dhan sends (and what its
+    SDK assumes when it formats these with timezone.utc as a time of day). This
+    used to be proved per process by the first stamp sitting 5h30m ahead, so a
+    feed restarted during the session read every stamp as UTC until a fresh trade
+    came: the snapshot of a contract that last traded at 10:00 went out stamped
+    15:30, the API then refused its real ticks as older, and the quote froze for
+    the day.
+
+    None for a stamp that is still ahead of the clock after that: it is wrong,
+    and the API files a tick with no stamp under the moment it arrived.
     """
     if not ltt_epoch or ltt_epoch <= 0:
         return None
-    if ist is None:
-        ist = ltt_encodes_ist(ltt_epoch, now_utc)
-    seconds = ltt_epoch - IST_OFFSET_SECONDS if ist else ltt_epoch
+    seconds = ltt_epoch - IST_OFFSET_SECONDS
+    if seconds > now_utc.timestamp() + MAX_STAMP_AHEAD_SECONDS:
+        return None
     try:
         return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
     except (OverflowError, OSError, ValueError):
@@ -571,8 +580,10 @@ class DhanFeed(VendorFeed):
         self._subscribed: dict[str, DhanInstrument] = {}
         self._canonical_by_key: dict[tuple[int, int], str] = {}
         self._state: dict[tuple[int, int], dict] = {}
-        # Latched on the first stamp that proves Dhan writes IST wall-clock time.
-        self._ltt_is_ist = False
+        # Whether any stamp has proved the IST reading, and how many have looked
+        # like true UTC while none has. Only for the warning in _note_encoding.
+        self._ist_seen = False
+        self._utc_looking = 0
         # Things worth saying once per connection, not once per packet.
         self._said: set = set()
         self._lock = threading.Lock()
@@ -1399,11 +1410,31 @@ class DhanFeed(VendorFeed):
         if not ltt:
             return None
         now = self._now()
-        if not self._ltt_is_ist and ltt_encodes_ist(ltt, now):
-            self._ltt_is_ist = True
-            self._event(FeedEvent.INFO, "Dhan's trade times run 5h30m ahead of UTC — reading them as IST "
-                                        "wall-clock time from now on")
-        return ltt_to_utc(ltt, now, ist=self._ltt_is_ist)
+        self._note_encoding(ltt, now)
+        stamp = ltt_to_utc(ltt, now)
+        if stamp is None:
+            self._once("future-stamp", FeedEvent.ERROR,
+                       f"Dhan sent a trade time ahead of the clock even when read as IST ({ltt}); "
+                       f"such ticks go out with no stamp, and the API files them under their arrival")
+        return stamp
+
+    def _note_encoding(self, ltt, now):
+        """
+        Says once if Dhan's stamps stop being IST: every stamp would then read
+        5h30m old and fall outside the session, with nothing else to show why.
+        One stamp cannot say so, since a trade exactly 5h30m old looks just like
+        a fresh true-UTC one, but one fresh IST stamp settles it the other way.
+        """
+        if self._ist_seen:
+            return
+        if ltt_encodes_ist(ltt, now):
+            self._ist_seen = True
+        elif abs(ltt - now.timestamp()) <= MAX_STAMP_AHEAD_SECONDS:
+            self._utc_looking += 1
+            if self._utc_looking >= UTC_LOOKING_STAMPS_BEFORE_WARNING:
+                self._once("utc-stamps", FeedEvent.ERROR,
+                           f"{self._utc_looking} Dhan trade times read as true UTC and none as IST; the feed "
+                           f"assumes IST, so these are stamped 5h30m old. Check before trusting the bars")
 
     def _once(self, what, event, detail):
         if what in self._said:

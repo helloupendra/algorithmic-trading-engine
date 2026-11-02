@@ -1,6 +1,7 @@
 // src/AlgoTrading.Worker.MarketData/Processing/TickBatchProcessor.cs
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Worker.MarketData.Configuration;
 using AlgoTrading.Worker.MarketData.Models;
 using Microsoft.EntityFrameworkCore;
@@ -184,17 +185,14 @@ public class TickBatchProcessor : ITickBatchProcessor
                 _dbContext.LiveQuotesLatest.Add(latest);
                 existingBySymbol[msg.Symbol] = latest;
             }
-            else if (!msg.IsReplay
-                     && msg.ExchangeTimestampUtc is not null
-                     && latest.ExchangeTimestampUtc is not null
-                     && msg.ExchangeTimestampUtc < latest.ExchangeTimestampUtc)
+            else if (ExchangeStamps.IsOlderThanStored(msg.ExchangeTimestampUtc, latest.ExchangeTimestampUtc, msg.IsReplay, DateTime.UtcNow))
             {
                 refused++;
                 continue;
             }
 
             latest.DataType = string.IsNullOrWhiteSpace(msg.DataType) ? latest.DataType : msg.DataType;
-            latest.ExchangeTimestampUtc = msg.ExchangeTimestampUtc ?? latest.ExchangeTimestampUtc;
+            latest.ExchangeTimestampUtc = ExchangeStamps.Applied(msg.ExchangeTimestampUtc, latest.ExchangeTimestampUtc, DateTime.UtcNow);
             latest.LastTradedPrice = msg.LastTradedPrice;
             latest.BidPrice = msg.BidPrice;
             latest.AskPrice = msg.AskPrice;
@@ -231,7 +229,7 @@ public class TickBatchProcessor : ITickBatchProcessor
             x.DataType = x.DataType.Trim();
 
         x.ReceivedUtc = EnsureUtc(x.ReceivedUtc);
-        x.ExchangeTimestampUtc = EnsureUtc(x.ExchangeTimestampUtc);
+        x.ExchangeTimestampUtc = ExchangeStamps.Usable(EnsureUtc(x.ExchangeTimestampUtc), x.IsReplay, DateTime.UtcNow);
 
         return x;
     }
