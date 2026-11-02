@@ -260,13 +260,12 @@ public class MutualFundsController : ControllerBase
         _status.StopBackfill = false;
         _status.Wake();
 
-        bool quiet = MarketIntelligenceSchedule.InQuietWindow(now, d => _sessions.GetSessionInfo(IstTime.MiddayUtc(d), "NSE", "CM").IsTradingDay);
-        string until = TimeOnly.FromTimeSpan(MarketIntelligenceSchedule.QuietUntilOn(IstTime.DateOf(now))).ToString("HH:mm", CultureInfo.InvariantCulture);
+        bool quiet = !MutualFundSchedule.BackfillMayStart(now, _sessions);
         return Accepted(new MutualFundBackfillRequestResponse
         {
             StartsNow = !quiet,
             Message = quiet
-                ? $"Queued: the backfill does not run 09:00-{until} IST on trading days. It starts after {until} IST."
+                ? "Queued: the backfill stays out of the desk's way, from 08:40 IST on NSE trading days until NSE and MCX have both closed. It starts by itself after that."
                 : "Started: it skips what is stored. Follow it on GET api/MutualFunds/coverage (backfill).",
             Backfill = await _queries.BackfillAsync(cancellationToken),
         });

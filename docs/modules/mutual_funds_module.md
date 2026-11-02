@@ -197,13 +197,18 @@ earlier), each window as open-ended, close-ended and interval schemes in turn.
   run stopped anywhere, a pause or a restart repeats at most one window, and
   repeating it writes nothing new. Once asked for, it carries on after deploys
   until it is done or paused.
-- **Out of market hours.** It does not run 09:00–15:40 IST on trading days
-  (15:55 from 7 Dec 2026); a window in progress at 09:00 finishes its current
-  request.
+- **Out of the desk's way.** It does not run from 08:40 IST on NSE trading days
+  (ahead of the 08:45 morning job) to 15:40 (15:55 from 7 Dec 2026), nor while
+  MCX is in session, when the crude strategies run live on the same small
+  server. So on a trading day it runs from the MCX close (23:30 or 23:55) to
+  08:40, which is more than the whole backfill needs, and all weekend. No request
+  starts within 5 minutes of that edge, and a request still going when it comes
+  is stopped there and its window repeated, which writes nothing new.
 - **Failures.** A request that fails, or takes longer than 20 minutes, is
-  tried again after 30 s, 2 and 5 minutes; then the backfill waits an hour and
-  tries that window again. An open-ended window that comes back empty is a
-  failure, never a gap: every window since 2006 has open-ended NAVs.
+  tried again after 30 s, 2 and 5 minutes, each time only if the backfill may
+  still run; then the backfill waits an hour and tries that window again. An
+  open-ended window that comes back empty is a failure, never a gap: every
+  window since 2006 has open-ended NAVs.
 - **Compression as it goes.** After each window it compresses the chunks it has
   finished with, so it never leaves gigabytes for the 12-hourly policy job to
   compress in one go, perhaps during a session.

@@ -88,10 +88,18 @@ public sealed class MutualFundHistory
     /// Carries the backfill on from its saved state, window after window, until
     /// it reaches <see cref="MutualFundBackfillState.From"/>, a request fails
     /// three times, <see cref="MutualFundBackfillState.MaxWindows"/> windows are
-    /// done, or <paramref name="mayContinue"/> says stop (asked before every request).
+    /// done, or <paramref name="mayContinue"/> says stop (asked before every request
+    /// and every retry).
     /// </summary>
-    public async Task<MutualFundBackfillState> RunAsync(Func<bool> mayContinue, CancellationToken ct)
+    /// <param name="mayContinue">False once the backfill must stop or wait.</param>
+    /// <param name="ct">The host stopping.</param>
+    /// <param name="runway">
+    /// How long the desk can spare from now: no request, and no compression after a window,
+    /// runs past it. <see cref="RequestDeadline"/> when not given.
+    /// </param>
+    public async Task<MutualFundBackfillState> RunAsync(Func<bool> mayContinue, CancellationToken ct, Func<TimeSpan>? runway = null)
     {
+        runway ??= () => RequestDeadline;
         var state = await MutualFundSettings.BackfillAsync(_settings, ct);
         if (!state.Requested) return state;
 
@@ -119,7 +127,8 @@ public sealed class MutualFundHistory
                 {
                     if (!mayContinue()) return await StopAsync(state, _status.StopBackfill ? "paused" : "waiting", ct);
 
-                    var fetch = await FetchWithRetriesAsync(type, window.From, window.To, ct);
+                    var (fetch, stopped) = await FetchWithRetriesAsync(type, window.From, window.To, mayContinue, runway, ct);
+                    if (stopped) return await StopAsync(state, _status.StopBackfill ? "paused" : "waiting", ct);
                     if (fetch is null)
                     {
                         // Still requested: the service tries again after FailedPause, so a
@@ -142,7 +151,7 @@ public sealed class MutualFundHistory
                 await SaveAsync(state, ct);
                 _logger.LogInformation("Mutual fund history: {Window} stored, {Rows:N0} NAVs written ({Done} windows, {Total:N0} NAVs so far).",
                     state.LastWindow, written, state.WindowsDone, state.RowsWritten);
-                await CompressAsync(window.From, ct);
+                await CompressAsync(window.From, runway, ct);
             }
 
             state.Requested = false;
@@ -156,11 +165,16 @@ public sealed class MutualFundHistory
     }
 
     /// <summary>Compresses the chunks finished so far; a failure is logged, never the end of the backfill (the policy job compresses them later).</summary>
-    private async Task CompressAsync(DateOnly cursor, CancellationToken ct)
+    private async Task CompressAsync(DateOnly cursor, Func<TimeSpan> runway, CancellationToken ct)
     {
+        var left = runway();
+        if (left <= TimeSpan.Zero) return;
+
         try
         {
-            int compressed = await _store.CompressFinishedChunksAsync(cursor, ct);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(left);
+            int compressed = await _store.CompressFinishedChunksAsync(cursor, limit.Token);
             if (compressed > 0) _logger.LogInformation("Mutual fund history: compressed {Chunks} finished chunk(s) of mf_nav.", compressed);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -183,25 +197,42 @@ public sealed class MutualFundHistory
         return MutualFundSettings.SaveBackfillAsync(_settings, state, ct);
     }
 
-    private async Task<HistoryFetch?> FetchWithRetriesAsync(int type, DateOnly from, DateOnly to, CancellationToken ct)
+    /// <summary>
+    /// One request, tried again after <see cref="RetryAfter"/> while <paramref name="mayContinue"/> still says so.
+    /// Null with Stopped false: it failed for good (<see cref="LastFailure"/>). Stopped: the backfill has to wait,
+    /// which is no failure, and the window is repeated when it may run again.
+    /// </summary>
+    /// <remarks>
+    /// Until 2 Nov 2026 only the first try asked. A request that began at 08:58 and stalled could go on to about
+    /// 10:26 through its retries, up to 20 minutes each, streaming tens of MB in the middle of the session.
+    /// </remarks>
+    private async Task<(HistoryFetch? Fetch, bool Stopped)> FetchWithRetriesAsync(
+        int type, DateOnly from, DateOnly to, Func<bool> mayContinue, Func<TimeSpan> runway, CancellationToken ct)
     {
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                return await ImportAsync(type, from, to, ct);
+                return (await ImportAsync(type, from, to, ct, runway), false);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 string error = $"tp={type} {from:yyyy-MM-dd}..{to:yyyy-MM-dd}: {ex.Message}";
+                if (!mayContinue())
+                {
+                    _logger.LogInformation("Mutual fund history {Error}; not trying again now, the backfill has to wait. It repeats this window later.", error);
+                    return (null, true);
+                }
+
                 if (attempt >= RetryAfter.Length)
                 {
                     LastFailure = error;
-                    return null;
+                    return (null, false);
                 }
 
                 _logger.LogWarning("Mutual fund history {Error}; trying again in {Seconds:N0}s.", error, RetryAfter[attempt].TotalSeconds);
                 await Sleep(RetryAfter[attempt], ct);
+                if (!mayContinue()) return (null, true);
             }
         }
     }
@@ -213,8 +244,13 @@ public sealed class MutualFundHistory
     /// Reads one window of one scheme type and stores it: NAVs first, then the
     /// schemes they belong to (added to the master if new, unknown fields filled).
     /// </summary>
-    /// <exception cref="Exception">AMFI or the database failed; nothing half-read is counted as done.</exception>
-    public async Task<HistoryFetch> ImportAsync(int type, DateOnly from, DateOnly to, CancellationToken ct)
+    /// <param name="type">AMFI's scheme type.</param>
+    /// <param name="from">The window's first day.</param>
+    /// <param name="to">The window's last day.</param>
+    /// <param name="ct">The host stopping.</param>
+    /// <param name="runway">How long the desk can spare, asked when the request starts; it ends the request as <see cref="RequestDeadline"/> does.</param>
+    /// <exception cref="Exception">AMFI or the database failed, or the time ran out; nothing half-read is counted as done.</exception>
+    public async Task<HistoryFetch> ImportAsync(int type, DateOnly from, DateOnly to, CancellationToken ct, Func<TimeSpan>? runway = null)
     {
         await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, _options.RequestPaceSeconds)), ct);
         await _status.WriteGate.WaitAsync(ct);
@@ -227,9 +263,13 @@ public sealed class MutualFundHistory
             string url = Url(_options.HistoryUrl, type, from, to);
 
             // HttpClient's timeout ends at the headers; this one covers the whole
-            // download, so a stream that stalls half-way is given up and retried.
+            // download and its writes, so a stream that stalls half-way is given up
+            // and retried, and nothing runs on into the time the desk needs.
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            deadline.CancelAfter(RequestDeadline);
+            var left = runway?.Invoke() ?? RequestDeadline;
+            if (left <= TimeSpan.Zero) throw new TimeoutException("Not started: the desk needs the server from now on.");
+            var limit = left < RequestDeadline ? left : RequestDeadline;
+            deadline.CancelAfter(limit);
             try
             {
                 using var response = await _http.CreateClient(MutualFundsOptions.HttpClientName)
@@ -246,12 +286,12 @@ public sealed class MutualFundHistory
                     if (lines.Read(line) is not { } row) continue;
                     batch.Add(row);
                     if (batch.Count < MutualFundStore.BatchSize) continue;
-                    written += await WriteBatchAsync(batch, ct);
+                    written += await WriteBatchAsync(batch, deadline.Token);
                     batch.Clear();
                 }
 
                 lines.Finish();
-                if (batch.Count > 0) written += await WriteBatchAsync(batch, ct);
+                if (batch.Count > 0) written += await WriteBatchAsync(batch, deadline.Token);
             }
             catch (AmfiNoDataException)
             {
@@ -259,7 +299,9 @@ public sealed class MutualFundHistory
             }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
             {
-                throw new TimeoutException($"AMFI's answer took longer than {RequestDeadline.TotalMinutes:N0} minutes.");
+                throw new TimeoutException(limit == RequestDeadline
+                    ? $"AMFI's answer took longer than {RequestDeadline.TotalMinutes:N0} minutes."
+                    : $"Stopped after {limit.TotalMinutes:N0} minutes: the desk needs the server from then on.");
             }
 
             if (type == 1 && (noData || counts.Rows == 0))

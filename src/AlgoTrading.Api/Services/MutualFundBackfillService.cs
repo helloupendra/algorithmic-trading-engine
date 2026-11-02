@@ -1,6 +1,4 @@
 using AlgoTrading.Application.Interfaces;
-using AlgoTrading.Infrastructure.Services;
-using AlgoTrading.Infrastructure.Services.MarketIntelligence;
 using AlgoTrading.Infrastructure.Services.MutualFunds;
 using Microsoft.Extensions.Options;
 
@@ -13,11 +11,12 @@ namespace AlgoTrading.Api.Services;
 /// </summary>
 /// <remarks>
 /// It never starts by itself: the request is recorded in <c>system_settings</c>,
-/// and only a recorded request runs. Like the market-intelligence backfills it
-/// keeps out of 09:00–15:40 IST on trading days (15:55 from 7 Dec 2026), so
-/// the live desk has the small server to itself; a window in progress at 09:00
-/// finishes its current request and the rest waits for the close. After a
-/// request fails three times it waits an hour and tries that window again.
+/// and only a recorded request runs. It keeps out of the desk's way, so the live
+/// desk has the small server to itself (<see cref="MutualFundSchedule.BackfillMustWait(DateTime, IMarketSessionService)"/>):
+/// from 08:40 IST on NSE trading days to ten minutes after the derivatives close,
+/// and whenever MCX is in session. So on a trading day it runs from the MCX close
+/// to 08:40; a request is stopped at the edge of that, and its window repeated.
+/// After a request fails three times it waits an hour and tries that window again.
 /// Set <c>MutualFunds:BackfillEnabled</c> to false to switch it off.
 /// </remarks>
 public sealed class MutualFundBackfillService : BackgroundService
@@ -85,7 +84,10 @@ public sealed class MutualFundBackfillService : BackgroundService
             }
 
             var history = scope.ServiceProvider.GetRequiredService<MutualFundHistory>();
-            var finished = await history.RunAsync(() => !ct.IsCancellationRequested && !_status.StopBackfill && !Quiet(DateTime.UtcNow), ct);
+            var finished = await history.RunAsync(
+                () => !ct.IsCancellationRequested && !_status.StopBackfill && !Quiet(DateTime.UtcNow),
+                ct,
+                () => MutualFundSchedule.BackfillRunway(DateTime.UtcNow, MutualFundHistory.RequestDeadline, t => MutualFundSchedule.BackfillMustWait(t, _sessions)));
             _logger.LogInformation("Mutual fund history backfill {State}: {Windows} windows, {Rows:N0} NAVs written{Error}.",
                 finished.State, finished.WindowsDone, finished.RowsWritten, finished.LastError is null ? string.Empty : $"; {finished.LastError}");
         }
@@ -99,6 +101,5 @@ public sealed class MutualFundBackfillService : BackgroundService
         }
     }
 
-    private bool Quiet(DateTime nowUtc) =>
-        MarketIntelligenceSchedule.InQuietWindow(nowUtc, d => _sessions.GetSessionInfo(IstTime.MiddayUtc(d), "NSE", "CM").IsTradingDay);
+    private bool Quiet(DateTime nowUtc) => !MutualFundSchedule.BackfillMayStart(nowUtc, _sessions);
 }
