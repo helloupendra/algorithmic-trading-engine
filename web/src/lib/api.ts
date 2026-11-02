@@ -130,10 +130,15 @@ async function refreshAccessToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight
 
   refreshInFlight = (async () => {
-    const refreshToken = tokenStore.refresh
-    if (!refreshToken) return null
-
     try {
+      // Inside the try, because only the finally clears refreshInFlight. Above it
+      // (until 2 Nov), one 401 with no refresh token stored left a resolved null
+      // here for the life of the tab: polls still out when a session ended did
+      // that, and after the next sign-in the first expired token signed the user
+      // out without asking /refresh, and the live hub reconnected with it.
+      const refreshToken = tokenStore.refresh
+      if (!refreshToken) return null
+
       const response = await fetch(`${API_BASE_URL}/api/UserAuth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,6 +148,10 @@ async function refreshAccessToken(): Promise<string | null> {
       if (!response.ok) return null
 
       const data = (await response.json()) as AuthResponse
+      // Signed out, or signed in as someone else, while this was on its way: its
+      // tokens belong to a session that is over. Stored, they would sign the
+      // previous user back in, in the next user's tab.
+      if (tokenStore.refresh !== refreshToken) return tokenStore.access
       tokenStore.set(data.accessToken, data.refreshToken)
       return data.accessToken
     } catch {

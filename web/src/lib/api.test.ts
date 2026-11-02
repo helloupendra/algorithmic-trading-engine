@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, api, freshAccessToken, tokenExpiresAtMs } from './api'
+import { ApiError, api, freshAccessToken, setSessionExpiredHandler, tokenExpiresAtMs, tokenStore } from './api'
 
 const NOW = Date.parse('2026-09-28T09:00:00Z')
 
@@ -82,5 +82,127 @@ describe('apiFetch', () => {
     expect((error as ApiError).status).toBe(409)
     expect((error as ApiError).message).toBe(body.message)
     expect((error as ApiError).body).toEqual(body)
+  })
+})
+
+describe('the shared token refresh', () => {
+  const REFRESH_URL = '/api/UserAuth/refresh'
+  const sessionEnded = vi.fn()
+  let calls: string[]
+  let answerRefresh: () => Promise<Response>
+
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const refreshed = (accessToken: string, refreshToken: string) => async () => json({ accessToken, refreshToken })
+
+  /** Anything but the refresh answers 200 for a live token, and 401 for every other. */
+  beforeEach(() => {
+    calls = []
+    answerRefresh = refreshed('A2', 'R2')
+    sessionEnded.mockClear()
+    setSessionExpiredHandler(sessionEnded)
+    const stored = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+      removeItem: (key: string) => void stored.delete(key),
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(url)
+      if (url.endsWith(REFRESH_URL)) return answerRefresh()
+      const auth = new Headers(init?.headers).get('Authorization')
+      return auth === 'Bearer A2' || auth === 'Bearer next-user-access' ? json(['positions']) : new Response('', { status: 401 })
+    }))
+  })
+
+  afterEach(() => {
+    setSessionExpiredHandler(() => {})
+    vi.unstubAllGlobals()
+  })
+
+  const refreshCalls = () => calls.filter((url) => url.endsWith(REFRESH_URL)).length
+
+  /** Polls that were out when the session ended: each comes back 401 with no refresh token stored. */
+  async function pollsReturnAfterTheSessionEnded(): Promise<void> {
+    await Promise.all([api.get('/a'), api.get('/b'), api.get('/c')].map((poll) => poll.catch(() => {})))
+    expect(tokenStore.refresh).toBeNull()
+    expect(refreshCalls()).toBe(0)
+    sessionEnded.mockClear()
+  }
+
+  it('asks /refresh after a sign-in, even when a 401 once came with no refresh token stored', async () => {
+    await pollsReturnAfterTheSessionEnded()
+
+    // Signed in again in the same tab, and an hour later the access token has expired.
+    tokenStore.set('A1-expired', 'R1')
+    await expect(api.get('/api/Positions/open')).resolves.toEqual(['positions'])
+
+    expect(refreshCalls()).toBe(1)
+    expect(tokenStore.access).toBe('A2')
+    expect(tokenStore.refresh).toBe('R2')
+    expect(sessionEnded).not.toHaveBeenCalled()
+  })
+
+  it('gives the live hub a fresh token after that, not the expired one', async () => {
+    await pollsReturnAfterTheSessionEnded()
+
+    tokenStore.set(jwt(Date.now() - 1_000), 'R1')
+
+    expect(await freshAccessToken()).toBe('A2')
+    expect(refreshCalls()).toBe(1)
+  })
+
+  it('still ends a session the refresh cannot save', async () => {
+    tokenStore.set('A1-expired', 'R1')
+    answerRefresh = async () => new Response('', { status: 401 })
+
+    const error = await api.get('/api/Positions/open').catch((e: unknown) => e)
+
+    expect((error as ApiError).status).toBe(401)
+    expect(tokenStore.refresh).toBeNull()
+    expect(sessionEnded).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one refresh between requests that hit a 401 together', async () => {
+    tokenStore.set('A1-expired', 'R1')
+
+    await Promise.all([api.get('/a'), api.get('/b'), api.get('/c')])
+
+    expect(refreshCalls()).toBe(1)
+  })
+
+  describe('with the answer still on its way', () => {
+    /** Starts a poll whose 401 asks for a refresh, and leaves that refresh waiting. */
+    async function refreshUnderWay(): Promise<{ arrive: () => void; poll: Promise<unknown> }> {
+      tokenStore.set('A1-expired', 'R1')
+      let arrive = () => {}
+      answerRefresh = () => new Promise((resolve) => {
+        arrive = () => resolve(json({ accessToken: 'A2', refreshToken: 'R2' }))
+      })
+      const poll = api.get('/a').catch((e: unknown) => e)
+      await vi.waitFor(() => expect(refreshCalls()).toBe(1))
+      return { arrive: () => arrive(), poll }
+    }
+
+    it('does not sign a user back in who has signed out meanwhile', async () => {
+      const { arrive, poll } = await refreshUnderWay()
+
+      tokenStore.clear()
+      arrive()
+      await poll
+
+      expect(tokenStore.access).toBeNull()
+      expect(tokenStore.refresh).toBeNull()
+    })
+
+    it("does not put the last user's tokens in the next user's session", async () => {
+      const { arrive, poll } = await refreshUnderWay()
+
+      tokenStore.set('next-user-access', 'next-user-refresh')
+      arrive()
+      await poll
+
+      expect(tokenStore.access).toBe('next-user-access')
+      expect(tokenStore.refresh).toBe('next-user-refresh')
+    })
   })
 })
