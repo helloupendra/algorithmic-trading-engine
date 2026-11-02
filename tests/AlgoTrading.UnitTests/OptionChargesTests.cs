@@ -87,10 +87,90 @@ public class OptionChargesTests
     [InlineData("MCX:CRUDEOILM26OCTFUT", "MCX futures")]
     [InlineData("NSE:NIFTY26SEP25000CE", "index options")]
     [InlineData("BSE:SENSEX26OCT82000PE", "index options")]
+    [InlineData("NSE:RELIANCE26NOV1400CE", "index options")]
+    [InlineData("NSE:BAJAJ-AUTO26NOV8000CE", "index options")]
+    [InlineData("NSE:NIFTY26NOVFUT", "NSE futures")]
+    [InlineData("nse:nifty26novfut", "NSE futures")]
+    [InlineData("NSE:RELIANCE26NOVFUT", "NSE futures")]
+    [InlineData("NSE:BAJAJ-AUTO26NOVFUT", "NSE futures")]
+    [InlineData("BSE:SENSEX26NOVFUT", "BSE futures")]
+    [InlineData("NSE:RELIANCE-EQ", "NSE shares (intraday)")]
+    [InlineData("nse:reliance-eq", "NSE shares (intraday)")]
+    [InlineData("NSE:BAJAJ-AUTO-EQ", "NSE shares (intraday)")]
+    [InlineData("NSE:M&M-EQ", "NSE shares (intraday)")]
+    [InlineData("NSE:SOMESTOCK-BE", "NSE shares (intraday)")]
+    [InlineData("BSE:RELIANCE-A", "BSE shares (intraday)")]
+    [InlineData("NSE:NIFTY50-INDEX", "index options")]
+    [InlineData("BSE:SENSEX-INDEX", "index options")]
+    [InlineData("NSE:BAJAJ-AUTO", "index options")]
     [InlineData("MANUAL", "index options")]
+    [InlineData("", "index options")]
     [InlineData(null, "index options")]
     public void Each_symbol_is_charged_under_its_own_schedule(string? symbol, string schedule)
     {
+        // The same table as SegmentTests in the engine's tests/test_charges.py.
         Assert.Equal(schedule, ChargeSchedule.ForSymbol(symbol).Name);
+    }
+
+    // Until 2 Nov 2026 futures and shares were charged as index options: STT at 0.15%
+    // of notional. The figures below are test_charges.py's too, unrounded there.
+
+    [Fact]
+    public void A_nifty_future_round_trip()
+    {
+        // 65 units bought and sold at 25,000: 16,25,000 a side, two orders. Python: 966.2155.
+        var c = OptionCharges.For(1_625_000m, 1_625_000m, 2, ChargeSchedule.ForSymbol("NSE:NIFTY26NOVFUT"));
+
+        Assert.Equal(40m, c.Brokerage);
+        Assert.Equal(812.5m, c.Stt);        // 0.05% of the sell side
+        Assert.Equal(59.48m, c.Exchange);   // NSE 0.00183% of both sides
+        Assert.Equal(3.25m, c.Sebi);
+        Assert.Equal(32.5m, c.Stamp);       // 0.002% of the buy side
+        Assert.Equal(18.49m, c.Gst);
+        Assert.Equal(966.22m, c.Total);
+
+        // At the index-option rates it was charged at until now.
+        Assert.True(OptionCharges.For(1_625_000m, 1_625_000m, 2).Total > 3_500m);
+    }
+
+    [Fact]
+    public void A_sensex_future_pays_no_exchange_charge()
+    {
+        // Python: 882.976.
+        var c = OptionCharges.For(1_600_000m, 1_600_000m, 2, ChargeSchedule.ForSymbol("BSE:SENSEX26NOVFUT"));
+
+        Assert.Equal(800m, c.Stt);
+        Assert.Equal(0m, c.Exchange);
+        Assert.Equal(882.98m, c.Total);
+    }
+
+    [Fact]
+    public void Shares_are_charged_as_intraday()
+    {
+        // 1,000 RELIANCE at 1,400: 14,00,000 a side. Python: 543.9368.
+        var c = OptionCharges.For(1_400_000m, 1_400_000m, 2, ChargeSchedule.ForSymbol("NSE:RELIANCE-EQ"));
+
+        Assert.Equal(350m, c.Stt);          // 0.025% of the sell side
+        Assert.Equal(85.96m, c.Exchange);   // NSE 0.00307% of both sides
+        Assert.Equal(42m, c.Stamp);         // 0.003% of the buy side
+        Assert.Equal(543.94m, c.Total);
+    }
+
+    [Fact]
+    public void Bse_shares_take_bses_exchange_charge()
+    {
+        // Python: 566.404.
+        var c = OptionCharges.For(1_400_000m, 1_400_000m, 2, ChargeSchedule.ForSymbol("BSE:RELIANCE-A"));
+
+        Assert.Equal(105m, c.Exchange);     // BSE 0.00375%
+        Assert.Equal(566.40m, c.Total);
+    }
+
+    [Fact]
+    public void The_option_and_mcx_figures_did_not_move()
+    {
+        Assert.Equal(new ChargeSchedule("index options", 20m, 0.15m, 0.03503m, 0.0001m, 0.003m, 18m), ChargeSchedule.IndexOptions);
+        Assert.Equal(new ChargeSchedule("MCX options", 20m, 0.05m, 0.0418m, 0.0001m, 0.003m, 18m), ChargeSchedule.McxOptions);
+        Assert.Equal(new ChargeSchedule("MCX futures", 20m, 0.01m, 0.0021m, 0.0001m, 0.002m, 18m), ChargeSchedule.McxFutures);
     }
 }

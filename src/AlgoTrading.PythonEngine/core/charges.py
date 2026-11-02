@@ -26,9 +26,9 @@ Two separate things, kept separate so a report can show each:
       stamp duty  on the BUY side's turnover
       GST         on brokerage + exchange charge + SEBI fee
 
-MCX fills take MCX's own statutory rates (`CostModel.for_symbol`, see
-MCX_OPTION_RATES and MCX_FUTURE_RATES below); everything else is charged as an
-index option.
+Each segment takes its own statutory rates (`CostModel.for_symbol`, the tables
+below): MCX options and futures, NSE and BSE futures, NSE and BSE shares. Options
+on NSE and BSE, and anything unreadable, are charged as an index option.
 
 Statutory rates change with budgets and exchange circulars. The defaults are
 approximations for NSE index options in 2026 — in particular STT on option
@@ -58,13 +58,65 @@ MCX_OPTION_RATES = {"stt_sell_pct": 0.05, "exchange_txn_pct": 0.0418, "stamp_buy
 # order; Rs 20 is kept, which overstates only mini contracts.
 MCX_FUTURE_RATES = {"stt_sell_pct": 0.01, "exchange_txn_pct": 0.0021, "stamp_buy_pct": 0.002}
 
+# NSE and BSE futures and shares, added 2 Nov 2026. Until then each of those fills
+# was charged as an index option, about four to eight times too much: STT at 0.15%
+# of notional. Every rate is from Zerodha's charge list (zerodha.com/charges) and
+# its support articles on STT and on exchange transaction charges, read 2 Nov
+# 2026. The dates behind them are from the onetradejournal.com charges changelog,
+# which cites the NSE circulars: STT on futures 0.02% to 0.05% from 1 Apr 2026
+# (Finance Act 2026, NSE/FATAX/73524), and transaction charges with the IPFT
+# contribution included from 1 Mar 2026 (NSE/FA/73061). The NSE circulars
+# themselves could not be opened when this was written.
+#
+# Brokerage on these is the lower of Rs 20 and 0.03% of the order; Rs 20 is kept,
+# which overstates an order under Rs 66,667.
+NSE_FUTURE_RATES = {"stt_sell_pct": 0.05, "exchange_txn_pct": 0.00183, "stamp_buy_pct": 0.002}
+# BSE takes no transaction charge on index or stock futures.
+BSE_FUTURE_RATES = {"stt_sell_pct": 0.05, "exchange_txn_pct": 0.0, "stamp_buy_pct": 0.002}
+# Every share fill is charged as intraday, because a fill does not say how the
+# shares ended up: the rates are chosen from the symbol alone. Intraday is the
+# desk's usual case, and this undercharges the other: real delivery pays STT 0.1%
+# on both sides and stamp 0.015% on the buy side, with no brokerage at a discount
+# broker.
+NSE_EQUITY_INTRADAY_RATES = {"stt_sell_pct": 0.025, "exchange_txn_pct": 0.00307, "stamp_buy_pct": 0.003}
+# BSE charges some scrip groups differently; not modelled.
+BSE_EQUITY_INTRADAY_RATES = {"stt_sell_pct": 0.025, "exchange_txn_pct": 0.00375, "stamp_buy_pct": 0.003}
+
+#: The rates of every segment that is not an index option.
+SEGMENT_RATES = {
+    "mcx-option": MCX_OPTION_RATES,
+    "mcx-future": MCX_FUTURE_RATES,
+    "nse-future": NSE_FUTURE_RATES,
+    "bse-future": BSE_FUTURE_RATES,
+    "nse-equity": NSE_EQUITY_INTRADAY_RATES,
+    "bse-equity": BSE_EQUITY_INTRADAY_RATES,
+}
+
+
+def _has_share_series(text: str) -> bool:
+    """The part after the last hyphen is a series of one to three characters: BAJAJ-AUTO-EQ is a share, NIFTY50-INDEX is not."""
+    _, hyphen, series = text.rpartition("-")
+    return bool(hyphen) and 1 <= len(series) <= 3 and series.isalnum()
+
 
 def segment_of(symbol: Any) -> str:
-    """"mcx-option" for MCX:…CE/PE, "mcx-future" for any other MCX symbol, else "index-option"."""
+    """
+    The charge segment of a symbol, read from its grammar. "MCX:…CE/PE" is "mcx-option" and any other MCX symbol
+    "mcx-future". Elsewhere a symbol ending in CE or PE is "index-option" (a stock option too: its statutory rates
+    are the same on NSE), in FUT "nse-future" or "bse-future", and in a series ("-EQ", "-BE", "-A") "nse-equity" or
+    "bse-equity". Anything else, an index or a symbol it cannot read, stays "index-option". Keep in step with
+    ChargeSchedule.ForSymbol (Application/Risk/OptionCharges.cs).
+    """
     text = str(symbol or "").strip().upper()
-    if not text.startswith("MCX:"):
+    option = text.endswith(("CE", "PE"))
+    if text.startswith("MCX:"):
+        return "mcx-option" if option else "mcx-future"
+    if option:
         return "index-option"
-    return "mcx-option" if text.endswith(("CE", "PE")) else "mcx-future"
+    exchange = "bse" if text.startswith("BSE:") else "nse"
+    if text.endswith("FUT"):
+        return f"{exchange}-future"
+    return f"{exchange}-equity" if _has_share_series(text) else "index-option"
 
 
 @dataclass(frozen=True)
@@ -119,15 +171,11 @@ class CostModel:
         """
         This model with the statutory rates of the segment `symbol` trades in.
         Slippage, brokerage and GST are the run's own; STT/CTT, the exchange
-        charge and stamp duty are the exchange's, so an MCX fill takes MCX's
-        even in a run whose costs block set index-option rates.
+        charge and stamp duty are the exchange's, so an MCX fill or a share takes
+        its own even in a run whose costs block set index-option rates.
         """
-        segment = segment_of(symbol)
-        if segment == "mcx-option":
-            return replace(self, **MCX_OPTION_RATES)
-        if segment == "mcx-future":
-            return replace(self, **MCX_FUTURE_RATES)
-        return self
+        rates = SEGMENT_RATES.get(segment_of(symbol))
+        return replace(self, **rates) if rates is not None else self
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
