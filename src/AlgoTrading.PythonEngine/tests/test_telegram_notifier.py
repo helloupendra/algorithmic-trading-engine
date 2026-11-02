@@ -568,10 +568,11 @@ class RenderTests(unittest.TestCase):
 class PayloadShapeTests(unittest.TestCase):
     def test_published_keys_are_pascal_case(self):
         """
-        AlertSubscriberService calls JsonSerializer.Deserialize<AlertEventPayload>
-        with no options, so binding is case-sensitive. Lowercase keys bind to
-        nothing and the row lands as "Alert"/"system"/"UNKNOWN" with the content
-        lost — which is exactly what logic_engine.py does today.
+        Every publisher on alerts:new uses the PascalCase of the API's
+        AlertEventPayload. The subscriber also binds other cases since 2 Nov 2026:
+        until then its binding was case-sensitive, and LogicEngine's lowercase keys
+        reached Telegram as an empty "ALERT: !" (see test_logic_engine.py for its
+        payload, AlertSubscriberTests for the binding).
         """
         sent = {}
 

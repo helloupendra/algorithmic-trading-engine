@@ -179,14 +179,16 @@ default targets this rule cannot fire (Limitations).
 One JSON message on the Redis channel `alerts:new`:
 
 ```json
-{"title": "...", "message": "...", "source": "logic_engine", "underlying": "<U>",
- "severity": "info|warning|error", "symbol": "<option symbol or empty>", "simulationRunId": null}
+{"Title": "...", "Message": "...", "Source": "logic_engine", "Underlying": "<U>",
+ "Severity": "info|warning|error", "Symbol": "<option symbol or empty>", "SimulationRunId": null}
 ```
 
-`simulationRunId` is `getattr(inp, "simulation_run_id", None)` and
+`SimulationRunId` is `getattr(inp, "simulation_run_id", None)` and
 `StrategyInput` has no such attribute, so it is always `null` — a stored
-alert would not link to the alerter's run. `AlertSubscriberService`
-deserialises it, posts `🚨 ALERT: <title>!\n<message>` to Telegram when
+alert would not link to the alerter's run. The keys were lowercase until 2 Nov
+2026, when the subscriber bound them case-sensitively: every alert of this
+engine reached Telegram as an empty `🚨 ALERT: !` and was stored with no content.
+`AlertSubscriberService` deserialises it, whatever the case of its keys, posts `🚨 ALERT: <title>!\n<message>` to Telegram when
 `Telegram:BotToken` and `Telegram:ChatId` are configured, and inserts an
 `alert_events` row (`Source` = `logic_engine`, `DeliveredToTelegram` = the
 Telegram result).

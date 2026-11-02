@@ -8,6 +8,7 @@ symbols, or open interest on every contract, and a rule with no data must stay
 silent instead of firing on a fabricated number.
 """
 
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -149,6 +150,17 @@ class LogicEngineTests(unittest.TestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].signal_type, "ALERT")
         self.assertTrue(self.redis_client.publish.called)
+
+        # What the alert subscriber reads: until 2 Nov 2026 these keys were lowercase,
+        # bound to nothing, and the alert reached Telegram as an empty "ALERT: !".
+        channel, published = self.redis_client.publish.call_args.args
+        payload = json.loads(published)
+        self.assertEqual(channel, "alerts:new")
+        self.assertEqual(
+            {"Title", "Message", "Source", "Underlying", "Severity", "Symbol", "SimulationRunId"}, set(payload))
+        self.assertIn("BEAR TRAP", payload["Title"])
+        self.assertIn("PE", payload["Message"])
+        self.assertEqual("logic_engine", payload["Source"])
 
     # --- rule 2 (open interest) ------------------------------------------
 

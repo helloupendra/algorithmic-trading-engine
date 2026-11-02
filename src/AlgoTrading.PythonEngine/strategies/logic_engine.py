@@ -176,13 +176,13 @@ class LogicEngine(BaseStrategy):
             resistance = 10100
 
         alert_payload = {
-            "title": f"E2E TEST: {instrument} BREAKOUT",
-            "message": f"Spot at {spot_price}, ATM calculated at {atm_strike}. Watch {option_symbol}. Premium: ₹{premium}",
-            "source": "logic_engine",
-            "underlying": instrument,
-            "severity": "info",
-            "symbol": option_symbol,
-            "simulationRunId": None
+            "Title": f"E2E TEST: {instrument} BREAKOUT",
+            "Message": f"Spot at {spot_price}, ATM calculated at {atm_strike}. Watch {option_symbol}. Premium: ₹{premium}",
+            "Source": "logic_engine",
+            "Underlying": instrument,
+            "Severity": "info",
+            "Symbol": option_symbol,
+            "SimulationRunId": None
         }
         redis_client.publish("alerts:new", json.dumps(alert_payload))
         print(f"E2E Test complete for {instrument} - Alert Published!")
@@ -457,13 +457,13 @@ class LogicEngine(BaseStrategy):
 
     def _publish_alert(self, title: str, message: str, symbol: str, severity: str, index_symbol: str, simulation_run_id: int):
         alert_payload = {
-            "title": title,
-            "message": message,
-            "source": "logic_engine",
-            "underlying": index_symbol,
-            "severity": severity,
-            "symbol": symbol,
-            "simulationRunId": simulation_run_id
+            "Title": title,
+            "Message": message,
+            "Source": "logic_engine",
+            "Underlying": index_symbol,
+            "Severity": severity,
+            "Symbol": symbol,
+            "SimulationRunId": simulation_run_id
         }
         self.redis_client.publish("alerts:new", json.dumps(alert_payload))
 
