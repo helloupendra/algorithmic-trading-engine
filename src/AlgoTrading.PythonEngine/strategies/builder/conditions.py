@@ -66,7 +66,7 @@ def _check_operand(name: str, condition: str) -> None:
         raise ConditionError(f"{condition!r}: {key} takes no number")
     if key in _REQUIRED_PERIOD and not argument:
         raise ConditionError(f"{condition!r} needs a period, e.g. {key}:20")
-    if argument and float(argument) < 1:
+    if argument and (float(argument) < 1 or not float(argument).is_integer()):
         raise ConditionError(f"{condition!r}: a period is a whole number of bars")
 
 

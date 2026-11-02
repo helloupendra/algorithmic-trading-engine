@@ -85,7 +85,7 @@ class ConditionTests(unittest.TestCase):
                 cond.compile_all([typo])
 
     def test_a_quantity_with_the_wrong_argument_is_refused(self):
-        for wrong in ['ema>close', 'close>sma', 'close:9>open', 'ema:0>close', 'ema:-9>close', 'vwap:5<close']:
+        for wrong in ['ema>close', 'close>sma', 'close:9>open', 'ema:0>close', 'ema:-9>close', 'ema:9.5>close', 'vwap:5<close']:
             with self.subTest(wrong), self.assertRaises(cond.ConditionError):
                 cond.compile_all([wrong])
 
