@@ -55,7 +55,7 @@ yet). Ten to fifteen minutes; re-run it if a step fails, it continues.
 ## 3. Move the data
 
 ```bash
-# on the Mac — everything except raw ticks, plus the encryption keys (~70 MB)
+# on the source: everything except raw ticks, plus the encryption keys
 ./scripts/aws/migrate-db.sh dump
 scp -i key.pem algotrading-*.tar ubuntu@<public-ip>:~/
 
@@ -70,6 +70,15 @@ sudo systemctl start algotrading-desk
 dump, and installs the ASP.NET data-protection keys — the stored FYERS app
 credentials, trading PIN and tokens are encrypted with them, so they keep
 working without being re-entered.
+
+`restore` empties every table except the raw ticks. On a database that holds any
+row it refuses and changes nothing, unless it is given `--wipe algotrading`, the
+database's name. A fresh server has no rows, so the first restore needs no flag.
+When a load fails it exits non-zero and does not say "done": do not start the
+desk on that database. The hypertables (the option bars, the mutual fund NAVs)
+travel by their own copy, which has not yet run on a real move, so compare the
+per-table counts it prints with the source. `migrate-db.sh`'s header says what
+has been checked and how.
 
 ## 4. Cut over
 
