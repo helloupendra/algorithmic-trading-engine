@@ -40,6 +40,8 @@ Each signature is one of this desk's own failures:
   in seconds.
 * ``not-configured`` — a setting in .env that never reached the API.
 * ``order-rate-limit`` — 25 Sep: Fulcrum churning into the order limit.
+* ``signal-unconfirmed`` — a run's OPEN_GROUP whose answer was lost: it may or
+  may not be in the book, and the strategy waits until the API answers.
 * ``python-traceback`` / ``api-error`` — a crash in Python or .NET, grouped by
   what was thrown rather than by where or when.
 * ``new-error`` — anything else that looks like an error and has never been
@@ -140,6 +142,7 @@ HOLD_SECONDS = {
     # long weekend or a holiday between two mornings is still the one incident.
     "vendor-regulatory": 7 * 24 * 3600,
     "order-rate-limit": 3600,  # a churning strategy hits the limit in bursts all day
+    "signal-unconfirmed": 3600,  # repeats every minute while the API has not answered
     "desk-warning": 3600,
     # A recurring bug (25 Sep: alert events too long for their column, ~20 a
     # day) is one incident while it keeps recurring, not one per sighting.
@@ -207,7 +210,9 @@ BENIGN_LINES: tuple[re.Pattern[str], ...] = (
     # a daily-loss refusal was opened as a medium "API error". The runner's
     # "SIGNAL REFUSED by the API: {"error": …}" line carries the same reason.
     # The order rate limit is not here: its own signature reports the churn.
-    re.compile(r"MAX DAILY LOSS EXCEEDED:|GLOBAL KILL SWITCH IS ACTIVE\."),
+    # MARKET NOT OPEN is the session rule working the same way: an OPEN posted
+    # outside its market's hours (PaperTradingService).
+    re.compile(r"MAX DAILY LOSS EXCEEDED:|GLOBAL KILL SWITCH IS ACTIVE\.|MARKET NOT OPEN:"),
 )
 
 # A line carrying one of these is dropped whole: never matched, never evidence.
@@ -288,6 +293,8 @@ _URL_PATH = re.compile(r"https?://[^/\s]+(?P<path>/[^\s?\"')]*)")
 #: The exception the API's risk guard refuses an order with (answered 409).
 _RISK_REFUSAL = "RiskViolationException"
 _ORDER_LIMIT = re.compile(r"RATE LIMIT EXCEEDED: More than (?P<n>\d+) orders placed in the last minute for run (?P<run>\d+)")
+#: A runner's OPEN_GROUP whose answer was lost (strategies/signal_booking.py).
+_SIGNAL_UNCONFIRMED = re.compile(r"SIGNAL UNCONFIRMED: OPEN_GROUP (?P<group>\S*)")
 _TICKLESS = re.compile(r"(?P<n>\d+) reconnect\(s\) carried no ticks")
 _HOST_LOST = re.compile(r"Connection to remote host was lost")
 _WAITING = re.compile(r"\bwaiting (?P<wait>\d+)\s?s\b")
@@ -1261,6 +1268,20 @@ class LogsAgent(Agent):
                 suggestion=("25 Sep: Fulcrum made 270–388 trades per run and ran into this limit. Stop the run "
                             "and review its exits before starting it again."),
                 raw=raw, file=o.file, hold=HOLD_SECONDS["order-rate-limit"], line_time=t, subject=m["run"])
+            return True
+
+        if m := _SIGNAL_UNCONFIRMED.search(text):
+            scan.add(
+                fingerprint=f"{AGENT}:signal-unconfirmed",
+                rule="signal-unconfirmed", severity=Severity.HIGH,
+                title="A run has an entry the API has not answered for",
+                what=("The API did not answer for OPEN_GROUP {subjects}. It may or may not be in the book, and the "
+                      "strategy is not evaluated until the API answers."),
+                where=o.where,
+                suggestion=("Check that the API is up and answering, and look at the run's positions. Nothing needs "
+                            "doing to the run: it posts the same id until the API answers, which can never book it "
+                            "twice, and logs SIGNAL CONFIRMED or SIGNAL REFUSED when it does."),
+                raw=raw, file=o.file, hold=HOLD_SECONDS["signal-unconfirmed"], line_time=t, subject=m["group"])
             return True
 
         if o.kind == "feed":

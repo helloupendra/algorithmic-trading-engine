@@ -645,6 +645,23 @@ class SignatureTests(LogsAgentTestCase):
         self.advance(30)
         self.assertEqual({}, self.check())
 
+    def test_a_refusal_because_the_market_is_not_open_is_the_rule_working(self):
+        self.start_watching("api.log")
+        self.append("api.log", info(REG, '[strategy:Ghost:NIFTY] SIGNAL REFUSED by the API: {"message":"MARKET NOT OPEN: '
+                                         'NSE:NIFTY2692925000CE opens 09:15 IST. The OPEN_GROUP signal was refused; '
+                                         'exits remain allowed."}'))
+        self.assertEqual({}, self.check())
+
+    def test_an_unconfirmed_open_is_reported_and_names_its_group(self):
+        self.start_watching("api.log")
+        self.append("api.log", info(REG, "[strategy:Ghost:NIFTY] SIGNAL UNCONFIRMED: OPEN_GROUP GTC_1789133859 — no answer "
+                                         "to 2 post(s) in 20s (ReadTimeout). It may be in the book; only the API can "
+                                         "say. The strategy keeps its state and is not evaluated, and the same id is "
+                                         "posted again until the API answers."))
+        found = self.check()
+        self.assertEqual(["logs:signal-unconfirmed"], list(found))
+        self.assertIn("GTC_1789133859", found["logs:signal-unconfirmed"].summary)
+
     def test_the_order_rate_limit_is_still_reported_from_the_refusal_warning(self):
         self.start_watching("api.log")
         self.append("api.log", warn(
