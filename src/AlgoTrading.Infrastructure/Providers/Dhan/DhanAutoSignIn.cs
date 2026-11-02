@@ -44,6 +44,12 @@ namespace AlgoTrading.Infrastructure.Providers.Dhan;
 /// later each day (08:00, 08:02, 08:04 …). A weekend, when nothing signs in,
 /// puts Monday back at 08:00, and <see cref="NoTokenAlertUtc"/> allows for it.
 /// </para>
+/// <para>
+/// A token Dhan refused before its time keeps its due end for this rule: the
+/// no-token alarm says so at once, but the machine does not ask for another in
+/// the middle of a session, while Dhan may still count that one as live. Nor does
+/// it undo a person's Disconnect (<see cref="DisconnectHold"/>).
+/// </para>
 /// </remarks>
 public static class DhanAutoSignInPolicy
 {
@@ -51,6 +57,15 @@ public static class DhanAutoSignInPolicy
 
     /// <summary>How long after the last token ends before a new one is asked for.</summary>
     public static readonly TimeSpan AfterTokenEnds = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Why a machine does not sign in after a person's Disconnect. It holds until
+    /// someone connects again, by Connect or Sign in now, which makes the session
+    /// active. Before this the next look, a minute later, read "no sign-in on
+    /// record" and sent a PIN and a code straight back.
+    /// </summary>
+    public const string DisconnectHold =
+        "someone pressed Disconnect on the Dhan connector, and the automatic sign-in stays off until someone connects again";
 
     /// <summary>Codes one sign-in may send when Dhan refuses the code (not the PIN): the first and two retries.</summary>
     public const int MaxCodeTries = 3;
@@ -95,10 +110,12 @@ public static class DhanAutoSignInPolicy
     /// when it may. The rule of <see cref="EarliestAttemptUtc"/> without the
     /// morning start, for the morning job, which runs after it.
     /// </summary>
-    public static string? WhyNotYet(DateTime utcNow, DateTime? lastTokenEndsUtc)
+    public static string? WhyNotYet(DateTime utcNow, DateTime? lastTokenEndsUtc, bool refused = false)
     {
         if (lastTokenEndsUtc is not { } ends || utcNow >= ends + AfterTokenEnds) return null;
-        string state = utcNow < ends ? $"is valid until {Ist(ends)} IST" : $"ended only at {Ist(ends)} IST";
+        string state = refused && utcNow < ends ? $"was refused by Dhan but was due to last until {Ist(ends)} IST"
+            : utcNow < ends ? $"is valid until {Ist(ends)} IST"
+            : $"ended only at {Ist(ends)} IST";
         return $"the last Dhan token {state}, and Dhan has refused a new one that soon (30 Sep); " +
                $"the automatic sign-in tries from {Ist(ends + AfterTokenEnds)} IST";
     }
@@ -113,12 +130,15 @@ public static class DhanAutoSignInPolicy
     /// The later start is what the daily drift (see the class remarks) makes
     /// routine by Thursday: a token that ended at 08:07 is replaced from 08:09,
     /// and an alert at 08:10 sharp would call that sign-in failed while it runs.
+    /// A refused token due to end past the window has no such sign-in coming, so
+    /// <paramref name="tokenRefused"/> keeps it at 08:10.
     /// </remarks>
-    public static DateTime NoTokenAlertUtc(DateTime utcNow, DateTime? lastTokenEndsUtc, DhanAutoSignInSettings settings)
+    public static DateTime NoTokenAlertUtc(DateTime utcNow, DateTime? lastTokenEndsUtc, DhanAutoSignInSettings settings, bool tokenRefused = false)
     {
         var day = (utcNow + IstOffset).Date;
         var alertUtc = day + settings.NoTokenAlertIst - IstOffset;
         var latestUtc = day + settings.MorningUntilIst - IstOffset;
+        if (tokenRefused && lastTokenEndsUtc > latestUtc) return alertUtc;
         var afterTries = EarliestAttemptUtc(utcNow, lastTokenEndsUtc, settings) + AlertGrace;
         var at = afterTries < latestUtc ? afterTries : latestUtc;
         return at > alertUtc ? at : alertUtc;
@@ -186,6 +206,7 @@ public sealed class DhanAutoSignInState
     private string? _stoppedBecause;
     private long? _lastCodeStep;
     private DateOnly? _noTokenAlertDay;
+    private DateOnly? _tokenCheckDay;
 
     /// <summary>One sign-in at a time: the worker and a button pressed at the same moment would spend two codes.</summary>
     public SemaphoreSlim Gate { get; } = new(1, 1);
@@ -311,6 +332,21 @@ public sealed class DhanAutoSignInState
     }
 
     /// <summary>
+    /// True the first time it is asked on an IST day: Dhan is asked about a token
+    /// the clock calls good once a day, when the no-token alert falls due.
+    /// </summary>
+    public bool ClaimTokenCheck(DateTime utcNow)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            if (_tokenCheckDay == _day) return false;
+            _tokenCheckDay = _day;
+            return true;
+        }
+    }
+
+    /// <summary>
     /// A stop saved before a restart, taken back if it is from today (IST).
     /// Returns whether it was.
     /// </summary>
@@ -403,10 +439,11 @@ public sealed class DhanAutoSignInService
             LastToken last;
             if (trigger != ConsoleTrigger)
             {
-                if (await HoldBackAsync(cancellationToken) is { } held) return held;
                 last = await LastTokenAsync(cancellationToken);
+                if (last.Disconnected) return new DhanAutoSignInResult(false, $"Not tried: {DhanAutoSignInPolicy.DisconnectHold}.", null, null, Tried: false);
+                if (await HoldBackAsync(cancellationToken) is { } held) return held;
                 string? notYet = last.Known
-                    ? DhanAutoSignInPolicy.WhyNotYet(Now, last.EndsUtc)
+                    ? DhanAutoSignInPolicy.WhyNotYet(Now, last.EndsUtc, last.Refused)
                     : "the current Dhan session could not be read, so it is not known whether the last token has ended";
                 if (notYet is not null) return new DhanAutoSignInResult(false, $"Not tried: {notYet}.", null, null, Tried: false);
             }
@@ -569,8 +606,9 @@ public sealed class DhanAutoSignInService
     {
         try
         {
-            var session = await _sessions.GetForProviderAsync(DhanProvider.Key, cancellationToken);
-            return new LastToken(true, session is not null && !string.IsNullOrWhiteSpace(session.AccessToken) ? session.ExpiresAtUtc : null);
+            var session = await _sessions.GetLastForProviderAsync(DhanProvider.Key, cancellationToken);
+            return new LastToken(true, session is { IsActive: true } ? session.ExpiresAtUtc : null,
+                Disconnected: session is { IsActive: false }, Refused: session?.IsTokenRefused == true);
         }
         catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
@@ -607,13 +645,15 @@ public sealed class DhanAutoSignInService
     }
 
     /// <summary>The last Dhan token on record, as far as the session store knows.</summary>
-    private readonly record struct LastToken(bool Known, DateTime? EndsUtc)
+    private readonly record struct LastToken(bool Known, DateTime? EndsUtc, bool Disconnected = false, bool Refused = false)
     {
         public string Describe(DateTime utcNow)
         {
             if (!Known) return "the last token could not be read";
+            if (Disconnected) return "the last token was ended by Disconnect";
             if (EndsUtc is not { } ends) return "no earlier token on record";
             string when = (ends + IstOffset).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+            if (Refused) return $"Dhan had refused the last token, due to last until {when} IST";
             return ends > utcNow
                 ? $"the last token was still valid for {Span(ends - utcNow)} (until {when} IST)"
                 : $"the last token had ended {Span(utcNow - ends)} earlier (at {when} IST)";
@@ -785,17 +825,19 @@ public sealed class DhanAutoSignInWorker : BackgroundService
 
         using var scope = _scopes.CreateScope();
         var sessions = scope.ServiceProvider.GetRequiredService<IBrokerSessionStore>();
-        var session = await sessions.GetForProviderAsync(DhanProvider.Key, cancellationToken);
+        var session = await sessions.GetLastForProviderAsync(DhanProvider.Key, cancellationToken);
 
         var now = _time.GetUtcNow().UtcDateTime;
-        // The last token's end whether or not it is still valid: the next try
-        // waits for it (30 Sep, DhanAutoSignInPolicy).
-        DateTime? lastEnds = session is not null && !string.IsNullOrWhiteSpace(session.AccessToken) ? session.ExpiresAtUtc : null;
+        // A person pressed Disconnect, and no one has connected since.
+        bool disconnected = session is { IsActive: false };
+        // The last token's end whether or not it is still valid, and whether or not
+        // Dhan has refused it: the next try waits for it (30 Sep, DhanAutoSignInPolicy).
+        DateTime? lastEnds = session is { IsActive: true } ? session.ExpiresAtUtc : null;
         var earliest = DhanAutoSignInPolicy.EarliestAttemptUtc(now, lastEnds, settings.AutoSignIn);
-        _earliestAttemptUtc = earliest > now ? earliest : null;
+        _earliestAttemptUtc = !disconnected && earliest > now ? earliest : null;
 
         DhanAutoSignInResult? result = null;
-        string? reason = DhanAutoSignInPolicy.ReasonToSignIn(now, lastEnds, settings.AutoSignIn);
+        string? reason = disconnected ? null : DhanAutoSignInPolicy.ReasonToSignIn(now, lastEnds, settings.AutoSignIn);
         if (reason is not null)
         {
             // The cheap look, in memory. The service looks again inside its gate,
@@ -811,9 +853,36 @@ public sealed class DhanAutoSignInWorker : BackgroundService
             }
         }
 
-        bool signedIn = result?.Ok == true || (session is not null && session.IsAuthenticatedAt(_time.GetUtcNow().UtcDateTime));
-        if (!signedIn) await AlertIfNoTokenAsync(scope.ServiceProvider, sessions, lastEnds, settings.AutoSignIn, cancellationToken);
+        if (result?.Ok == true) return result;
+        if (session is not null && session.IsAuthenticatedAt(_time.GetUtcNow().UtcDateTime))
+            await AskDhanAboutTheTokenAsync(scope.ServiceProvider, lastEnds, settings.AutoSignIn, cancellationToken);
+        await AlertIfNoTokenAsync(scope.ServiceProvider, sessions, lastEnds, settings.AutoSignIn, cancellationToken);
         return result;
+    }
+
+    /// <summary>
+    /// Once a trading day, when the no-token alert falls due and the clock calls the
+    /// token good: is it? A token Dhan ended overnight has been refused to no one,
+    /// because nothing asks Dhan between the MCX close and the feeds, so the alert
+    /// would stay quiet until the morning's first call failed. A refusal here marks
+    /// the token (<see cref="DhanApiClient"/>), and the alert then reads it as gone.
+    /// </summary>
+    private async Task AskDhanAboutTheTokenAsync(IServiceProvider services, DateTime? lastEnds, DhanAutoSignInSettings settings, CancellationToken cancellationToken)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (now < DhanAutoSignInPolicy.NoTokenAlertUtc(now, lastEnds, settings, tokenRefused: true) || !IsTradingDay(services, now)) return;
+
+        var api = services.GetService<DhanApiClient>();
+        if (api is null || !_state.ClaimTokenCheck(now)) return;
+
+        try
+        {
+            using var profile = await api.GetAsync("/profile", DhanRateClass.Data, cancellationToken);
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        {
+            _logger.LogInformation("Asked Dhan about the morning's token: {Message}", ex.Message);
+        }
     }
 
     /// <summary>
@@ -831,12 +900,15 @@ public sealed class DhanAutoSignInWorker : BackgroundService
         DhanAutoSignInSettings settings, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        if (now < DhanAutoSignInPolicy.NoTokenAlertUtc(now, lastEnds, settings) || !IsTradingDay(services, now)) return;
 
         // Read again before saying so: a person may have pressed Connect while
         // this check was signing in, and a false alarm teaches people to ignore it.
-        var session = await sessions.GetForProviderAsync(DhanProvider.Key, cancellationToken);
+        var session = await sessions.GetLastForProviderAsync(DhanProvider.Key, cancellationToken);
         if (session is not null && session.IsAuthenticatedAt(now)) return;
+        if (now < DhanAutoSignInPolicy.NoTokenAlertUtc(now, lastEnds, settings, session is { IsTokenRefused: true })
+            || !IsTradingDay(services, now)) return;
+        // Pressed after today's alert fell due: they know. The next morning they hear it.
+        if (session is { IsActive: false } && session.UpdatedUtc >= DhanAutoSignInPolicy.NoTokenAlertUtc(now, null, settings)) return;
         if (!_state.ClaimNoTokenAlert(now)) return;
 
         var ist = now + TimeSpan.FromMinutes(330);
@@ -846,9 +918,21 @@ public sealed class DhanAutoSignInWorker : BackgroundService
         string last = _state.LastMessage is { Length: > 0 } message
             ? $" Last try: {message}"
             : " It has not tried today.";
+        string title = "Dhan automatic sign-in failed: press Connect";
+        if (session is { IsActive: false })
+        {
+            title = "Dhan is disconnected: press Connect";
+            last = $" {char.ToUpperInvariant(DhanAutoSignInPolicy.DisconnectHold[0])}{DhanAutoSignInPolicy.DisconnectHold[1..]}.";
+        }
+        else if (session is { IsTokenRefused: true })
+        {
+            string due = (session.ExpiresAtUtc is { } ends ? ends + TimeSpan.FromMinutes(330) : ist).ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+            title = "Dhan refused its token: press Connect";
+            last = $" Dhan refused the token that was due to last until {due} IST. The automatic sign-in waits for that time: it does not ask for another while Dhan may still count that one as live.";
+        }
         _logger.LogWarning("No valid Dhan token at {Time} IST; the automatic sign-in did not get one.", ist.ToString("HH:mm", CultureInfo.InvariantCulture));
         await services.GetRequiredService<ISystemNotifier>().NotifyAsync(NotificationCategory.Connector, NotificationSeverity.Error,
-            "Dhan automatic sign-in failed: press Connect",
+            title,
             $"No valid Dhan token at {ist.ToString("HH:mm", CultureInfo.InvariantCulture)} IST.{last} {press}",
             cancellationToken: cancellationToken);
     }

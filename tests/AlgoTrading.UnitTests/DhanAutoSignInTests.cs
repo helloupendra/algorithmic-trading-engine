@@ -768,6 +768,258 @@ public class DhanAutoSignInTests
         Assert.Empty(notifier.Sent);
     }
 
+    // --------------------------------------------- a token Dhan ends early
+
+    private const string Refused = """{"errorType":"Invalid_Authentication","errorCode":"DH-901","errorMessage":"Client ID or access token is invalid or expired."}""";
+    private const string Profile = """{"dhanClientId":"1113706926","tokenValidity":"30/09/2026 08:00"}""";
+
+    /// <summary>The API client reads the real clock, so its token must be good by the real clock.</summary>
+    private static BrokerSession LiveByTheRealClock() =>
+        new() { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "jwt-live", IsActive = true, UpdatedUtc = DateTime.UtcNow.AddHours(-2) };
+
+    private static DhanApiClient ApiOn(Sessions sessions, Handler handler) => new(
+        Options.Create(new DhanSettings()), new Credentials(ClientId), sessions, new Factory(handler), new DhanRateGate(), NullLogger<DhanApiClient>.Instance);
+
+    [Fact]
+    public async Task A_token_Dhan_refuses_twice_stops_reading_as_authenticated_and_keeps_its_due_end()
+    {
+        var sessions = new Sessions { Current = LiveByTheRealClock() };
+        var dueEnd = sessions.Current.ExpiresAtUtc;
+        var handler = new Handler(Refused, HttpStatusCode.Unauthorized);
+
+        var ex = await Assert.ThrowsAsync<DhanApiException>(() => ApiOn(sessions, handler).GetAsync("/fundlimit", DhanRateClass.Data));
+
+        Assert.True(ex.IsAuthFailure);
+        Assert.Equal(2, handler.Calls);
+        Assert.EndsWith("/profile", handler.LastUrl);
+        Assert.True(sessions.Current.IsTokenRefused);
+        Assert.False(sessions.Current.IsAuthenticated);
+        Assert.Equal(dueEnd, sessions.Current.ExpiresAtUtc);
+    }
+
+    [Fact]
+    public async Task One_refusal_the_profile_does_not_repeat_leaves_the_token_alone()
+    {
+        var sessions = new Sessions { Current = LiveByTheRealClock() };
+        var handler = new Handler(Refused, HttpStatusCode.Unauthorized).Then(Profile);
+
+        await Assert.ThrowsAsync<DhanApiException>(() => ApiOn(sessions, handler).GetAsync("/fundlimit", DhanRateClass.Data));
+
+        Assert.Equal("jwt-live", sessions.Current.AccessToken);
+        Assert.True(sessions.Current.IsAuthenticated);
+    }
+
+    [Fact]
+    public async Task A_profile_that_cannot_answer_leaves_the_token_alone_and_the_first_refusal_is_still_thrown()
+    {
+        var sessions = new Sessions { Current = LiveByTheRealClock() };
+        var handler = new Handler(Refused, HttpStatusCode.Unauthorized).Then("<html>bad gateway</html>", HttpStatusCode.BadGateway);
+
+        var ex = await Assert.ThrowsAsync<DhanApiException>(() => ApiOn(sessions, handler).GetAsync("/fundlimit", DhanRateClass.Data));
+
+        Assert.True(ex.IsAuthFailure);
+        Assert.Equal("jwt-live", sessions.Current.AccessToken);
+    }
+
+    [Fact]
+    public async Task A_lapsed_data_plan_is_not_a_refused_token()
+    {
+        // 14 Oct: Dhan sent 806 with a 401, and a new token would not have helped.
+        var sessions = new Sessions { Current = LiveByTheRealClock() };
+        var handler = new Handler("""{"data":{"806":"Data APIs not Subscribed"},"status":"failed"}""", HttpStatusCode.Unauthorized);
+
+        var ex = await Assert.ThrowsAsync<DhanApiException>(() => ApiOn(sessions, handler).GetAsync("/optionchain", DhanRateClass.Data));
+
+        Assert.True(ex.IsNotSubscribed);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("jwt-live", sessions.Current.AccessToken);
+    }
+
+    [Fact]
+    public async Task A_refused_pasted_token_has_no_session_to_mark()
+    {
+        var sessions = new Sessions();
+        var handler = new Handler(Refused, HttpStatusCode.Unauthorized);
+        var api = new DhanApiClient(Options.Create(new DhanSettings { AccessToken = "pasted-token" }), new Credentials(ClientId), sessions,
+            new Factory(handler), new DhanRateGate(), NullLogger<DhanApiClient>.Instance);
+
+        await Assert.ThrowsAsync<DhanApiException>(() => api.GetAsync("/fundlimit", DhanRateClass.Data));
+
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public void A_refused_token_due_to_end_after_the_window_is_said_at_ten_past_eight_with_no_sign_in_to_wait_for()
+    {
+        // Due at 13:00: no sign-in is coming this morning, so 08:40 would only waste half an hour.
+        Assert.Equal(Ist(30, 8, 10), DhanAutoSignInPolicy.NoTokenAlertUtc(Ist(30, 8, 5), Ist(30, 13, 0), Window, tokenRefused: true));
+        // Due at 08:30: the sign-in goes at 08:32, and the alert waits for it as it always has.
+        Assert.Equal(Ist(30, 8, 35), DhanAutoSignInPolicy.NoTokenAlertUtc(Ist(30, 8, 5), Ist(30, 8, 30), Window, tokenRefused: true));
+    }
+
+    [Fact]
+    public async Task A_refused_token_raises_the_alarm_and_never_a_sign_in_mid_session()
+    {
+        // A Connect at 13:00 on Monday, due to last until 13:00 today. Dhan ended it overnight, and the
+        // chain recorder or the morning's question has said so. 10:30: in the session, past the alert.
+        var notifier = new Notifier();
+        var handler = new Handler(Issued);
+        var current = TokenTakenAt(Ist(28, 13, 0));
+        current.AccessToken = string.Empty;
+        using var provider = Services(handler, AutoOn(), current, notifier, clock: new JumpingClock(At(Ist(29, 10, 30))));
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Null(await worker.CheckOnceAsync(default));
+
+        Assert.Equal(0, handler.Calls);                       // no PIN goes while the token's due end is ahead
+        var alert = Assert.Single(notifier.Sent);             // and it is said once
+        Assert.Equal(NotificationSeverity.Error, alert.Severity);
+        Assert.Contains("refused", alert.Title);
+        Assert.Contains("press Connect", alert.Title);
+        Assert.Contains("due to last until Tue 13:00", alert.Message);
+    }
+
+    [Fact]
+    public async Task A_refused_token_is_replaced_by_the_machine_once_its_due_end_has_passed()
+    {
+        var handler = new Handler(Issued);
+        var current = TokenTakenAt(Ist(28, 8, 0));
+        current.AccessToken = string.Empty;
+        using var provider = Services(handler, AutoOn(), current, clock: new JumpingClock(At(Ist(29, 8, 2, 1))));
+
+        var result = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.True(result!.Ok);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task The_morning_job_is_told_a_refused_token_was_refused_and_a_person_can_still_replace_it()
+    {
+        var handler = new Handler(Issued);
+        var current = TokenTakenAt(Ist(28, 13, 0));
+        current.AccessToken = string.Empty;
+        using var provider = Services(handler, AutoOn(), current);
+
+        var morning = await SignInNow(provider, "morning job");
+
+        Assert.Equal(StatusCodes.Status409Conflict, morning.StatusCode);
+        Assert.Contains("refused by Dhan", System.Text.Json.JsonSerializer.Serialize(((ObjectResult)morning).Value));
+        Assert.Equal(0, handler.Calls);
+
+        Assert.Equal(StatusCodes.Status200OK, (await SignInNow(provider, "console")).StatusCode);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task At_ten_past_eight_Dhan_is_asked_about_a_token_the_clock_calls_good_and_a_refusal_raises_the_alarm()
+    {
+        // Ended overnight: nothing has called Dhan since the MCX close, so nothing has been refused.
+        var notifier = new Notifier();
+        var sessions = new Sessions();
+        var handler = new Handler(Refused, HttpStatusCode.Unauthorized);
+        var clock = new JumpingClock(At(Ist(29, 8, 9)));
+        using var provider = Services(handler, AutoOn(), LiveByTheRealClock(), notifier, clock: clock, sessions: sessions, withApi: true);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(0, handler.Calls);
+        Assert.Empty(notifier.Sent);
+
+        clock.Set(Ist(29, 8, 10));
+        await worker.CheckOnceAsync(default);
+
+        Assert.All(handler.Urls, url => Assert.EndsWith("/profile", url));   // never the sign-in
+        Assert.True(sessions.Current!.IsTokenRefused);
+        var alert = Assert.Single(notifier.Sent);
+        Assert.Contains("refused", alert.Title);
+        Assert.Contains("before 08:45", alert.Message);
+    }
+
+    [Fact]
+    public async Task A_good_token_is_asked_about_once_a_day_and_nothing_is_said()
+    {
+        var notifier = new Notifier();
+        var handler = new Handler(Profile);
+        var clock = new JumpingClock(At(Ist(29, 8, 10)));
+        using var provider = Services(handler, AutoOn(), LiveByTheRealClock(), notifier, clock: clock, withApi: true);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        await worker.CheckOnceAsync(default);
+        clock.Set(Ist(29, 8, 11));
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(1, handler.Calls);
+
+        clock.Set(Ist(30, 8, 10));
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(2, handler.Calls);
+        Assert.Empty(notifier.Sent);
+    }
+
+    // ------------------------------------------------- Disconnect holds
+
+    private static BrokerSession Disconnected(DateTime atUtc) =>
+        new() { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "jwt-old", IsActive = false, UpdatedUtc = atUtc };
+
+    [Fact]
+    public async Task After_Disconnect_the_worker_does_not_sign_in_on_any_later_day()
+    {
+        var handler = new Handler(Issued);
+        var clock = new JumpingClock(At(Ist(29, 11, 0)));
+        using var provider = Services(handler, AutoOn(), Disconnected(Ist(29, 10, 59)), clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        Assert.Null(await worker.CheckOnceAsync(default));    // a minute later, when it used to come straight back
+        clock.Set(Ist(30, 8, 5));
+        Assert.Null(await worker.CheckOnceAsync(default));    // and the next morning
+        clock.Set(Ist(30, 14, 0));
+        Assert.Null(await worker.CheckOnceAsync(default));
+
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task After_Disconnect_the_morning_job_is_refused_and_a_person_can_connect_again()
+    {
+        var handler = new Handler(Issued);
+        using var provider = Services(handler, AutoOn(), Disconnected(Ist(28, 20, 0)));
+
+        var morning = await SignInNow(provider, "morning job");
+
+        Assert.Equal(StatusCodes.Status409Conflict, morning.StatusCode);
+        Assert.Contains("pressed Disconnect", System.Text.Json.JsonSerializer.Serialize(((ObjectResult)morning).Value));
+        Assert.Equal(0, handler.Calls);
+
+        Assert.Equal(StatusCodes.Status200OK, (await SignInNow(provider, "console")).StatusCode);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_Disconnect_from_an_earlier_day_gets_the_morning_alarm_saying_so()
+    {
+        var notifier = new Notifier();
+        using var provider = Services(new Handler(Issued), AutoOn(), Disconnected(Ist(28, 20, 0)), notifier, clock: new JumpingClock(At(Ist(29, 8, 10))));
+
+        await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        var alert = Assert.Single(notifier.Sent);
+        Assert.Contains("disconnected", alert.Title);
+        Assert.Contains("pressed Disconnect", alert.Message);
+        Assert.Contains("before 08:45", alert.Message);
+    }
+
+    [Fact]
+    public async Task A_Disconnect_pressed_after_the_alarm_is_not_announced_to_the_person_who_pressed_it()
+    {
+        var notifier = new Notifier();
+        using var provider = Services(new Handler(Issued), AutoOn(), Disconnected(Ist(29, 10, 59)), notifier, clock: new JumpingClock(At(Ist(29, 11, 0))));
+
+        await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.Empty(notifier.Sent);
+    }
+
     [Fact]
     public async Task Each_code_is_logged_with_its_moment_the_last_token_and_Dhans_reason_but_never_the_secrets()
     {
@@ -889,7 +1141,8 @@ public class DhanAutoSignInTests
         TimeProvider? clock = null,
         Credentials? credentials = null,
         Sessions? sessions = null,
-        ILogger<DhanAutoSignInService>? serviceLog = null)
+        ILogger<DhanAutoSignInService>? serviceLog = null,
+        bool withApi = false)
     {
         sessions ??= new Sessions();
         sessions.Current = current;
@@ -903,6 +1156,13 @@ public class DhanAutoSignInTests
         services.AddSingleton<TimeProvider>(clock ?? new FixedTime(TuesdayMorning));
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<DhanAutoSignInState>();
+        if (withApi)
+        {
+            services.AddScoped(sp => new DhanApiClient(
+                Options.Create(new DhanSettings()), sp.GetRequiredService<IBrokerCredentialsProvider>(),
+                sp.GetRequiredService<IBrokerSessionStore>(), sp.GetRequiredService<IHttpClientFactory>(),
+                new DhanRateGate(), NullLogger<DhanApiClient>.Instance));
+        }
         services.AddScoped(sp => new DhanLoginFlow(
             sp.GetRequiredService<IOptionsMonitor<DhanSettings>>(), sp.GetRequiredService<IBrokerCredentialsProvider>(),
             sp.GetRequiredService<IBrokerSessionStore>(), sp.GetRequiredService<IHttpClientFactory>(),
@@ -1064,7 +1324,15 @@ public class DhanAutoSignInTests
         public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(Current);
+        public Task<BrokerSession?> GetLastForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(Current);
         public Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<bool> MarkTokenRefusedAsync(string providerKey, string accessToken, CancellationToken cancellationToken = default)
+        {
+            if (Current is null || Current.AccessToken != accessToken) return Task.FromResult(false);
+            Current.AccessToken = string.Empty;
+            return Task.FromResult(true);
+        }
 
         public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default)
         {

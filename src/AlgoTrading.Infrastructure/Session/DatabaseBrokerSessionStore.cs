@@ -67,6 +67,37 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
         return Reveal(session);
     }
 
+    public async Task<BrokerSession?> GetLastForProviderAsync(
+        string providerKey,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await _dbContext.BrokerSessions
+            .AsNoTracking()
+            .Where(x => x.ProviderKey == providerKey && x.BrokerAccountId == null)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return Reveal(session);
+    }
+
+    public async Task<bool> MarkTokenRefusedAsync(
+        string providerKey,
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await _dbContext.BrokerSessions
+            .Where(x => x.IsActive && x.ProviderKey == providerKey && x.BrokerAccountId == null)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // A Connect may have replaced the token since this one was refused.
+        if (row is null || !string.Equals(Unprotect(row.AccessToken), accessToken, StringComparison.Ordinal)) return false;
+
+        row.AccessToken = string.Empty;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     /// <summary>
     /// Callers (token exchange, the data providers, the Python ingestor via
     /// /api/Auth/session) always see plaintext; storage is what's protected.

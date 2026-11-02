@@ -15,6 +15,10 @@ export interface DhanAutoSignInStatus {
   morningFromIst: string
   morningUntilIst: string
   stoppedForToday: boolean
+  /** Someone pressed Disconnect; the desk does not sign in until someone connects. */
+  heldByDisconnect?: boolean
+  /** Dhan refused the token before its 24 hours were up. */
+  tokenRefused?: boolean
   lastAttemptUtc: string | null
   lastOk: boolean | null
   lastTrigger: string | null
@@ -53,6 +57,22 @@ export function dhanAutoSignInView(status: DhanAutoSignInStatus | undefined): Dh
       tone: 'neutral',
       label: 'Switched off',
       detail: 'The PIN and TOTP secret are set, but Dhan:AutoSignIn:Enabled is false.',
+    }
+  }
+
+  if (status.heldByDisconnect) {
+    return {
+      tone: 'neutral',
+      label: 'Held after Disconnect',
+      detail: 'Someone pressed Disconnect, so the desk does not sign in by itself. Connect or Sign in now starts it again.',
+    }
+  }
+
+  if (status.tokenRefused) {
+    return {
+      tone: 'neg',
+      label: 'Dhan refused the token',
+      detail: 'Dhan ended the token before its 24 hours were up, and nothing is signed in. Press Connect or Sign in now: by itself the desk waits for that token\'s due end, because Dhan may still count it as live.',
     }
   }
 

@@ -128,6 +128,7 @@ public class DhanController : ControllerBase
         [FromServices] IOptionsMonitor<DhanSettings> settings,
         [FromServices] IBrokerCredentialsProvider credentials,
         [FromServices] DhanAutoSignInState state,
+        [FromServices] IBrokerSessionStore sessions,
         CancellationToken cancellationToken)
     {
         var s = settings.CurrentValue;
@@ -136,6 +137,7 @@ public class DhanController : ControllerBase
         if (string.IsNullOrWhiteSpace(creds.ClientId)) missing.Add("DHAN_CLIENT_ID");
         if (string.IsNullOrWhiteSpace(s.Pin)) missing.Add("DHAN_PIN");
         if (string.IsNullOrWhiteSpace(s.TotpSecret)) missing.Add("DHAN_TOTP_SECRET");
+        var last = await sessions.GetLastForProviderAsync(DhanProvider.Key, cancellationToken);
 
         return Ok(new
         {
@@ -145,6 +147,8 @@ public class DhanController : ControllerBase
             morningFromIst = s.AutoSignIn.MorningFromIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
             morningUntilIst = s.AutoSignIn.MorningUntilIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
             stoppedForToday = state.StoppedFor(DateTime.UtcNow),
+            heldByDisconnect = last is { IsActive: false },
+            tokenRefused = last is { IsTokenRefused: true },
             lastAttemptUtc = state.LastAttemptUtc,
             lastOk = state.LastOk,
             lastTrigger = state.LastTrigger,

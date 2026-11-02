@@ -37,6 +37,26 @@ public interface IBrokerSessionStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The newest session of one connector, active or not; null when it never had
+    /// one. An inactive one means a person pressed Disconnect and no one has
+    /// connected since, because any new token makes the row active again.
+    /// </summary>
+    Task<BrokerSession?> GetLastForProviderAsync(
+        string providerKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The broker refused this token before its time: blanks it, so the session
+    /// reads as not authenticated and nothing offers the token again, and leaves
+    /// <see cref="BrokerSession.UpdatedUtc"/> so its due end is still known. False,
+    /// changing nothing, when the session no longer holds this token.
+    /// </summary>
+    Task<bool> MarkTokenRefusedAsync(
+        string providerKey,
+        string accessToken,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves a new or updated session to the store.
     /// </summary>
     Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default);

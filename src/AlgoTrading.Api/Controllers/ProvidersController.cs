@@ -6,6 +6,7 @@ using AlgoTrading.Contracts.Providers;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
+using AlgoTrading.Infrastructure.Providers.Dhan;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -230,7 +231,11 @@ public class ProvidersController : ControllerBase
 
         await _sessions.ClearAsync(descriptor.Key, cancellationToken);
 
-        return Ok(new { message = $"{descriptor.DisplayName} disconnected." });
+        // The one connector that signs itself back in; it now waits to be told.
+        string held = string.Equals(descriptor.Key, DhanProvider.Key, StringComparison.OrdinalIgnoreCase)
+            ? " The automatic sign-in stays off until you connect again."
+            : string.Empty;
+        return Ok(new { message = $"{descriptor.DisplayName} disconnected.{held}" });
     }
 
     /// <summary>

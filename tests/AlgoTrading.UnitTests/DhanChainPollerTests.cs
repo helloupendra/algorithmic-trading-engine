@@ -840,6 +840,8 @@ public class DhanChainPollerTests
 
     private sealed class NoSessions : IBrokerSessionStore
     {
+        public Task<BrokerSession?> GetLastForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
+        public Task<bool> MarkTokenRefusedAsync(string providerKey, string accessToken, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -857,6 +859,8 @@ public class DhanChainPollerTests
 
     private sealed class DhanSessions(BrokerSession? dhan) : IBrokerSessionStore
     {
+        public Task<BrokerSession?> GetLastForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(dhan);
+        public Task<bool> MarkTokenRefusedAsync(string providerKey, string accessToken, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default)
             => Task.FromResult(providerKey == "dhan" ? dhan : null);
         public Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();

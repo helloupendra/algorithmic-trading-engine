@@ -111,6 +111,8 @@ public class BackfillHistoryTests
         public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
+        public Task<BrokerSession?> GetLastForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
+        public Task<bool> MarkTokenRefusedAsync(string providerKey, string accessToken, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

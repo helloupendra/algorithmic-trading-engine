@@ -78,6 +78,15 @@ namespace AlgoTrading.Domain.Entities
             => !string.IsNullOrWhiteSpace(AccessToken) && IsActive && !IsExpiredAt(utcNow);
 
         /// <summary>
+        /// True when this session is still the connector's but its token is gone:
+        /// the broker refused it before its time, so the token was blanked
+        /// (<c>IBrokerSessionStore.MarkTokenRefusedAsync</c>). The session then reads
+        /// as not authenticated everywhere, while <see cref="UpdatedUtc"/>, and so
+        /// <see cref="ExpiresAtUtc"/>, still say when the token was due to end.
+        /// </summary>
+        public bool IsTokenRefused => IsActive && string.IsNullOrWhiteSpace(AccessToken);
+
+        /// <summary>
         /// When this session's access token stops working, or null when the
         /// broker's rule is not known and the token has to be trusted until it
         /// is refused.

@@ -156,27 +156,13 @@ public sealed class DhanApiClient
         HttpMethod method, string path, object? body, DhanRateClass rateClass, CancellationToken cancellationToken)
     {
         var (clientId, token) = await ResolveTokenAsync(cancellationToken);
+        var (status, text, succeeded) = await ExchangeAsync(method, path, body, rateClass, clientId, token.Value, cancellationToken);
 
-        await _gate.WaitAsync(rateClass, cancellationToken);
-
-        using var request = new HttpRequestMessage(method, $"{_settings.ApiBaseUrl.TrimEnd('/')}{path}");
-        request.Headers.TryAddWithoutValidation("access-token", token.Value);
-        request.Headers.TryAddWithoutValidation("client-id", clientId);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        if (body is not null)
-        {
-            request.Content = new StringContent(JsonSerializer.Serialize(body, BodyJson), Encoding.UTF8, "application/json");
-        }
-
-        var http = _httpClientFactory.CreateClient(DhanProvider.Key);
-        using var response = await http.SendAsync(request, cancellationToken);
-        string text = await response.Content.ReadAsStringAsync(cancellationToken);
-        int status = (int)response.StatusCode;
-
-        if (!response.IsSuccessStatusCode)
+        if (!succeeded)
         {
             var failure = Describe(status, text);
             _logger.LogWarning("Dhan {Method} {Path} failed: {Message}", method, path, failure.Message);
+            await NoteIfTokenRefusedAsync(failure, clientId, token, cancellationToken);
             throw failure;
         }
 
@@ -198,11 +184,71 @@ public sealed class DhanApiClient
             string.Equals(s.GetString(), "failed", StringComparison.OrdinalIgnoreCase))
         {
             document.Dispose();
-            throw Describe(status, text);
+            var failure = Describe(status, text);
+            await NoteIfTokenRefusedAsync(failure, clientId, token, cancellationToken);
+            throw failure;
         }
 
         return document;
     }
+
+    private async Task<(int Status, string Text, bool Succeeded)> ExchangeAsync(
+        HttpMethod method, string path, object? body, DhanRateClass rateClass, string clientId, string token, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(rateClass, cancellationToken);
+
+        using var request = new HttpRequestMessage(method, $"{_settings.ApiBaseUrl.TrimEnd('/')}{path}");
+        request.Headers.TryAddWithoutValidation("access-token", token);
+        request.Headers.TryAddWithoutValidation("client-id", clientId);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (body is not null)
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(body, BodyJson), Encoding.UTF8, "application/json");
+        }
+
+        var http = _httpClientFactory.CreateClient(DhanProvider.Key);
+        using var response = await http.SendAsync(request, cancellationToken);
+        string text = await response.Content.ReadAsStringAsync(cancellationToken);
+        return ((int)response.StatusCode, text, response.IsSuccessStatusCode);
+    }
+
+    /// <summary>
+    /// Records a sign-in token Dhan ended before its 24 hours, so it reads as not
+    /// signed in instead of "authenticated" until the clock runs out, and the
+    /// no-token alarm can fire. Ended early by a token made on web.dhan.co, a
+    /// renewal, or a revocation.
+    /// </summary>
+    /// <remarks>
+    /// One refusal is not the verdict, because blanking a live token would cut off
+    /// the feed's next reconnect. Dhan's profile is asked about the same token, and
+    /// only a second refusal counts. Never hides the refusal it was called for: a
+    /// failure in here is only logged.
+    /// </remarks>
+    private async Task NoteIfTokenRefusedAsync(DhanApiException failure, string clientId, DhanToken token, CancellationToken cancellationToken)
+    {
+        if (!failure.IsAuthFailure || token.Source != SignInTokenSource) return;
+
+        try
+        {
+            var (status, text, _) = await ExchangeAsync(HttpMethod.Get, "/profile", null, DhanRateClass.Data, clientId, token.Value, cancellationToken);
+            if (!Describe(status, text).IsAuthFailure)
+            {
+                _logger.LogWarning("Dhan refused one call ({Message}), but its profile did not refuse the same token; the session is left as it is.", failure.Message);
+                return;
+            }
+
+            if (await _sessions.MarkTokenRefusedAsync(DhanProvider.Key, token.Value, cancellationToken))
+            {
+                _logger.LogWarning("Dhan refused the sign-in token that was due to last until {Ends:u}; the session now reads as not signed in.", token.ExpiresUtc);
+            }
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        {
+            _logger.LogWarning("Could not confirm or record that Dhan refused the token ({Type}: {Message}).", ex.GetType().Name, ex.Message);
+        }
+    }
+
+    private const string SignInTokenSource = "sign-in";
 
     /// <summary>Where the token in use came from, and until when it is good.</summary>
     public sealed record DhanToken(string Value, string Source, DateTime? ExpiresUtc);
@@ -223,7 +269,7 @@ public sealed class DhanApiClient
         var session = await _sessions.GetForProviderAsync(DhanProvider.Key, cancellationToken);
         if (session is { IsAuthenticated: true } && !string.IsNullOrWhiteSpace(session.AccessToken))
         {
-            return (creds.ClientId.Trim(), new DhanToken(session.AccessToken, "sign-in", session.ExpiresAtUtc));
+            return (creds.ClientId.Trim(), new DhanToken(session.AccessToken, SignInTokenSource, session.ExpiresAtUtc));
         }
 
         string configured = _settings.AccessToken.Trim();

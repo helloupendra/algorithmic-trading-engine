@@ -8,6 +8,8 @@ const base: DhanAutoSignInStatus = {
   morningFromIst: '08:00',
   morningUntilIst: '08:40',
   stoppedForToday: false,
+  heldByDisconnect: false,
+  tokenRefused: false,
   lastAttemptUtc: null,
   lastOk: null,
   lastTrigger: null,
@@ -16,6 +18,20 @@ const base: DhanAutoSignInStatus = {
 }
 
 describe('dhanAutoSignInView', () => {
+  it('says the desk is holding after a Disconnect, ahead of anything it last did', () => {
+    const view = dhanAutoSignInView({ ...base, heldByDisconnect: true, lastOk: true, lastMessage: 'Signed in.' })
+    expect(view.label).toBe('Held after Disconnect')
+    expect(view.tone).toBe('neutral')
+    expect(view.detail).toContain('Connect or Sign in now starts it again')
+  })
+
+  it('says Dhan refused the token, and what a person can do about it', () => {
+    const view = dhanAutoSignInView({ ...base, tokenRefused: true, lastOk: true, lastMessage: 'Signed in.' })
+    expect(view.label).toBe('Dhan refused the token')
+    expect(view.tone).toBe('neg')
+    expect(view.detail).toContain('Press Connect or Sign in now')
+  })
+
   it('names what is missing and keeps Connect as the answer until it is set', () => {
     const view = dhanAutoSignInView({ ...base, configured: false, missing: ['DHAN_PIN', 'DHAN_TOTP_SECRET'] })
     expect(view.label).toBe('Not set up')

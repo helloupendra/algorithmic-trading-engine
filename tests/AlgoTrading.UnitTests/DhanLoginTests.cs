@@ -103,6 +103,54 @@ public class DhanLoginTests
     }
 
     [Fact]
+    public async Task Disconnect_leaves_a_row_that_says_so_until_a_new_token_makes_it_active_again()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"sessions-{Guid.NewGuid():N}").Options;
+        await using var db = new TradingDbContext(options);
+        var store = new DatabaseBrokerSessionStore(db, new EphemeralDataProtectionProvider());
+        Assert.Null(await store.GetLastForProviderAsync("dhan"));
+
+        await store.SaveAsync(new BrokerSession { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "dhan-token" });
+        Assert.True((await store.GetLastForProviderAsync("dhan"))!.IsActive);
+
+        await store.ClearAsync("dhan");
+        Assert.Null(await store.GetForProviderAsync("dhan"));
+        Assert.False((await store.GetLastForProviderAsync("dhan"))!.IsActive);
+
+        await store.SaveAsync(new BrokerSession { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "next-token" });
+        var again = await store.GetLastForProviderAsync("dhan");
+        Assert.True(again!.IsActive);
+        Assert.Equal("next-token", again.AccessToken);
+    }
+
+    [Fact]
+    public async Task A_refused_token_is_blanked_and_its_due_end_stays_known()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"sessions-{Guid.NewGuid():N}").Options;
+        await using var db = new TradingDbContext(options);
+        var store = new DatabaseBrokerSessionStore(db, new EphemeralDataProtectionProvider());
+        await store.SaveAsync(new BrokerSession { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "dhan-token" });
+        var before = await store.GetForProviderAsync("dhan");
+
+        // A token a Connect has since replaced changes nothing.
+        Assert.False(await store.MarkTokenRefusedAsync("dhan", "an-older-token"));
+        Assert.Equal("dhan-token", (await store.GetForProviderAsync("dhan"))!.AccessToken);
+
+        Assert.True(await store.MarkTokenRefusedAsync("dhan", "dhan-token"));
+
+        var after = await store.GetForProviderAsync("dhan");
+        Assert.True(after!.IsTokenRefused);
+        Assert.False(after.IsAuthenticatedAt(DateTime.UtcNow));
+        Assert.Equal(before!.ExpiresAtUtc, after.ExpiresAtUtc);
+
+        // Connect puts it right.
+        await store.SaveAsync(new BrokerSession { ProviderKey = "dhan", BrokerName = "DHAN", AccessToken = "next-token" });
+        var connected = await store.GetForProviderAsync("dhan");
+        Assert.False(connected!.IsTokenRefused);
+        Assert.True(connected.IsAuthenticatedAt(DateTime.UtcNow));
+    }
+
+    [Fact]
     public async Task Calls_use_the_signed_in_session_before_a_configured_token()
     {
         var sessions = new Sessions();
@@ -187,6 +235,8 @@ public class DhanLoginTests
         public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(Current);
+        public Task<BrokerSession?> GetLastForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(Current);
+        public Task<bool> MarkTokenRefusedAsync(string providerKey, string accessToken, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default) { Saved.Add(session); return Task.CompletedTask; }
         public Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

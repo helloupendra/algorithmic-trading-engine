@@ -162,7 +162,7 @@ All admin-only, under `api/Providers`:
 | GET | `/api/Providers` | every connector: capabilities, credentials, session, what it is serving |
 | PUT | `/api/Providers/{key}/credentials` | save app credentials |
 | GET | `/api/Providers/{key}/auth-url` | vendor hosted-login URL |
-| POST | `/api/Providers/{key}/disconnect` | drop that connector's session only |
+| POST | `/api/Providers/{key}/disconnect` | drop that connector's session only; on Dhan the automatic sign-in stays off until someone connects again |
 | POST | `/api/Providers/{key}/test` | live probe |
 | GET | `/api/Providers/bindings` | effective routing, with `isFallback` |
 | PUT | `/api/Providers/bindings` | pin a capability's chain; empty list restores the fallback |

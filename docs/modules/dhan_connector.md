@@ -147,7 +147,31 @@ times a day.
 **The 08:10 alert.** On a trading day with no valid token at 08:10 (later when
 the last token only let the sign-in start late, never after 08:40), one Error
 message on Telegram says the automatic sign-in failed and to press Connect
-before 08:45, whatever the cause.
+before 08:45, whatever the cause. The same moment, if the clock calls the token
+good, Dhan's profile is asked once whether it is: nothing else asks Dhan between
+the MCX close and the feeds.
+
+**A token Dhan ends early.** A token made on web.dhan.co, a renewal or a
+revocation ends the desk's token before its 24 hours. When a call is refused
+(401, DH-901, 807 to 810) and Dhan's profile then refuses the same token too, the
+token is blanked on its session row, which needs no new column: every check reads
+it as not signed in, the page shows **Dhan refused the token**, and the alert goes
+within a minute (from 08:10 on a trading day; a token due to end by 08:40 is
+replaced first, and the alert waits for that). The row keeps its issue time, so
+the token's due end is still known, and the automatic sign-in still waits two
+minutes past that end: it never asks for a token mid-session on its own, while
+Dhan may still count that one as live. Connect or **Sign in now** replaces it at
+any time. A lapsed data plan (806) is not this; a new token would not fix it. The
+feed's own 807 to 810 do not reach this path: the chain recorder's next call, or
+the 08:10 question, does.
+
+**Disconnect holds.** After **Disconnect**, the automatic sign-in and the morning
+job's call stay off (409) until someone presses Connect or **Sign in now**, on any
+later day too. An inactive session row is the hold: any new token makes the row
+active again, so there is no second flag to fall out of step. The page shows
+**Held after Disconnect**, and each trading morning still gets the 08:10 alert
+saying so, since the desk then has no Dhan feed; a Disconnect pressed after that
+day's alert fell due is not announced back to the person who pressed it.
 
 The stop **survives API restarts.** It is saved in `system_settings` under
 `dhan.autosignin.stopped` as the IST day and a fixed reason
