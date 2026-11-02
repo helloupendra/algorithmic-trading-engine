@@ -22,7 +22,9 @@ namespace AlgoTrading.Api.Controllers;
 /// that actually trades.
 ///
 /// Read-only: it books nothing, subscribes nothing and changes no run. The
-/// worst it can do is spend a couple of seconds of CPU.
+/// worst it can do is spend CPU on the desk's box, which is why the processes are
+/// capped (<see cref="StrategyLabGate"/>) and none outlives its request: until
+/// 2 Nov a caller could start any number and hang up, and each ran on.
 /// </remarks>
 [RequireModule(PlatformModules.Strategies)]
 [ApiController]
@@ -32,11 +34,13 @@ public class StrategyLabController : ControllerBase
     private const int PythonTimeoutMs = 60_000;
 
     private readonly PythonEngineLocator _engine;
+    private readonly StrategyLabGate _gate;
     private readonly ILogger<StrategyLabController> _logger;
 
-    public StrategyLabController(PythonEngineLocator engine, ILogger<StrategyLabController> logger)
+    public StrategyLabController(PythonEngineLocator engine, StrategyLabGate gate, ILogger<StrategyLabController> logger)
     {
         _engine = engine;
+        _gate = gate;
         _logger = logger;
     }
 
@@ -73,6 +77,14 @@ public class StrategyLabController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new { message = $"The evaluator was not found at '{scriptPath}'." });
 
+        using var slot = _gate.TryEnter(User.GetRequiredUserId());
+        if (slot is null)
+        {
+            Response.Headers.RetryAfter = "5";
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = "The evaluator is busy: your last evaluation, or others, are still running. Try again in a moment." });
+        }
+
         // The request goes in on stdin: `filters` is a nested object, and a
         // command line is a poor and quote-sensitive place to put one.
         var payload = JsonSerializer.Serialize(new
@@ -108,29 +120,37 @@ public class StrategyLabController : ControllerBase
         if (!process.Start())
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Could not start python." });
 
-        await process.StandardInput.WriteAsync(payload);
-        process.StandardInput.Close();
-
-        // Both pipes are drained concurrently: a full one would block the child.
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        string stdout;
+        string stderr;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PythonTimeoutMs);
 
         try
         {
+            await process.StandardInput.WriteAsync(payload.AsMemory(), timeout.Token);
+            process.StandardInput.Close();
+
+            // Both pipes are drained concurrently: a full one would block the child.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
             await process.WaitForExitAsync(timeout.Token);
+
+            stdout = await stdoutTask;
+            stderr = await stderrTask;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
             return StatusCode(StatusCodes.Status504GatewayTimeout,
                 new { message = "The evaluator did not finish in time." });
         }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        finally
+        {
+            // Whatever ended the wait: the budget, the client hanging up, a broken
+            // pipe. Disposing a Process does not stop it.
+            StopIfRunning(process);
+        }
 
         if (string.IsNullOrWhiteSpace(stdout))
         {
@@ -152,6 +172,22 @@ public class StrategyLabController : ControllerBase
             _logger.LogWarning(ex, "Filter evaluator returned unreadable output: {Output}", Truncate(stdout));
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new { message = "The evaluator returned unreadable output.", output = Truncate(stdout), stderr });
+        }
+    }
+
+    private void StopIfRunning(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // It went by itself in between.
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or NotSupportedException or AggregateException)
+        {
+            _logger.LogWarning(ex, "Could not stop a filter evaluator (pid {ProcessId}).", process.Id);
         }
     }
 

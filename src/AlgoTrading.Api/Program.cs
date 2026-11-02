@@ -147,6 +147,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.IFeedFailoverFeeds, AlgoT
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IFeedFailoverChecks, AlgoTrading.Api.Services.FeedFailoverChecks>();
 // Which runner feed-stall reports reach Telegram: one per underlying per ten minutes.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedStallAlertGate>();
+// How many Python processes the Filter lab may have running at once.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyLabGate>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
