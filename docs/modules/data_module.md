@@ -96,7 +96,7 @@ Everything the platform sees during a session is written down; the only thing wi
 
 | Data | Where | Retention |
 | :--- | :--- | :--- |
-| Every tick (price, bid/ask, sizes, OHLC, volume, raw payload) | `live_ticks` hypertable | 90 days, compressed after 2 (`LiveTicksRetention90Days` migration) |
+| Every tick (price, bid/ask, sizes, OHLC, volume, raw payload) | `live_ticks` hypertable | 90 days, compressed after 2 (`LiveTicksRetention90Days` migration). `TickRetentionService` deletes rows only from a table the catalog says is plain, at 90 days too (`TickRetention:RetentionDays`); if it cannot read the catalog it skips the sweep and logs a warning |
 | 1-minute bars folded from ticks | `live_bars` | Permanent |
 | 1/5/15-minute candles | `candles` | Permanent. Backfills carry their vendor's source (`fyers` from FYERS, `dhan` from Dhan's index history import); the nightly archive writes source `live` and never overwrites a broker row |
 | Option chain, every strike: price, bid/ask, volume, OI, previous-day OI, IV, delta/gamma/theta/vega. Dhan's recorder once a minute; the FYERS poller every ~5 s when FYERS is the feed | `option_chain_snapshots`, with the vendor's source | Permanent |

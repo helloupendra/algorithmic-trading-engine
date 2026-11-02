@@ -26,6 +26,14 @@ namespace AlgoTrading.Infrastructure.Services;
 /// million rows takes a long lock on a table the live path is writing to, which
 /// would cause the outage it is meant to prevent.
 /// </para>
+/// <para>
+/// Production's <c>live_ticks</c> is a hypertable, and its retention is the 90-day
+/// policy (<c>LiveTicksRetention90Days</c>), so this sweep does nothing there. It
+/// runs only once the catalog has answered that the table is a plain one. A check
+/// that fails skips the sweep (fail closed): until 2 Nov 2026 it read as "not a
+/// hypertable", and one failed query at the busiest minute of the morning would
+/// have deleted days 8 to 90, row by row, ticks the owner keeps on purpose.
+/// </para>
 /// </remarks>
 public class TickRetentionService : BackgroundService
 {
@@ -84,16 +92,30 @@ public class TickRetentionService : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task SweepAsync(CancellationToken stoppingToken)
+    /// <summary>One sweep; how many rows it removed.</summary>
+    internal async Task<int> SweepAsync(CancellationToken stoppingToken)
     {
         // A hypertable ages out by dropping whole day-chunks (add_retention_policy
         // in the LiveTicksHypertable migration): instant, and no dead rows left
         // behind. Deleting rows from it here would only decompress old chunks to
         // remove what the policy is about to drop anyway.
-        if (await IsHypertableAsync(stoppingToken))
+        bool hypertable;
+        try
+        {
+            hypertable = await IsHypertableAsync(stoppingToken);
+        }
+        catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "Tick retention skipped this sweep: could not tell whether live_ticks is a hypertable, and no tick is deleted on a guess. It looks again in {Hours:0} h.",
+                _options.SweepInterval.TotalHours);
+            return 0;
+        }
+
+        if (hypertable)
         {
             _logger.LogDebug("live_ticks is a hypertable; retention is TimescaleDB's drop_chunks policy, nothing to sweep.");
-            return;
+            return 0;
         }
 
         var cutoff = DateTime.UtcNow.AddDays(-_options.RetentionDays);
@@ -104,11 +126,7 @@ public class TickRetentionService : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
 
-            int removed = await db.LiveTicks
-                .Where(x => x.ReceivedUtc < cutoff)
-                .OrderBy(x => x.ReceivedUtc)
-                .Take(_options.BatchSize)
-                .ExecuteDeleteAsync(stoppingToken);
+            int removed = await DeleteBatchAsync(db, cutoff, _options.BatchSize, stoppingToken);
 
             removedTotal += removed;
 
@@ -124,24 +142,27 @@ public class TickRetentionService : BackgroundService
                 "Tick retention removed {Count} live_ticks rows older than {Days} days.",
                 removedTotal, _options.RetentionDays);
         }
+
+        return removedTotal;
     }
 
-    private async Task<bool> IsHypertableAsync(CancellationToken stoppingToken)
+    /// <summary>One bounded DELETE, oldest first; a test without a relational database does it by hand.</summary>
+    protected virtual Task<int> DeleteBatchAsync(TradingDbContext db, DateTime cutoffUtc, int batchSize, CancellationToken stoppingToken)
+        => db.LiveTicks
+            .Where(x => x.ReceivedUtc < cutoffUtc)
+            .OrderBy(x => x.ReceivedUtc)
+            .Take(batchSize)
+            .ExecuteDeleteAsync(stoppingToken);
+
+    /// <summary>What the catalog says. Throws when it cannot say; that is not a "no".</summary>
+    protected virtual async Task<bool> IsHypertableAsync(CancellationToken stoppingToken)
     {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
-            var n = await db.Database
-                .SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM timescaledb_information.hypertables WHERE hypertable_name = 'live_ticks'")
-                .FirstOrDefaultAsync(stoppingToken);
-            return n > 0;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not tell whether live_ticks is a hypertable; sweeping rows.");
-            return false;
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var n = await db.Database
+            .SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM timescaledb_information.hypertables WHERE hypertable_name = 'live_ticks'")
+            .FirstOrDefaultAsync(stoppingToken);
+        return n > 0;
     }
 }
 
@@ -150,8 +171,13 @@ public sealed class TickRetentionOptions
 {
     public const string SectionName = "TickRetention";
 
-    /// <summary>Days of raw ticks to keep. Zero or less disables the sweep.</summary>
-    public int RetentionDays { get; set; } = 7;
+    /// <summary>
+    /// Days of raw ticks a plain (not hypertable) <c>live_ticks</c> keeps. Zero or less
+    /// disables the sweep. 90, as the hypertable's policy: no committed settings file
+    /// has this section, so the default is what runs, and until 2 Nov 2026 it was 7,
+    /// left from before the owner moved the policy to 90 days.
+    /// </summary>
+    public int RetentionDays { get; set; } = 90;
 
     /// <summary>Rows per DELETE. Small enough not to hold a long lock.</summary>
     public int BatchSize { get; set; } = 10_000;
