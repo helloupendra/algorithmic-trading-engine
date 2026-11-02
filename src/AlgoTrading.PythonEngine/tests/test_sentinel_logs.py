@@ -1,6 +1,7 @@
 import _bootstrap  # noqa: F401
 
 import os
+import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -690,20 +691,73 @@ class SignatureTests(LogsAgentTestCase):
         self.append("api.log", info(FEEDS, "[Dhan feed] [dhan] STARTING LIVE FEED (live) — source python-dhan-feed"))
         self.assertEqual({}, self.idle(30))
 
-    def test_telegram_refusing_the_desks_alerts_is_reported(self):
+    SENDER = "AlgoTrading.Infrastructure.Services.TelegramSender"
+
+    @staticmethod
+    def _sender_lines() -> list[str]:
+        """
+        Every message template TelegramSender.cs logs, read from the source, so a changed line
+        fails here. On 2 Nov 2026 this rule was found dead: its test fed a line the sender had
+        stopped writing, and passed.
+        """
+        source = (Path(__file__).resolve().parents[3] / "src" / "AlgoTrading.Infrastructure" / "Services"
+                  / "TelegramSender.cs").read_text(encoding="utf-8")
+        return re.findall(r'LogWarning\(\s*"(Telegram [^"]*)"', source)
+
+    @staticmethod
+    def _filled(template: str, start: str = "🚨 ALERT: Feed stalled!") -> str:
+        """A message template as the .NET logger writes it, {Start} being the start of the alert."""
+        values = {"Attempts": "10", "Channel": "Trades", "Max": "200", "Failure": "HTTP 400 Bad Request: chat not found",
+                  "Refusal": "HTTP 400 Bad Request: can't parse entities", "Problem": "HttpRequestException",
+                  "Seconds": "5", "Attempt": "2", "Waiting": "3", "Start": start}
+        return re.sub(r"\{(\w+)(?::[^}]*)?\}", lambda m: values[m[1]], template)
+
+    def test_each_line_for_a_lost_alert_is_reported_as_the_sender_writes_it(self):
+        lost = [line for line in self._sender_lines() if line.startswith("Telegram alert lost")]
+        self.assertEqual(4, len(lost), lost)
+        for template in lost:
+            with self.subTest(template):
+                self.setUp()
+                self.start_watching("api.log")
+                line = self._filled(template)
+                self.append("api.log", warn(self.SENDER, line))
+                [finding] = self.check().values()
+                self.assertEqual(("logs:telegram-lost", Severity.HIGH), (finding.fingerprint, finding.severity))
+                self.assertIn("losing the desk's alerts", finding.title)
+                self.assertIn("candle-pattern", finding.suggestion)
+                self.assertEqual([line, "in logs/api.log"], finding.evidence)
+
+    def test_a_message_that_still_goes_opens_nothing(self):
+        kept = [line for line in self._sender_lines() if not line.startswith("Telegram alert lost")]
+        self.assertEqual(3, len(kept), kept)   # slow down (429), plain-text retry, trying again
+        self.start_watching("api.log")
+        self.append("api.log", "".join(warn(self.SENDER, self._filled(template, "Forecast job failed")) for template in kept))
+        self.assertEqual({}, self.check())
+
+    def test_bursts_of_lost_alerts_are_one_incident_until_the_close(self):
         # 24–26 Sep: 394 of these; the HttpClient's own "- 429" lines are info and say it no better.
         self.start_watching("api.log")
-        refused = (info("System.Net.Http.HttpClient.telegram.ClientHandler",
-                        "Received HTTP response headers after 302.7478ms - 429")
-                   + warn("AlgoTrading.Infrastructure.Services.TelegramSender", "Telegram refused a message: HTTP 429."))
-        self.append("api.log", refused * 3)
+        burst = (info("System.Net.Http.HttpClient.telegram.ClientHandler",
+                      "Received HTTP response headers after 302.7478ms - 429")
+                 + warn(self.SENDER, "Telegram alert lost: refused with 429 10 times running; giving it up: x"))
+        self.append("api.log", burst * 3)
         [finding] = self.check().values()
-        self.assertEqual(("logs:rate-limited:telegram", Severity.HIGH), (finding.fingerprint, finding.severity))
-        self.assertIn("alerts are being lost", finding.title)
-        self.assertIn("candle-pattern", finding.suggestion)
-        self.assertEqual(["Telegram refused a message: HTTP 429.", "in logs/api.log"], finding.evidence)
-        self.assertIn("logs:rate-limited:telegram", self.idle(3 * 3600), "bursts all day are one incident")
+        self.assertEqual("logs:telegram-lost", finding.fingerprint)
+        self.assertIn("logs:telegram-lost", self.idle(3 * 3600), "bursts all day are one incident")
         self.assertEqual({}, self.idle(2 * 3600), "15:30 IST: let go at the close")
+
+    def test_what_the_lost_alert_said_cannot_hide_the_loss(self):
+        for start in ("Run #5 stopped: Runner exited (code 1): boom", "token=abc123def456 was refused"):
+            with self.subTest(start):
+                self.setUp()
+                self.start_watching("api.log")
+                self.append("api.log", warn(self.SENDER, f"Telegram alert lost: HTTP 400 Bad Request: x: {start}"))
+                self.assertEqual({"logs:telegram-lost"}, set(self.check()))
+
+    def test_the_relay_of_the_incident_is_not_a_lost_alert(self):
+        self.start_watching("api.log")
+        self.append("api.log", info(self.IRA, "Ira: told admin (incident, text and voice): Telegram alert lost: x"))
+        self.assertEqual({}, self.check())
 
     IRA = "AlgoTrading.Api.Services.AiVoice.IraAlertService"
     IRA_RELAY = ("Ira: told admin (incident, text and voice): Sentinel opened a high incident: Rate limited (429 Too "

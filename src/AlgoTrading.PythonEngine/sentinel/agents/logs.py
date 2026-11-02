@@ -175,6 +175,10 @@ DEATHS_KEPT = 40
 # generic rules (new-error, python-traceback, api-error, desk-warning,
 # not-configured) — a runner dying or a job failing is never muted.
 BENIGN_LINES: tuple[re.Pattern[str], ...] = (
+    # TelegramSender: this message still goes (out a 429, as plain text, or on the
+    # next try), and the alert it quotes may well say "failed". One that does not
+    # go says "Telegram alert lost", which has its own rule.
+    re.compile(r"^Telegram (?:asked to slow down|refused a message \(|could not take a message)"),
     # Every child (runner, feed) talks to the API on localhost:5025. While the
     # API restarts — every auto-deploy, ~20 s — they all print "connection
     # refused" / "Max retries exceeded". "The API is down" belongs to the health
@@ -283,12 +287,16 @@ _RUNNER_EXIT = re.compile(r"(?i)\brunner exited (?:with code |\(code )(?P<code>-
 _RUNNER_CAUSE = re.compile(r"(?i)runner exited \(code -?\d+\):\s*(?P<cause>.+?)(?:\s+\(by [^)]*\))?\s*$")
 _STRATEGY_RUN = re.compile(r"Strategy \d+ \((?P<name>[^)]+)\) run (?P<run>\d+) on (?P<ul>\S+)")
 _RUN_ID = re.compile(r"\brun #?(?P<run>\d+)\b")
-#: "429 Client Error: Too Many Requests" (requests), and the bare forms
-#: "Telegram refused a message: HTTP 429." (TelegramSender) and "status code 429".
+#: "429 Client Error: Too Many Requests" (requests), and the bare forms "HTTP 429"
+#: and "status code 429".
 _TOO_MANY = re.compile(r"(?i)\b429\b.*too many requests|too many requests.*\b429\b|\bHTTP 429\b"
                        r"|\bstatus(?: ?code)?:? 429\b")
 _VENDOR_THROTTLE = re.compile(r"(?i)rate-limiting us")
-_TELEGRAM_REFUSED = re.compile(r"(?i)\btelegram\b.*\b(?:refused|429)\b")
+#: The API's TelegramSender writes this first on every line about a message it could
+#: not deliver, whatever the reason (LostLine there; test_sentinel_logs reads the lines
+#: from its source). Its "asked to slow down" and "sending it again as plain text"
+#: lines are not this: those messages still go.
+_TELEGRAM_LOST = re.compile(r"^Telegram alert lost\b")
 _URL_PATH = re.compile(r"https?://[^/\s]+(?P<path>/[^\s?\"')]*)")
 #: The exception the API's risk guard refuses an order with (answered 409).
 _RISK_REFUSAL = "RiskViolationException"
@@ -1190,6 +1198,12 @@ class LogsAgent(Agent):
     # -- the signatures ------------------------------------------------------
     def _check_line(self, origin: _Origin, text: str, raw: str, scan: _Scan, line_time: Optional[str],
                     allow_new: bool) -> None:
+        # Ahead of the rest: the line quotes the start of the lost alert, and what that
+        # alert said ("Runner exited", a word that reads as a secret) is not this rule's
+        # business. The evidence still leaves out a line that may hold a secret.
+        if text and _TELEGRAM_LOST.match(text):
+            self._telegram_lost(origin, raw, scan, line_time)
+            return
         if not text or _may_hold_secret(raw) or _may_hold_secret(text):
             return
         if self._match_known(origin, text, raw, scan, line_time):
@@ -1494,22 +1508,32 @@ class LogsAgent(Agent):
             raw=raw, file=o.file, hold=scan.hold("vendor-regulatory", text), line_time=t)
         return True
 
+    def _telegram_lost(self, o: _Origin, raw: str, scan: _Scan, t: Optional[str]) -> None:
+        # 24–26 Sep: 394 of the desk's own alerts refused, in bursts all day, until
+        # someone changes how alerts are sent: one incident a session, not one per burst.
+        # On 2 Nov this rule was found dead: the sender's lines had changed under it.
+        scan.add(
+            fingerprint=f"{AGENT}:telegram-lost",
+            rule="telegram-lost", severity=Severity.HIGH,
+            title="Telegram is losing the desk's alerts — they were dropped, not delayed",
+            what=("The API's Telegram sender gave up on a message, so whoever it was for was not told. Sentinel's "
+                  "messages go through the same bot and chat."),
+            where=o.where,
+            suggestion=("The line says why. 429 or a full queue: a burst; Telegram allows about one message a second "
+                        "and twenty a minute into one chat, and the candle-pattern alerts are the likely source: "
+                        "space them or batch them into one message per candle. HTTP 400: refused even as plain text, "
+                        "so check Telegram:ChatId and Telegram:SystemChatId. HTTP 401 or 403: the bot token, or the "
+                        "bot was removed from the chat. An exception's name or a 5xx: the server could not reach "
+                        "Telegram for three tries in a row. The evidence quotes the start of what was lost; the event "
+                        "itself is on the console's alert log, whatever its delivered mark says (a message still "
+                        "queued after 3 s counts as sent)."),
+            raw=raw, file=o.file, hold=_until_close(scan.now_ts), line_time=t)
+
     def _rate_limited(self, o: _Origin, text: str, raw: str, scan: _Scan, t: Optional[str]) -> None:
         url = _URL_PATH.search(text)
         target = url["path"].rstrip(".,;:") if url else (o.vendor or _vendor_in_text(text) or o.component)
         hold = scan.hold("rate-limited", text)
-        if _TELEGRAM_REFUSED.search(text):
-            # 24–26 Sep: 394 of the desk's own alerts refused, in bursts all
-            # day, until someone changes how alerts are sent: one incident a
-            # session, not one per burst.
-            target, hold = "telegram", max(hold, _until_close(scan.now_ts))
-            title = "Telegram is refusing the desk's alerts (429 Too Many Requests) — alerts are being lost"
-            what = ("The API's Telegram sender got 429 Too Many Requests: those alerts were dropped, not delayed. "
-                    "Sentinel's messages go through the same bot and chat.")
-            advice = ("Telegram allows about one message a second and twenty a minute into one chat. The candle-"
-                      "pattern alerts come in bursts (the API logs \"not sent — more than N messages in 5 minutes\") "
-                      "and are the likely source: space them or batch them into one message per candle.")
-        elif "/userauth/login" in target.lower():
+        if "/userauth/login" in target.lower():
             title = "The API's sign-in limiter is refusing the desk's own processes (429)"
             what = ("Processes on the desk got 429 Too Many Requests from the API's sign-in. A runner that cannot "
                     "sign in dies at start-up (24 Sep).")
