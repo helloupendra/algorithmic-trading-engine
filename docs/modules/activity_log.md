@@ -67,7 +67,7 @@ be deleted, and the record of what it did must still read.
 | Log | Records | Where |
 | --- | --- | --- |
 | **Activity log** | what a *person* asked for | `activity_log` · System → Log, Activity |
-| Alert events | what the *platform* announced (run starts and stops, kill switch, signals) | `alert_events` · System → Log, Alerts |
+| Alert events | what the *platform* announced (run starts and stops, kill switch, signals) | `alert_events` · System → Log, Alerts. `GET /api/Alerts/events` answers an admin with all of it, anyone else with the alerts of their own runs |
 | Risk events | risk decisions and limit changes | `risk_events` · System → Log, Risk, and Trade → Risk |
 | Process logs | stdout of the ingestor and alerter processes | in-memory buffers · Data → Feeds |
 

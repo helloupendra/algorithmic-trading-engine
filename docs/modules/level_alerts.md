@@ -88,8 +88,8 @@ reads after the rule is edited or deleted). Then:
   trader's alerts stay in the console: the desk has no Telegram chat per trader,
   and the Desk System chat is the operator's.
 
-The fires are not written to `alert_events`: that stream is readable by every
-signed-in account (System → Log), and a trader's levels are theirs.
+The fires are not written to `alert_events`: that stream is the desk's, read whole
+by an admin on System → Log, and a trader's levels are theirs.
 
 ## The service
 

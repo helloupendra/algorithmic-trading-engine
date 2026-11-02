@@ -126,6 +126,17 @@ namespace AlgoTrading.Api.Controllers
             });
         }
 
+        /// <summary>
+        /// The newest alerts: every one for an admin, otherwise those of the
+        /// caller's own runs.
+        /// </summary>
+        /// <remarks>
+        /// Until 2 Nov every account read the whole desk's last 500: other
+        /// accounts' run alerts and run ids, who pulled the kill switch and why,
+        /// broker and feed failures. An alert that belongs to no run is the
+        /// desk's, not a trader's. The console's only reader is the admin System
+        /// log page.
+        /// </remarks>
         [HttpGet("events")]
         [Authorize]
         public async Task<IActionResult> GetAlertEvents(
@@ -135,8 +146,15 @@ namespace AlgoTrading.Api.Controllers
         {
             limit = Math.Clamp(limit, 1, 500);
 
-            var events = await dbContext.AlertEvents
-                .AsNoTracking()
+            var visible = dbContext.AlertEvents.AsNoTracking();
+
+            if (!User.IsAdmin())
+            {
+                long me = User.GetRequiredUserId();
+                visible = visible.Where(x => dbContext.SimulationRuns.Any(r => r.Id == x.SimulationRunId && r.UserId == me));
+            }
+
+            var events = await visible
                 .OrderByDescending(x => x.OccurredUtc)
                 .Take(limit)
                 .Select(x => new AlertEventDto
