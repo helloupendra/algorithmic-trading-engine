@@ -1385,6 +1385,7 @@ public class StrategyController : ControllerBase
             Category = entry.Category,
             SupportedUnderlyings = entry.SupportedUnderlyings.ToList(),
             InstrumentKind = entry.InstrumentKind,
+            BacktestOnly = entry.BacktestOnly,
             LegsSummary = entry.LegsSummary,
             DataRequirements = entry.DataRequirements.ToList(),
             ContractRequirements = entry.ContractRequirements.ToList(),

@@ -21,6 +21,10 @@ public sealed class StrategyCatalogEntry
     public string Category { get; set; } = string.Empty;
     public List<string> SupportedUnderlyings { get; set; } = new();
     public string InstrumentKind { get; set; } = "options";
+
+    /// <summary>Set when the strategy cannot trade a live or recap run; a start is refused.</summary>
+    public bool BacktestOnly { get; set; }
+
     public string LegsSummary { get; set; } = string.Empty;
     public int DefaultLots { get; set; } = 1;
     public string DefaultParametersJson { get; set; } = "{}";
@@ -327,6 +331,7 @@ public sealed class StrategyCatalogService
                 Description = GetString(item, "description") ?? string.Empty,
                 Category = GetString(item, "category") ?? string.Empty,
                 InstrumentKind = GetString(item, "instrumentKind") ?? "options",
+                BacktestOnly = GetBool(item, "backtestOnly") ?? false,
                 LegsSummary = GetString(item, "legsSummary") ?? string.Empty,
                 DefaultLots = Math.Max(1, GetInt(item, "defaultLots") ?? 1),
                 Error = GetString(item, "error")
@@ -499,10 +504,12 @@ public sealed class StrategyCatalogService
 
             string? strategyName = null;
             string? className = null;
+            bool backtestOnly = false;
 
             foreach (var line in content.Split('\n'))
             {
                 var trimmed = line.Trim();
+                if (trimmed.StartsWith("backtest_only = True", StringComparison.Ordinal)) backtestOnly = true;
                 if (line.StartsWith("class ") && line.Contains("(BaseStrategy)"))
                 {
                     var parts = line.Split(' ', '(');
@@ -524,7 +531,9 @@ public sealed class StrategyCatalogService
             }
 
             var relative = Path.GetRelativePath(strategiesPath, file).Replace('\\', '/');
-            list.Add(FallbackEntry(strategyName, className, relative, File.GetLastWriteTimeUtc(file)));
+            var entry = FallbackEntry(strategyName, className, relative, File.GetLastWriteTimeUtc(file));
+            entry.BacktestOnly = backtestOnly;
+            list.Add(entry);
         }
 
         // Private factories (Fulcrum variants) are registered under their own names.

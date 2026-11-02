@@ -81,8 +81,10 @@ for "it traded better". The console edits all of this on `/research/backtests/ne
 - **SignalBuilder** (`strategies/builder/`) is a strategy the operator writes on the New backtest
   page: two lists of conditions (`close>vwap`, `ema:9>ema:21`, `rsi_cross_up:60`, `body>=0.5`,
   `supertrend:bullish`, `break_high:15`, …), one for a long setup and one for a short. It emits the
-  matching BUY/SELL and nothing else, so the run's rules decide everything after the entry. Its spec
-  is `docs/strategies/SignalBuilder.md`; the grammar is `strategies/builder/conditions.py`.
+  matching BUY/SELL and nothing else, so the run's rules decide everything after the entry. A live or
+  recap start is refused: those rules exist only in the backtest engine. A misspelt condition fails the
+  run when it starts. Its spec is `docs/strategies/SignalBuilder.md`; the grammar is
+  `strategies/builder/conditions.py`.
 
 ### 4. Data honesty
 - **Option premiums, recent contracts:** from FYERS history per contract. FYERS serves history only for contracts that still exist.

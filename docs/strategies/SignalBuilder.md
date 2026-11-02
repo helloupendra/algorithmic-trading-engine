@@ -19,7 +19,8 @@ It exists because most ideas a trader wants to test are a handful of conditions
 on one chart — "above VWAP, above the 9 EMA, a strong candle, RSI crossing 60" —
 and writing a Python class for each of them buries the idea in plumbing.
 
-This is a tool for testing ideas, not an idea. An empty side never trades.
+This is a tool for testing ideas, not an idea. An empty side never trades. It
+runs in backtests only; see Limitations.
 
 ## Data it needs
 
@@ -34,8 +35,8 @@ run trades the instrument itself, in shares.
 ## Timeframe
 
 - **Evaluates on:** the last closed bar of the run's resolution, once per bar.
-  In a live run the newest bar is still forming and is dropped; in a replay the
-  engine only ever hands over closed bars.
+  The engine only ever hands over closed bars, and loads only that resolution:
+  a 15-minute run needs 15-minute candles, not 5-minute ones.
 - **Warm-up:** the engine feeds the strategy the stored bars before the range,
   so the indicators are warm on the first signalled bar.
 
@@ -64,7 +65,10 @@ period, VWAP on an index with no volume — counts as false: a setup that cannot
 be checked has not happened.
 
 An unreadable condition fails when the run starts, not on the bar it would
-first have been checked.
+first have been checked. That includes a misspelt name (`closee>vwap`, `macd>0`),
+an EMA with no period (`ema>close`) and a cross that is neither up nor down:
+conditions are ANDed, so one that could never hold would silence its side for
+the whole run.
 
 ## Position management
 
@@ -114,6 +118,13 @@ stop moving to entry after +15%.
 
 ## Limitations
 
+- **Backtests only.** A live or recap start is refused with that reason. The live
+  runner turns a bare BUY or SELL into an order only for GhostTangentCrossings,
+  and the limits, exits and strike rules this strategy leaves everything to
+  exist only in the backtest engine (`backtest/rules.py`). Wiring the order path
+  alone would give a live run no trade limit and no exit of its own, opening a
+  position on every qualifying bar until the close. Live, only the run's `filters`
+  and risk rules apply. Moving those rules into the runner is what it would take.
 - **A setup is not an edge.** The defaults above were tested on NIFTY 1-minute
   and 5-minute data in Sep 2026 (`private/research/vwap-ema-rsi/`): before costs
   roughly break-even, after costs a steady loss in every version. Write your own

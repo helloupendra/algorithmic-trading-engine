@@ -697,6 +697,12 @@ if __name__ == "__main__":
               f"contracts and the expiry as of {recap_date}, and the live watchlist is left alone.", flush=True)
 
     strategy = strategies_map[args.strategy](run_params)
+    if getattr(strategy, "backtest_only", False):
+        # The API refuses these first. This holds if its catalogue could not say so.
+        message = f"{args.strategy} runs in backtests only: the live runner cannot trade it."
+        print(f"[{args.underlying}] ERROR: {message}", flush=True)
+        print(message, file=sys.stderr, flush=True)
+        sys.exit(2)
     state = strategy.initialize_state()
 
     run_lots = BaseStrategy.lots_from(run_params, getattr(strategy, "default_lots", 1))

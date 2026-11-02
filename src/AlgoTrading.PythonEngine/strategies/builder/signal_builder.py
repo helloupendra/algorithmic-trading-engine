@@ -44,6 +44,14 @@ class SignalBuilderStrategy(BaseStrategy):
     legs_summary = "One leg per signal: the ATM option of the run's underlying, or the instrument itself"
     supported_underlyings: List[str] = ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
     instrument_kind = "options"
+    #: Refused for a live or recap run: the live runner books no bare BUY/SELL but
+    #: Ghost's, and the run's limits, exits and strike rules this strategy leaves
+    #: everything to exist only in the backtest engine. A live run of it could
+    #: only sit silent, or pile up positions with none of those rules on.
+    backtest_only = True
+    #: The series it judges is the run's own, so the catalogue names no fixed one
+    #: for a backtest to demand.
+    resolution_from_run = True
     default_lots = 1
     default_params: Dict[str, Any] = {
         "long_conditions": ["close>vwap", "close>ema:9", "body>=0.5", "rsi_cross_up:60"],
@@ -70,10 +78,14 @@ class SignalBuilderStrategy(BaseStrategy):
 
     # --- catalogue ----------------------------------------------------------
 
-    @classmethod
-    def get_data_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[DataRequirement]:
-        resolution = str((params or {}).get("resolution") or cls.default_params["resolution"])
-        return [DataRequirement(symbol_type="index", resolution=resolution)]
+    def get_data_requirements(self) -> List[DataRequirement]:
+        """
+        The series the conditions are judged on, from the run's own parameters. An
+        instance method for that reason: the engine asks the strategy it is about
+        to run, with no parameters. As a classmethod this was always 5m, so a 15m
+        run was fed an empty series, or refused for want of 5m candles.
+        """
+        return [DataRequirement(symbol_type="index", resolution=str(self._p("resolution") or "5m"))]
 
     @classmethod
     def get_contract_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[ContractRequirement]:

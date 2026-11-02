@@ -191,7 +191,10 @@ def describe_strategy(name: str, obj: Any, source_file: Optional[str] = None,
 
     requirements: List[Dict[str, str]] = []
     try:
-        for req in obj.get_data_requirements() or []:
+        # One whose series is the run's own names none here: a backtest checks the
+        # run's resolution anyway, and a default written here would be demanded too.
+        declared = [] if getattr(obj, "resolution_from_run", False) else obj.get_data_requirements()
+        for req in declared or []:
             requirements.append({
                 "symbolType": str(getattr(req, "symbol_type", "")),
                 "resolution": str(getattr(req, "resolution", "")),
@@ -218,6 +221,7 @@ def describe_strategy(name: str, obj: Any, source_file: Optional[str] = None,
         "category": str(getattr(obj, "category", "") or "Other"),
         "supportedUnderlyings": underlyings,
         "instrumentKind": str(getattr(obj, "instrument_kind", "") or "options"),
+        "backtestOnly": bool(getattr(obj, "backtest_only", False)),
         "legsSummary": normalise_doc(getattr(obj, "legs_summary", "")),
         "defaultLots": BaseStrategy.lots_from({}, getattr(obj, "default_lots", 1)),
         "defaultParameters": default_params,

@@ -165,6 +165,13 @@ public sealed class StrategyStartService(
         if (!string.IsNullOrWhiteSpace(strategy.Error))
             return StrategyStartOutcome.Refused(StrategyStartKind.BadRequest, $"{strategy.Name} cannot be started: {strategy.Error}");
 
+        // Started anyway it would look healthy and never trade.
+        if (strategy.BacktestOnly)
+        {
+            return StrategyStartOutcome.Refused(StrategyStartKind.BadRequest,
+                $"{strategy.Name} runs in backtests only. The live runner cannot place its signals, and the limits, exits and strike rules it relies on exist only in the backtest engine. Try it on the New backtest page.");
+        }
+
         if (request is null || string.IsNullOrWhiteSpace(request.Underlying))
             return StrategyStartOutcome.Refused(StrategyStartKind.BadRequest, "underlying is required — pick the index or stock the strategy should trade.");
 

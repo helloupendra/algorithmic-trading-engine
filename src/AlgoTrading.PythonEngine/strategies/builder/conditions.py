@@ -22,7 +22,9 @@ carries its own rules and a report can print them back exactly as they were set.
 
 A condition whose input cannot be computed yet — an EMA before its period, VWAP
 on an index with no volume — is FALSE, never true by default: a setup that
-cannot be checked has not happened.
+cannot be checked has not happened. A condition that cannot be read, including a
+misspelt name, is an error when the run is built: conditions are ANDed, so one
+that is always false would silence its side for the whole run.
 
 Pure functions over bar frames; no I/O, no state.
 """
@@ -45,8 +47,27 @@ _PATTERN = re.compile(
 )
 
 
+#: The quantities `_value` can read, and whether each takes a ":number".
+_NO_ARGUMENT = {"close", "open", "high", "low", "vwap", "body", "gap", "move_from_open", "session_open"}
+_OPTIONAL_PERIOD = {"rsi", "adx", "atr_percent", "volume_z"}
+_REQUIRED_PERIOD = {"ema", "sma"}
+
+
 class ConditionError(ValueError):
     """A condition that cannot be read, named in the message."""
+
+
+def _check_operand(name: str, condition: str) -> None:
+    """A name `_value` would answer None for, for ever, is a typo rather than a false condition."""
+    key, _, argument = name.partition(":")
+    if key not in _NO_ARGUMENT | _OPTIONAL_PERIOD | _REQUIRED_PERIOD:
+        raise ConditionError(f"{condition!r}: there is no quantity called {key!r}")
+    if key in _NO_ARGUMENT and argument:
+        raise ConditionError(f"{condition!r}: {key} takes no number")
+    if key in _REQUIRED_PERIOD and not argument:
+        raise ConditionError(f"{condition!r} needs a period, e.g. {key}:20")
+    if argument and float(argument) < 1:
+        raise ConditionError(f"{condition!r}: a period is a whole number of bars")
 
 
 def parse_all(text: Any) -> List[str]:
@@ -147,6 +168,8 @@ def parse(condition: str) -> Evaluator:
     key, _, argument = left.partition(":")
 
     if key.startswith("rsi_cross_"):
+        if key not in ("rsi_cross_up", "rsi_cross_down"):
+            raise ConditionError(f"{condition!r} must say rsi_cross_up or rsi_cross_down")
         level_text = right if right else argument
         if not level_text or not re.fullmatch(_NUMBER, level_text):
             raise ConditionError(f"{condition!r} needs a level, e.g. rsi_cross_up:60")
@@ -186,7 +209,10 @@ def parse(condition: str) -> Evaluator:
     if op == ":":
         raise ConditionError(f"the condition {condition!r} compares nothing")
 
+    _check_operand(left, condition)
     literal = float(right) if re.fullmatch(_NUMBER, right) else None
+    if literal is None:
+        _check_operand(right, condition)
     def compares(bars: Sequence[Any]) -> bool:
         if not bars:
             return False

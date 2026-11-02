@@ -3,14 +3,19 @@ The console-written strategy: each condition against bars whose answer is obviou
 by hand, and the strategy that turns a full set of them into one BUY or SELL.
 """
 
+import json
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import _bootstrap  # noqa: F401
 
+from backtest.engine import run_backtest
+from backtest.timeutil import iso_utc, ist_day_end_utc, ist_day_start_utc
 from strategies.base_strategy import BarFrame, StrategyInput
 from strategies.builder import conditions as cond
 from strategies.builder.signal_builder import SignalBuilderStrategy
+from strategies.registry import describe_strategy
+from test_engine import CE, DAY1, PE, SPOT, UNDERLYING, FakeApi, index_rows, option_rows, quiet
 
 SESSION_OPEN_UTC = datetime(2026, 9, 8, 3, 45, tzinfo=timezone.utc)   # 09:15 IST
 
@@ -73,6 +78,28 @@ class ConditionTests(unittest.TestCase):
         with self.assertRaises(cond.ConditionError):
             cond.compile_all(['close>'])
 
+    def test_a_misspelt_name_is_refused_rather_than_always_false(self):
+        for typo in ['closee>vwap', 'macd>0', 'close>emaa:9', 'close>vwapp', 'gapp>0.5', 'rsi_cross_upp:60',
+                     'rsi_cross_sideways:60', 'break_highh:15', 'gren']:
+            with self.subTest(typo), self.assertRaises(cond.ConditionError):
+                cond.compile_all([typo])
+
+    def test_a_quantity_with_the_wrong_argument_is_refused(self):
+        for wrong in ['ema>close', 'close>sma', 'close:9>open', 'ema:0>close', 'ema:-9>close', 'vwap:5<close']:
+            with self.subTest(wrong), self.assertRaises(cond.ConditionError):
+                cond.compile_all([wrong])
+
+    def test_every_documented_condition_is_still_read(self):
+        cond.compile_all(['close>vwap', 'close<ema:20', 'close>ema:9', 'ema:9>ema:21', 'rsi>60', 'rsi<40', 'rsi:7>50',
+                          'rsi_cross_up:60', 'rsi_cross_down:40', 'body>=0.5', 'green', 'red', 'supertrend:bullish',
+                          'supertrend:bearish', 'adx>20', 'adx:10>20', 'break_high:15', 'break_low:15', 'above_open',
+                          'below_open', 'gap>0.5', 'gap<0.5', 'volume_z>1.5', 'atr_percent>0.1', 'sma:20<close',
+                          'move_from_open>0.2', 'close>session_open', 'high>low', 'open<close'])
+
+    def test_a_typo_stops_the_run_being_built(self):
+        with self.assertRaises(cond.ConditionError):
+            SignalBuilderStrategy({"long_conditions": ["closee>vwap"]})
+
     def test_conditions_are_read_from_a_list_or_one_line(self):
         self.assertEqual(cond.parse_all("close>vwap, body>=0.5"), ['close>vwap', 'body>=0.5'])
         self.assertEqual(cond.parse_all(['Close>VWAP']), ['close>vwap'])
@@ -83,6 +110,55 @@ def make_input(bars, mode="OfflineReplay", source="backtest"):
     return StrategyInput(mode=mode, timestamp_utc=bars[-1].timestamp_utc, underlying="NIFTY",
                          spot_price=float(bars[-1].close), atm_strike=23500, strike_step=50, lot_size=65,
                          bars={"5m": {"index": bars}}, metadata={"source": source})
+
+
+def fifteen_minute_backtest(api, **params):
+    merged = {"lots": 1, "underlying": UNDERLYING, "resolution": "15m", "eod_square_off_ist": "15:15",
+              "charges_per_lot": 0, "long_conditions": ["green"], "short_conditions": ["red"]}
+    merged.update(params)
+    row = {"id": 42, "mode": "OfflineReplay", "symbol": SPOT, "resolution": "15", "strategyName": "SignalBuilder",
+           "fromUtc": iso_utc(ist_day_start_utc(DAY1)), "toUtc": iso_utc(ist_day_end_utc(DAY1)),
+           "parametersJson": json.dumps(merged), "initialCapital": 1_000_000, "userId": 1}
+    return run_backtest(api, row, SignalBuilderStrategy, log=quiet, progress_interval=0.0)
+
+
+class ResolutionTests(unittest.TestCase):
+    def test_the_data_it_asks_for_is_the_runs_own_resolution(self):
+        for resolution in ("15m", "1h", "1D"):
+            wanted = SignalBuilderStrategy({"resolution": resolution}).get_data_requirements()
+            self.assertEqual([("index", resolution)], [(r.symbol_type, r.resolution) for r in wanted])
+
+    def test_with_no_resolution_named_it_is_the_default(self):
+        self.assertEqual("5m", SignalBuilderStrategy({}).get_data_requirements()[0].resolution)
+
+    def test_the_catalogue_demands_no_fixed_resolution_and_shows_no_error(self):
+        entry = describe_strategy("SignalBuilder", SignalBuilderStrategy)
+        self.assertEqual([], entry["dataRequirements"])
+        self.assertNotIn("failed", entry["description"])
+
+    def test_a_fifteen_minute_backtest_needs_no_five_minute_candles(self):
+        # Only 15-minute candles are stored. Asked for 5m it would fail for want of them.
+        def fifteen(rows):
+            return [{**row, "resolution": "15"} for row in rows if int(row["timestampUtc"][14:16]) % 15 == 0]
+        api = FakeApi({
+            (SPOT, "15"): fifteen(index_rows([DAY1])),
+            (CE, "15"): fifteen(option_rows(CE, [DAY1], lambda i: 100.0 + i)),
+            (PE, "15"): fifteen(option_rows(PE, [DAY1], lambda i: 80.0 - i * 0.5)),
+        })
+
+        outcome = fifteen_minute_backtest(api)
+
+        self.assertEqual("Completed", outcome.status, outcome.error)
+        self.assertTrue([s for s in api.signals if s["signalType"] == "OPEN_GROUP"], "the setup was judged and traded")
+
+
+class LiveTests(unittest.TestCase):
+    def test_the_catalogue_says_it_is_for_backtests_only(self):
+        self.assertTrue(describe_strategy("SignalBuilder", SignalBuilderStrategy)["backtestOnly"])
+
+    def test_other_strategies_are_not_marked(self):
+        from strategies.bullish.crude_momentum_strategy import CrudeMomentumStrategy
+        self.assertFalse(describe_strategy("CrudeMomentum", CrudeMomentumStrategy)["backtestOnly"])
 
 
 class StrategyTests(unittest.TestCase):

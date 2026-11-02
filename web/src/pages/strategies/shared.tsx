@@ -1077,7 +1077,7 @@ export function LaunchDialog({
       </span>,
     )
 
-  const canStart = !!chosen && !chosenTaken && !start.isPending
+  const canStart = !!chosen && !chosenTaken && !start.isPending && !strategy.backtestOnly
 
   return (
     <div
@@ -1284,6 +1284,11 @@ export function LaunchDialog({
             </div>
           )}
           {start.isError && <InlineError error={start.error} />}
+          {strategy.backtestOnly && (
+            <div className="alert alert--warn" role="status">
+              {strategy.name} runs in backtests only: the live runner cannot trade it. Try it on the New backtest page.
+            </div>
+          )}
 
           <div className="modal__foot">
             <button type="button" className="btn btn--ghost" onClick={onClose}>

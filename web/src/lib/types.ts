@@ -337,6 +337,8 @@ export interface StrategyListItem {
   category: string
   supportedUnderlyings: string[]
   instrumentKind: string
+  /** Cannot trade a live or recap run; the API refuses the start. */
+  backtestOnly?: boolean
   legsSummary: string
   dataRequirements: StrategyDataRequirement[]
   /**

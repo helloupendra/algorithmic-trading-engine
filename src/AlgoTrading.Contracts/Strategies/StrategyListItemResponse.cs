@@ -25,6 +25,9 @@ public class StrategyListItemResponse
     /// <summary>"options" today.</summary>
     public string InstrumentKind { get; set; } = "options";
 
+    /// <summary>True when the strategy cannot trade a live or recap run; a start is refused.</summary>
+    public bool BacktestOnly { get; set; }
+
     /// <summary>Human summary of the legs, e.g. "Sell ATM CE + Sell ATM PE".</summary>
     public string LegsSummary { get; set; } = string.Empty;
 

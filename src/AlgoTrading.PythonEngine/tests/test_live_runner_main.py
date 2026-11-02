@@ -342,6 +342,19 @@ def utc_day(offset_days=0):
     return (datetime.now(timezone.utc).date() + timedelta(days=offset_days)).isoformat()
 
 
+class BacktestOnlyStrategyTests(unittest.TestCase):
+    def test_the_runner_stops_with_the_reason_rather_than_look_healthy_and_never_trade(self):
+        harness = RunnerHarness({"lots": 1, "underlying": "NIFTY"}, [utc_day(7)], [], [])
+
+        with mock.patch.object(ProbeStrategy, "backtest_only", True, create=True), \
+                self.assertRaises(SystemExit) as stopped:
+            harness.run()
+
+        self.assertEqual(2, stopped.exception.code)
+        self.assertIn("runs in backtests only", harness.output)
+        self.assertEqual([], harness.inputs)
+
+
 class LiveRunEndToEndTests(unittest.TestCase):
     """A live run on an expiry day, with a desk replay's ticks on the same stream."""
 

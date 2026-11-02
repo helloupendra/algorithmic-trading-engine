@@ -615,7 +615,7 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
   // The strategies a replay can run: those that trade NIFTY, BANKNIFTY or SENSEX.
   const catalog = useMemo(() => {
     const list = (strategies.data ?? [])
-      .filter((s) => replayUnderlyingsFor(s.supportedUnderlyings).length > 0)
+      .filter((s) => !s.backtestOnly && replayUnderlyingsFor(s.supportedUnderlyings).length > 0)
       .sort((a, b) => a.name.localeCompare(b.name))
     const info = new Map<number, ReplayStrategyInfo>(
       list.map((s) => [
