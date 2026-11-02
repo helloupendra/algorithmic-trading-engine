@@ -104,6 +104,7 @@ from strategies.signal_booking import (
     run_tick,
 )
 from backtest.run_spec import parse_risk_rules
+from strategies.session_gate import SessionGate
 
 import core.fyers_orders as fyers_orders
 from core.recap_session import RecapSession
@@ -1161,6 +1162,24 @@ if __name__ == "__main__":
     closed_groups = ClosedGroups()
 
     def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
+    # A live run's OPENs wait for their market, which is why a run started before
+    # the open can post nothing until it opens (strategies/session_gate.py). A
+    # recap trades a past session, on the replay's clock, and does not ask.
+    session_gate = SessionGate(
+        api.market_session,
+        spot_symbol=args.spot_symbol,
+        index_expiring_today=lambda day: (str(args.spot_symbol or "").upper().endswith("-INDEX")
+                                          and expiry_date == day.isoformat()),
+    )
+    # True while the log has said OPENs are waiting, so it says it once per closed spell.
+    market_wait_announced = [False]
+
+    def why_open_waits(sig: StrategySignal) -> Optional[str]:
+        """Why this signal's market keeps it from being posted now; None for anything else."""
+        if recap is not None or str(sig.signal_type or "").upper() != "OPEN_GROUP":
+            return None
+        return session_gate.why_closed([leg.get("symbol") for leg in sig.legs or []] or [args.spot_symbol])
+
         """The strategy's on_bar for one tick, timed and printed."""
         t_start = time.time()
         emitted = strategy.on_bar(tick_state, inp)
@@ -1168,7 +1187,9 @@ if __name__ == "__main__":
 
         housekeeping()
 
-        print_signals(emitted)
+        # An OPEN that waits for its market comes back every tick and is logged
+        # once in post_signal; the rest print as ever.
+        print_signals([sig for sig in emitted or [] if why_open_waits(sig) is None])
         if DEBUG_PRINT_MESSAGES:
             print_strategy_state(tick_state)
         return emitted
@@ -1207,6 +1228,21 @@ if __name__ == "__main__":
             return None
 
         # Keyed on the legs as the strategy emitted them: enrichment below
+        # Before the filters and the wait for a quote, neither of which means
+        # anything until the market has opened. Held, the strategy is put back and
+        # asks again on its next tick. Closes never reach this.
+        waits = why_open_waits(sig)
+        if waits is not None:
+            group = str((sig.metadata or {}).get("group_id") or "")
+            if not market_wait_announced[0]:
+                market_wait_announced[0] = True
+                print(f"[{args.underlying}] OPEN_GROUP {group} waits for the market: {waits}. Nothing is posted; the "
+                      f"strategy is put back and asks again on its next tick. Exits are not held.", flush=True)
+            return Booking("OPEN_GROUP", group, "", booked=False, held=True, detail=waits)
+        if sig.signal_type == "OPEN_GROUP" and market_wait_announced[0]:
+            market_wait_announced[0] = False
+            print(f"[{args.underlying}] The market is open: OPENs are being posted.", flush=True)
+
         # rewrites them with resolved symbols and prices.
         legs_key = ClosedGroups.legs_key(sig)
         if booker is not None:
@@ -1320,6 +1356,12 @@ if __name__ == "__main__":
                         recap_closed[0] = True
                         print(f"[{args.underlying}] RECAP reached the replayed {recap.close_ist:%H:%M} — the strategy takes no "
                               f"further entries or exits. Stop run {args.run_id} from the console to square "
+    else:
+        # A run started before the open is normal: say so once, in plain words.
+        before_open = session_gate.why_closed([args.spot_symbol])
+        if before_open is not None:
+            print(f"[{args.underlying}] Started outside the session: {before_open}. OPEN signals wait for the "
+                  f"market; closes are not held.", flush=True)
                               f"off at the replay's closing prices (a Market Replay stops its runs itself "
                               f"when it ends).", flush=True)
                         housekeeping()

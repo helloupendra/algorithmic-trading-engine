@@ -39,4 +39,10 @@ public sealed class PaperFillOptions
     /// the close asks for still fill on an older quote, and say so.
     /// </summary>
     public int MaxQuoteAgeSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Refuse an opening signal of a live run while its contract's market is closed. Always on at the desk; the local
+    /// dev stack turns it off, since it seeds legs at any hour and prices them from its own synthetic ticks.
+    /// </summary>
+    public bool RefuseOpensWhileMarketClosed { get; set; } = true;
 }

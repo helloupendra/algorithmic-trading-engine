@@ -38,6 +38,23 @@ public class ManualTicketFillTests
     // ============================================================== market
 
     [Fact]
+    public async Task An_order_after_the_close_is_refused_and_says_when_the_market_opens()
+    {
+        // Until 2 Nov it filled at the last quote of the day, a price nobody could have had.
+        using var desk = new Desk(Ist(16, 0));
+        desk.Quote(ltp: 150m, bid: 149.5m, ask: 150.5m, age: TimeSpan.FromSeconds(1));
+
+        var outcome = await desk.Place("BUY", limit: null);
+
+        Assert.Null(outcome.Fill);
+        Assert.Equal(
+            $"Not filled: MARKET NOT OPEN: {Call} opens Tue 29 Sep 09:15 IST. The OPEN_GROUP signal was refused; exits remain allowed.",
+            outcome.RefusalMessage);
+        Assert.Empty(desk.Orders());
+        Assert.Empty(desk.Positions());
+    }
+
+    [Fact]
     public async Task A_market_order_on_a_quote_older_than_the_limit_is_refused_while_the_market_is_open()
     {
         using var desk = new Desk(Morning);
@@ -83,20 +100,6 @@ public class ManualTicketFillTests
         Assert.Equal(100m * (1m - 0.0015m), fill.Price);
         Assert.Equal("last trade less half the spread", fill.PriceBasis);
         Assert.Contains("at 99.85 — filled on the last trade less half the spread.", fill.Message);
-    }
-
-    [Fact]
-    public async Task Out_of_hours_a_market_order_takes_the_last_quote_as_a_strategy_would()
-    {
-        // The strategy path's own rule: once the market is closed every quote
-        // is old, and the last one is the only price there is.
-        using var desk = new Desk(Ist(16, 0));
-        desk.Quote(ltp: 150m, bid: 149.5m, ask: 150.5m, updatedUtc: Ist(15, 29, 59));
-
-        var outcome = await desk.Place("BUY", limit: null);
-
-        Assert.Equal(150.5m, Assert.IsType<ManualOrderFill>(outcome.Fill).Price);
-        Assert.Equal("true", Read(Assert.Single(desk.Orders()).MetadataJson, "staleQuote"));
     }
 
     [Fact]

@@ -493,6 +493,8 @@ $problems"
     echo "StrategyRunner__EngineDirectory=$REPO/src/AlgoTrading.PythonEngine"
     echo "Instruments__MasterDirectory=$DEV/instruments"
     echo "Desk__PlanFile=$REPO/config/morning-plan.txt"
+    # seed-positions.py opens legs at any hour, on prices replay-ticks.py makes up.
+    echo "PaperFills__RefuseOpensWhileMarketClosed=false"
     echo "DEV_LIVE_REFUSED_LOG=$LOGS/refused-python.log"
   } > "$API_ENV"
   umask 022

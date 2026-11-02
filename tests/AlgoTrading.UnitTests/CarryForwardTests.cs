@@ -758,8 +758,14 @@ public class CarryForwardTests
             services.AddScoped<IPaperTradingService, PaperTradingService>();
             // These tests are about who holds a leg and what it is charged, in
             // round numbers: fills land on the quote exactly. The spread has
-            // tests of its own (PaperTradingServiceTests).
-            services.Configure<PaperFillOptions>(o => o.HalfSpreadFraction = 0m);
+            // tests of its own (PaperTradingServiceTests). They book on the real clock,
+            // so they open legs at whatever hour they happen to run; the session rule
+            // has tests of its own too (OpeningOutsideSessionTests).
+            services.Configure<PaperFillOptions>(o =>
+            {
+                o.HalfSpreadFraction = 0m;
+                o.RefuseOpensWhileMarketClosed = false;
+            });
             services.AddSingleton<StrategyProcessRegistry>();
             services.AddScoped<PositionCarryForward>();
             services.AddScoped<StrategyRunControl>();

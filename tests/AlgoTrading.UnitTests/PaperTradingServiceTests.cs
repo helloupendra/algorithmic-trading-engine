@@ -191,16 +191,20 @@ public class PaperTradingServiceTests
     }
 
     [Fact]
-    public async Task Out_of_hours_the_last_quote_still_prices_and_the_fill_says_how_old_it_was()
+    public async Task Out_of_hours_the_last_quote_still_prices_a_close_and_the_fill_says_how_old_it_was()
     {
-        using var book = new Book(Ist(16, 0));
-        book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, updatedUtc: Ist(15, 29, 59));
-
+        // An opening signal is refused out of hours (OpeningOutsideSessionTests); getting flat never is.
+        using var book = new Book(Ist(15, 29, 58));
+        book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, age: TimeSpan.FromSeconds(1));
         await book.Open(Call, "SELL", price: 100m);
 
-        var order = book.Orders().Single();
-        Assert.Equal(99.5m, order.FillPrice);
-        Assert.Equal("filled at the bid; priced on a stale quote (1801 s old)", Read(order.MetadataJson, "note"));
+        book.Clock.Now = Ist(16, 0);
+        book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, updatedUtc: Ist(15, 29, 59));
+        await book.Service.CreateSignalAsync(book.Signal("CLOSE_GROUP", "G1", Leg(Call, "BUY", 100m)));
+
+        var order = book.Orders().Single(x => x.Side == "BUY");
+        Assert.Equal(100.5m, order.FillPrice);
+        Assert.Equal("filled at the ask; priced on a stale quote (1801 s old)", Read(order.MetadataJson, "note"));
         Assert.Equal("true", Read(order.MetadataJson, "staleQuote"));
     }
 

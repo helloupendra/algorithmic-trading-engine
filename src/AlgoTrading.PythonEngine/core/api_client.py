@@ -513,6 +513,14 @@ class PlatformApiClient:
         unavailable, so a caller never mistakes "could not ask" for "closed" —
         silence outside market hours is normal, silence during them is not.
         """
+        session = self.market_session(exchange, segment)
+        return None if session is None else bool(session.get("isMarketOpen"))
+
+    def market_session(self, exchange: str = "NSE", segment: str = "CM") -> Optional[dict[str, Any]]:
+        """
+        The whole answer of GET /api/MarketSession/check (isMarketOpen,
+        nextMarketOpenUtc, sessionCloseUtc and so on), or None when it is unavailable.
+        """
         try:
             resp = self.http.get(
                 f"{self.base_url}/api/MarketSession/check",
@@ -521,7 +529,7 @@ class PlatformApiClient:
                 timeout=10,
             )
             resp.raise_for_status()
-            return bool(resp.json().get("isMarketOpen"))
+            return resp.json()
         except Exception:
             return None
 

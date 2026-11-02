@@ -51,6 +51,7 @@ import core.process_priority  # noqa: F401
 import core.safe_output  # noqa: F401
 import core.warmup_source  # noqa: F401
 import strategies.registry  # noqa: F401
+import strategies.session_gate  # noqa: F401
 import strategies.variants  # noqa: F401
 from core.warmup_source import WarmupBars
 from strategies.base_strategy import BaseStrategy, DataRequirement, StrategySignal
@@ -104,6 +105,12 @@ class FakeApi:
         self.unexpected = []
         self.contracts = set()
         self._lock = threading.Lock()
+        # What GET /api/MarketSession/check answers: open, unless a test says otherwise.
+        # A special session has no later stop inside it, so this holds at any hour the
+        # test happens to run, expiry day included (strategies/session_gate.py).
+        self.market = lambda: {"isMarketOpen": True, "specialSessionName": "the test's own"}
+        # What each POST of a signal meets, in order: "lost" raises a ReadTimeout.
+        self.signal_script = []
 
     # The session interface PlatformApiClient and UiSignalPublisher use.
     def get(self, url, params=None, **_kwargs):
@@ -118,6 +125,8 @@ class FakeApi:
         path = path[path.rfind("/api/"):]
         with self._lock:
             self.requests.append((method, path, None if params is None else dict(params), body))
+        if method == "POST" and path == "/api/Simulator/signals" and self.signal_script and self.signal_script.pop(0) == "lost":
+            raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=10)")
         answer = self._route(method, path, dict(params or {}), body)
         if answer is None:
             self.unexpected.append((method, path))
@@ -151,7 +160,7 @@ class FakeApi:
         if method == "GET" and path == "/api/LiveData/latest/all":
             return [{"symbol": s, "lastTradedPrice": 101.5, "updatedUtc": now} for s in sorted(self.contracts)]
         if method == "GET" and path == "/api/MarketSession/check":
-            return {"isMarketOpen": True}
+            return self.market()
         if method == "POST" and path == "/api/Simulator/signals":
             return {"id": 9001, "simulationRunId": RUN_ID, "signalType": body.get("signalType")}
         if method == "POST" and path in (f"/api/Strategy/runs/{RUN_ID}/signals", f"/api/Strategy/runs/{RUN_ID}/feed"):
@@ -267,6 +276,8 @@ class RunnerHarness:
         self.warmup_calls = []
         self.output = ""
         self.inputs = []
+        # More patches for one test: what it changes in the runner's surroundings.
+        self.extra_patches = []
 
     def load_warmup(self, **kwargs):
         self.warmup_calls.append(kwargs)
@@ -293,6 +304,7 @@ class RunnerHarness:
             mock.patch("core.warmup_source.load_warmup_bars", self.load_warmup),
             mock.patch("core.data_engine.DataEngine", mock.MagicMock()),
             mock.patch("redis.Redis", self.redis.client),
+            *self.extra_patches,
         ]
         try:
             with contextlib.ExitStack() as stack:
@@ -479,6 +491,68 @@ class RecapTwinTests(unittest.TestCase):
         self.assertEqual("2026-09-14", out.warmup_calls[0]["end_date"])
         (post,) = out.api.named("POST", "/api/Simulator/signals")
         self.assertEqual(contract_symbol("2026-09-16", 24900, "CE"), post[3]["legs"][0]["symbol"])
+
+    def test_a_recap_run_trades_in_the_evening_whatever_the_live_market_says(self):
+        in_session = datetime.combine(self.DAY, time(10, 1, 7), IST).astimezone(timezone.utc)
+        ticks = [{"symbol": SPOT, "lastTradedPrice": 24910.0, "exchangeTimestampUtc": in_session.isoformat(),
+                  "isReplay": True, "sourceKey": "desk-replay"}]
+        params = {"lots": 1, "underlying": "NIFTY", "session": "recap", "recap_date": self.DAY.isoformat()}
+        harness = RunnerHarness(params, ["2026-09-16", utc_day(7)], ticks, [])
+        harness.api.market = lambda: {"isMarketOpen": False}
+
+        harness.run()
+
+        self.assertEqual(1, len(harness.api.named("POST", "/api/Simulator/signals")), harness.output)
+        self.assertNotIn("waits for the market", harness.output)
+
+
+def live_tick(price=24910.0):
+    return {"symbol": SPOT, "lastTradedPrice": price, "exchangeTimestampUtc": datetime.now(timezone.utc).isoformat(),
+            "isReplay": False, "sourceKey": "dhan"}
+
+
+def live_harness(tick_count):
+    return RunnerHarness({"lots": 1, "underlying": "NIFTY"}, [utc_day(), utc_day(7)],
+                         [live_tick(24910.0 + i) for i in range(tick_count)], [])
+
+
+class MarketClosedTests(unittest.TestCase):
+    """A run started before the open: its OPEN waits, and goes out on the first tick of the session."""
+
+    OPENS_AT = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+
+    def closed(self):
+        return {"isMarketOpen": False, "nextMarketOpenUtc": self.OPENS_AT}
+
+    def test_nothing_is_posted_and_the_strategy_keeps_asking(self):
+        run = live_harness(3)
+        run.api.market = self.closed
+
+        run.run()
+
+        self.assertEqual([], run.api.named("POST", "/api/Simulator/signals"), run.output)
+        self.assertEqual([], run.api.unexpected)
+        self.assertEqual(3, len(run.live_inputs()), "put back each tick, and evaluated again")
+        self.assertEqual(1, run.output.count("Started outside the session"), run.output)
+        self.assertEqual(1, run.output.count("waits for the market"), "one line, not one per tick")
+        self.assertNotIn("================ SIGNALS", run.output)
+        self.assertNotIn("SIGNAL NOT BOOKED", run.output)
+        self.assertNotIn("ERROR", run.output)
+
+    def test_the_open_goes_out_once_the_market_opens(self):
+        run = live_harness(3)
+        run.extra_patches = [mock.patch("strategies.session_gate.ANSWER_SECONDS", 0.0)]
+        # Open from the second live tick on.
+        is_open = run.api.market
+        run.api.market = lambda: (self.closed() if len([i for i in ProbeStrategy.inputs
+                                                        if (i.metadata or {}).get("source") != "warmup"]) < 2
+                                  else is_open())
+
+        run.run()
+
+        self.assertEqual(1, len(run.api.named("POST", "/api/Simulator/signals")), run.output)
+        self.assertEqual(1, run.output.count("waits for the market"), run.output)
+        self.assertEqual(1, run.output.count("The market is open: OPENs are being posted."), run.output)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Domain.ValueObjects;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -162,6 +163,7 @@ public class PaperTradingService : IPaperTradingService
         }
 
         bool replay = IsReplay(run.Mode);
+        bool recap = !replay && RecapClock.IsRecap(run.ParametersJson);
         var timestampUtc = request.TimestampUtc.ToUniversalTime();
         var legs = request.Legs ?? new List<SimulationSignalLegRequest>();
 
@@ -183,6 +185,14 @@ public class PaperTradingService : IPaperTradingService
         // has already closed a leg the strategy's later CLOSE_GROUP for that leg
         // must be skipped, not filled as a fresh reverse position.
         bool reduceOnly = IsReduceOnlySignal(request.SignalType, signal.MetadataJson);
+
+        // Nothing opens while its market is closed: an order placed then could
+        // never have filled at the overnight quote. Exits stay allowed, and a
+        // replay or a recap trades a session that already happened, on its own
+        // clock. After the id lookup above on purpose: an OPEN booked before the
+        // close and posted again after it still gets its row back.
+        if (!replay && !recap && !reduceOnly)
+            await RefuseOpeningWhileMarketClosedAsync(legs, request.SignalType, cancellationToken);
 
         // Every leg gets a real price before ANY of them fills. Done inside the
         // loop instead, a group could half-fill — leg one booked, leg two
@@ -217,7 +227,6 @@ public class PaperTradingService : IPaperTradingService
             // loss). A recap is clocked by the replayed session the runner
             // stamped the signal with, but keeps the gate: it trades in real
             // time, like a live run.
-            bool recap = !replay && RecapClock.IsRecap(run.ParametersJson);
             DateTime? clock = replay || recap ? timestampUtc : null;
 
             for (int i = 0; i < legs.Count; i++)
@@ -237,6 +246,98 @@ public class PaperTradingService : IPaperTradingService
         PublishBooked(run, signal, bookedLegs, reason: null);
 
         return MapSignal(signal);
+    }
+
+    /// <summary>
+    /// Refuses an opening signal when the market of any of its legs is closed now.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 2 Nov review, finding 3: a runner is started before the open and handles every tick it reads, and vendors send
+    /// ticks outside the session (BSE's midnight-stamped replay of the close, NSE's pre-open index values). A strategy
+    /// that enters on its first tick was filled at yesterday's closing bid, and at 09:15 the gap became P&amp;L for a
+    /// trade that could never have happened. The fill said "priced on a stale quote"; the P&amp;L was still invented.
+    /// </para>
+    /// <para>
+    /// The runner keeps its OPENs back itself (strategies/session_gate.py), so a refusal here means it could not ask,
+    /// or something else posted: the manual ticket, the AI Trader, a script. A market the desk keeps no hours for is
+    /// not refused, and its quote's age is judged instead (<see cref="QuoteAgeApplies"/>).
+    /// </para>
+    /// </remarks>
+    private async Task RefuseOpeningWhileMarketClosedAsync(
+        List<SimulationSignalLegRequest> legs,
+        string? signalType,
+        CancellationToken cancellationToken)
+    {
+        if (_marketSessions is null || !_fills.RefuseOpensWhileMarketClosed) return;
+
+        var nowUtc = UtcNow;
+        var closed = new List<string>();
+        foreach (var symbol in legs.Select(x => x.Symbol).Distinct(StringComparer.Ordinal))
+        {
+            if (await WhyContractIsClosedAsync(symbol, nowUtc, cancellationToken) is { } why) closed.Add($"{symbol} {why}");
+        }
+
+        if (closed.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"MARKET NOT OPEN: {string.Join("; ", closed)}. The {signalType} signal was refused; exits remain allowed.");
+        }
+    }
+
+    /// <summary>
+    /// Why one contract cannot trade now, or null while it can (or when the desk keeps no hours for its market): the
+    /// session of its own segment, and from 7 Dec 2026 the 15:30 stop of an index contract on its expiry day.
+    /// </summary>
+    private async Task<string?> WhyContractIsClosedAsync(string? symbol, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(symbol)) return null;
+
+        int colon = symbol.IndexOf(':');
+        string exchange = colon > 0 ? symbol[..colon].Trim().ToUpperInvariant() : string.Empty;
+
+        MarketSessionInfo session;
+        try
+        {
+            session = _marketSessions!.GetSessionInfo(nowUtc, exchange, EquityMarketHours.SegmentOf(symbol));
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
+        {
+            return null;
+        }
+
+        var ist = IstTime.ToIst(nowUtc);
+        if (!session.IsMarketOpen)
+        {
+            var next = IstTime.ToIst(session.NextMarketOpenUtc);
+            string opens = next.Date == ist.Date
+                ? next.ToString("HH:mm", CultureInfo.InvariantCulture)
+                : next.ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture);
+            return $"opens {opens} IST";
+        }
+
+        // Inside the FO segment's hours only one contract can have stopped, and only
+        // after the cash close on a day the derivatives trade past it. A special
+        // session keeps one set of hours for everything, so it is left alone.
+        var today = DateOnly.FromDateTime(ist);
+        if (exchange == "MCX"
+            || session.SpecialSessionName is not null
+            || !EquityMarketHours.DerivativesCloseLater(today)
+            || !EquityMarketHours.IsDerivative(symbol)
+            || TimeOnly.FromDateTime(ist) < EquityMarketHours.CashClose)
+        {
+            return null;
+        }
+
+        var expiry = await _dbContext.Instruments.AsNoTracking()
+            .Where(x => x.Symbol == symbol)
+            .Select(x => x.ExpiryDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var close = EquityMarketHours.CloseOf(symbol, today, expiry);
+        return TimeOnly.FromDateTime(ist) >= close
+            ? $"stopped at {close.ToString("HH:mm", CultureInfo.InvariantCulture)} IST: an index contract stops at the cash close on its expiry day"
+            : null;
     }
 
     /// <summary>
