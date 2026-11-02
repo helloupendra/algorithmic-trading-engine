@@ -179,7 +179,7 @@ public class IndexOptionHistoryTests
 
         Assert.NotNull(chain);
         Assert.Equal(new DateOnly(2021, 3, 10), chain!.ExpiryDate);       // the nearest expiry that week
-        Assert.Equal(minute, chain.AsOfUtc);
+        Assert.Equal(minute.AddMinutes(1), chain.AsOfUtc);                 // when that bar ended
         Assert.Equal(15100m, chain.SpotPrice);
         Assert.Equal(15100m, chain.AtTheMoneyStrike);
         Assert.Equal(3, chain.Strikes.Count);
@@ -204,6 +204,42 @@ public class IndexOptionHistoryTests
 
         // Nothing within ten minutes of the clock: no chain rather than a stale one.
         Assert.Null(await history.ChainAsync("NIFTY", minute.AddHours(1), default));
+    }
+
+    [Fact]
+    public async Task A_rebuilt_chain_reads_only_bars_that_have_finished_by_the_asked_moment()
+    {
+        // ChainFlowBuy asks at the instant its candle closes. At 11:01:00 the history
+        // already holds the bar starting then, whose close is the price at 11:01:59.
+        await using var db = NewDb();
+        var earlier = Ist(2021, 3, 8, 11, 0);
+        var asked = earlier.AddMinutes(1);
+        db.OptionHistoryBars.AddRange(
+            Bar(Ist(2021, 3, 8, 9, 15), 15100m, "CE", close: 100m, offset: 0, oi: 1000, iv: 20m, spot: 15100m),
+            Bar(earlier, 15100m, "CE", close: 130m, offset: 0, oi: 1500, iv: 22m, spot: 15110m),
+            Bar(asked, 15100m, "CE", close: 999m, offset: 0, oi: 9000, iv: 90m, spot: 15900m));
+        await db.SaveChangesAsync();
+        var history = new IndexOptionHistory(db, Calendar());
+
+        var chain = await history.ChainAsync("NIFTY", asked, default);
+
+        Assert.NotNull(chain);
+        Assert.Equal(asked, chain!.AsOfUtc);                               // the 11:00 bar's end, so its age is 0 s honestly
+        var call = chain.Strikes.Single().Call!;
+        Assert.Equal(130m, call.LastTradedPrice);                          // not the 999 from 11:01:59
+        Assert.Equal(1500, call.OpenInterest);
+        Assert.Equal(15110m, chain.SpotPrice);
+
+        // Half way through the 11:01 bar it is still unfinished.
+        Assert.Equal(130m, (await history.ChainAsync("NIFTY", asked.AddSeconds(30), default))!.Strikes.Single().Call!.LastTradedPrice);
+
+        // The moment it has finished, it is readable.
+        var later = await history.ChainAsync("NIFTY", asked.AddMinutes(1), default);
+        Assert.Equal(999m, later!.Strikes.Single().Call!.LastTradedPrice);
+        Assert.Equal(asked.AddMinutes(1), later.AsOfUtc);
+
+        // At the very start of a session nothing has finished yet: no chain, not the first bar's future.
+        Assert.Null(await history.ChainAsync("NIFTY", Ist(2021, 3, 8, 9, 15), default));
     }
 
     [Fact]

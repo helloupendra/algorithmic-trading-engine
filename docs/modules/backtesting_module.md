@@ -96,7 +96,9 @@ for "it traded better". The console edits all of this on `/research/backtests/ne
   each stored strike with its premium, open interest, IV, the build-up since that session's open and a
   Black-Scholes delta from the stored IV (`OptionMath`). That is what lets a chain-reading strategy
   (ChainFlowBuy) replay years the poller never saw; it asks for the chain **as of the candle it is
-  judging**, and a chain from another minute is refused by its own age check.
+  judging**, and a chain from another minute is refused by its own age check. The rebuilt chain reads
+  only bars finished by that moment and reports the bar's end as its time: a bar starting at the asked
+  moment holds a close and an OI from up to 60 seconds later.
 - Index candles for those years come from Dhan's index history (`tools/index_history_import.py`, SourceKey `dhan`); FYERS candles win where both exist.
 - Lot sizes are the current master values; historical lot-size changes are not modelled (noted in the run's data notes).
 - Fills are at the option candle's close on the signal bar. Slippage is applied only when the run sets the `costs` block (3b): a buy then fills `slippage_percent` (0.5% by default, at least ₹0.05) above that close and a sell below it, with the statutory charges on the turnover. A run without it, which is the default, fills at the close itself with no slippage, and its only cost is the dialog's flat charge per lot, per fill (₹0 unless set).

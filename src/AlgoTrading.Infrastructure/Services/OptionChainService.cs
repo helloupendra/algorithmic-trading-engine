@@ -378,12 +378,14 @@ public class OptionChainService
 
             // MCX: the capture's spot is not the future (see the live branch), so
             // a replay reads the future's own one-minute bar at that moment when
-            // the feed recorded one.
+            // the feed recorded one: the last bar finished by then, since a bar
+            // that ends after the capture holds a price the capture could not see.
             if (commodity && captured && !string.IsNullOrEmpty(spotSymbol))
             {
                 var from = chain.AsOfUtc.AddMinutes(-10);
+                var finishedBy = chain.AsOfUtc.AddMinutes(-1);
                 var bar = await _dbContext.LiveBars.AsNoTracking()
-                    .Where(b => b.Symbol == spotSymbol && b.Resolution == "1m" && b.BarStartUtc >= from && b.BarStartUtc <= chain.AsOfUtc)
+                    .Where(b => b.Symbol == spotSymbol && b.Resolution == "1m" && b.BarStartUtc >= from && b.BarStartUtc <= finishedBy)
                     .OrderByDescending(b => b.BarStartUtc)
                     .Select(b => new { b.BarStartUtc, b.Close, b.SourceKey })
                     .FirstOrDefaultAsync(cancellationToken);

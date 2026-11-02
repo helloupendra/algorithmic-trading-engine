@@ -286,8 +286,10 @@ computes it:
   the API rebuilds from `option_history_bars`: the nearest weekly expiry,
   only the strikes stored (ATM−5 to ATM+5, and ±10 for NIFTY from August
   2021), OI and IV from Dhan's minute bars, delta from Black-Scholes on the
-  stored IV, and build-up measured from that session's open. A moment with
-  neither is blocked ("no spot price to compare the chain with").
+  stored IV, and build-up measured from that session's open. It reads the
+  last bar finished by that moment and reports the bar's end as its time.
+  A moment with neither is blocked ("no spot price to compare the chain
+  with").
 - **The chain is per minute.** OI, IV and greeks come from the per-minute
   capture. Live, near-money strikes' LTP, volume and OI are overlaid from
   live quotes, which Dhan streams about once a second for ATM ±5; a backtest

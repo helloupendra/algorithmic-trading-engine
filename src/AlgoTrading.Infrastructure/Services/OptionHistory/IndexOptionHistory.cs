@@ -149,15 +149,23 @@ public sealed class IndexOptionHistory
 
     /// <summary>
     /// The option chain as it stood at <paramref name="asOfUtc"/>, rebuilt from the stored
-    /// history: every strike the history holds at that minute, with its premium, open
-    /// interest, implied volatility, build-up since the session open and a delta computed
-    /// from that IV. Null when the history has no bar within ten minutes of the clock.
+    /// history: every strike the history holds at the last minute finished by then, with its
+    /// premium, open interest, implied volatility, build-up since the session open and a delta
+    /// computed from that IV. Null when the history has no bar within ten minutes of the clock.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This is what lets a chain-reading strategy replay a year it has no recorded chain
     /// for. It is narrower than a live chain — only the strikes the importer kept around
     /// ATM, and no bid/ask — so a strategy that needs a far strike still finds nothing,
     /// which is the honest answer rather than a filled-in one.
+    /// </para>
+    /// <para>
+    /// Finished bars only, and the time reported is the bar's end. A bar starting at the
+    /// asked moment holds a close and an OI from up to 60 seconds later. This used to read
+    /// that bar and call it age zero, so every history-backed ChainFlowBuy decision saw the
+    /// next minute's strike choice, OI, IV and spot (found 2 Nov).
+    /// </para>
     /// </remarks>
     public async Task<OptionChainResponse?> ChainAsync(string underlying, DateTime asOfUtc, CancellationToken cancellationToken)
     {
@@ -172,7 +180,7 @@ public sealed class IndexOptionHistory
             && x.Resolution == MinuteResolution);
 
         var minute = await series
-            .Where(x => x.BarStartUtc <= asOf && x.BarStartUtc >= dayStart && x.BarStartUtc >= asOf.AddMinutes(-10))
+            .Where(x => x.BarStartUtc <= asOf.AddMinutes(-1) && x.BarStartUtc >= dayStart && x.BarStartUtc >= asOf.AddMinutes(-10))
             .OrderByDescending(x => x.BarStartUtc)
             .Select(x => (DateTime?)x.BarStartUtc)
             .FirstOrDefaultAsync(cancellationToken);
@@ -190,13 +198,14 @@ public sealed class IndexOptionHistory
 
         decimal spot = rows.Select(x => x.Spot).FirstOrDefault(x => x is > 0) ?? 0m;
         decimal? atm = rows.Where(x => x.Offset == 0).Select(x => (decimal?)x.Strike).FirstOrDefault();
-        double years = expiry == default ? 0 : OptionMath.YearsBetween(minute.Value, ExpiryCloseUtc(expiry));
+        var barEnd = minute.Value.AddMinutes(1);
+        double years = expiry == default ? 0 : OptionMath.YearsBetween(barEnd, ExpiryCloseUtc(expiry));
 
         var response = new OptionChainResponse
         {
             Underlying = key,
             ExpiryDate = expiry,
-            AsOfUtc = minute.Value,
+            AsOfUtc = barEnd,
             SpotPrice = spot,
             AtTheMoneyStrike = atm,
         };
