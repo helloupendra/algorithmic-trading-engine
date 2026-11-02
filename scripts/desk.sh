@@ -5,7 +5,9 @@
 #     checks the database and Redis, then restarts the API. A restart builds
 #     first and stops the old API only when the build passed; an API that is
 #     down when the build fails starts from the last good build
-#     (DESK_STATE_DIR/api-last-good, lib/desk-common.sh);
+#     (DESK_STATE_DIR/api-last-good, lib/desk-common.sh). An API applying
+#     database migrations is not down: it is left alone up to a limit
+#     (DESK_STATE_DIR/api-migrating, lib/desk-common.sh);
 #   - every two minutes fetches from GitHub. A commit that changes the console,
 #     the API or docker-compose goes out only on a quiet desk: weekends,
 #     weekdays before 08:40 or after the evening close, and no live run
@@ -233,7 +235,7 @@ write_status() {
   {
     printf 'desk_pid=%s\n' "$$"
     printf 'updated=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-    printf 'api=%s\n' "$( api_healthy && echo up || echo DOWN )"
+    printf 'api=%s\n' "$( if api_healthy; then echo up; elif api_migrating; then echo migrating; else echo DOWN; fi )"
     printf 'commit=%s\n' "$last_commit"
     printf 'last_deploy=%s\n' "$last_deploy_note"
     printf 'market_open_ran_on=%s\n' "${opened_on:-not yet today}"
@@ -447,6 +449,42 @@ _deploy_if_behind() {
 }
 # <<< deploy-step
 
+# --- the health check -----------------------------------------------------------
+# >>> health-step (also loaded by scripts/tests/api-migration.test.sh)
+health_step() {
+  if api_healthy; then
+    fails=0
+    api_migration_answered
+    return 0
+  fi
+  # A migration under way is not a failed check, and is left alone up to its
+  # limit; past that it is restarted now. One that failed is told about by
+  # api_migration_check and restarted by the same three checks as any API down.
+  local mig=0
+  api_migration_check || mig=$?
+  case "$mig" in
+    0) fails=0; return 0 ;;
+    2) fails=3 ;;
+    *) fails=$((fails + 1)); warn "API health check failed ($fails/3)" ;;
+  esac
+  [ "$fails" -ge 3 ] || return 0
+  if [ "$DESK_BG_OPEN" = 1 ] && api_restart_in_progress; then
+    # A morning job running beside the loop is restarting it right now;
+    # a second restart would kill the API it is bringing up.
+    say "the API is down while another script restarts it ($API_RESTARTING_FILE) — leaving that restart alone"
+    return 0
+  fi
+  # The database first: an API restarted against a stopped Docker just
+  # dies again, two minutes at a time. The checkout is the deployed
+  # commit (deploy-step above), so this rebuilds nothing new; when that
+  # build fails anyway, api_restart starts the last good build.
+  say "API is down — checking infra, then restarting"
+  infra_up || true
+  api_restart || true
+  fails=0
+}
+# <<< health-step
+
 # --- the loop -------------------------------------------------------------------
 while true; do
   now=$(date +%s)
@@ -462,28 +500,7 @@ while true; do
   today="$(date +%F)"; dow="$(date +%u)"; hhmm="$(date +%H%M)"
 
   # 1. health
-  if api_healthy; then
-    fails=0
-  else
-    fails=$((fails + 1))
-    warn "API health check failed ($fails/3)"
-    if [ "$fails" -ge 3 ]; then
-      if [ "$DESK_BG_OPEN" = 1 ] && api_restart_in_progress; then
-        # A morning job running beside the loop is restarting it right now;
-        # a second restart would kill the API it is bringing up.
-        say "the API is down while another script restarts it ($API_RESTARTING_FILE) — leaving that restart alone"
-      else
-        # The database first: an API restarted against a stopped Docker just
-        # dies again, two minutes at a time. The checkout is the deployed
-        # commit (deploy-step above), so this rebuilds nothing new; when that
-        # build fails anyway, api_restart starts the last good build.
-        say "API is down — checking infra, then restarting"
-        infra_up || true
-        api_restart || true
-        fails=0
-      fi
-    fi
-  fi
+  health_step
 
   # 2. deploy — held while a background morning job runs: it restarts the API
   #    and the feeds itself, and a deploy in the middle would do it again.

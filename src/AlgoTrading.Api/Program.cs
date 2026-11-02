@@ -744,12 +744,15 @@ using (var scope = app.Services.CreateScope())
     // default 30 s and rolled back. This context is used for the migration
     // only; request-scoped contexts keep the default.
     dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
-    // Migrations get a long command timeout: a rebuild of a large table's key
-    // (live_ticks at 7.6M rows took 33 s for the key alone) is killed at the
-    // default 30 s and rolled back. This context is used for the migration
-    // only; request-scoped contexts keep the default.
-    dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
+    // /health does not answer until this is over, so the desk is told a migration
+    // is running and leaves this process alone. A throw skips Done() on purpose:
+    // see StartupMigrationMarker.
+    var pendingMigrations = (await dbContext.Database.GetPendingMigrationsAsync()).ToList();
+    var migrationMarker = pendingMigrations.Count == 0 ? null : AlgoTrading.Api.Services.StartupMigrationMarker.Begin(
+        Environment.GetEnvironmentVariable(AlgoTrading.Api.Services.StartupMigrationMarker.PathVariable),
+        pendingMigrations, app.Logger, DateTimeOffset.UtcNow);
     await dbContext.Database.MigrateAsync();
+    migrationMarker?.Done();
 
     var seeder = services.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();

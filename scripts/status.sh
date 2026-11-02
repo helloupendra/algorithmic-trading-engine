@@ -61,7 +61,11 @@ code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$API/health" 2>/dev
 # or the last good build, which the desk starts when the newest build failed (lib/desk-common.sh).
 how="dotnet run"; pgrep -f 'bin/Release/[^ ]*AlgoTrading\.Api\.dll' >/dev/null 2>&1 && how="Release build"
 pgrep -f 'api-last-good/AlgoTrading\.Api\.dll' >/dev/null 2>&1 && how="LAST GOOD build: the newest build failed, see logs/desk.log"
-[ "$code" = "200" ] && ok "API (local :5025)" "healthy ($how)" || bad "API (local :5025)" "health returned '${code:-no response}'"
+if [ "$code" = "200" ]; then ok "API (local :5025)" "healthy ($how)"
+elif pid="$(sed -n 's/^pid=//p' "$STATE_DIR/api-migrating" 2>/dev/null)" && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  # It does not answer until they finish, and the desk leaves it alone (lib/desk-common.sh).
+  meh "API (local :5025)" "applying database migrations (pid $pid), no answer until they finish"
+else bad "API (local :5025)" "health returned '${code:-no response}'"; fi
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$PUBLIC/" 2>/dev/null)"
 [ "$code" = "200" ] && ok "public $PUBLIC" "200" || bad "public $PUBLIC" "'${code:-no response}' — tunnel or API"

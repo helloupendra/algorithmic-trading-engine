@@ -165,6 +165,115 @@ api_stop() {
   sleep 1
 }
 
+# --- a database migration under way --------------------------------------------
+# The API applies pending migrations as it starts, before it listens (Program.cs,
+# with a 30-minute command timeout), so for that whole time /health does not
+# answer. The desk's patience is two minutes for a start and three failed checks
+# after it: until 2 Nov it killed any migration longer than that, the migration
+# rolled back, and the restarted API began it again, all night and into the
+# morning job (2 Nov review, F4).
+#
+# The API says what it is doing in a file: it writes API_MIGRATING_FILE (pid=,
+# started=, in Unix seconds, and pending=) before it migrates and removes it
+# after (StartupMigrationMarker). A file rather than an answer from /health,
+# whose meaning stays exactly as it was. Something answering 503 on the port
+# would reach the public site raw, because the Cloudflare Worker shows its
+# offline page for 502 and the like, not 503 (infra/cloudflare/worker.js), and
+# the pager and Sentinel need no new state to read: down is down, to them.
+#
+#   the file, and its process alive:  a migration is running. Not a failure, so
+#                                     the API is not restarted, up to the limit;
+#   the file, and its process gone:   the migration failed (the file is left on
+#                                     purpose when it throws) or was killed;
+#   no file:                          nothing is migrating; the usual rules.
+#
+# The limit is one 30-minute command and some room for the rest. Past it the API
+# is restarted, which rolls the migration back and starts it again, and Telegram
+# is told: a migration that heavy has to be applied by hand (scripts/aws/README.md).
+export API_MIGRATING_FILE="$DESK_STATE_DIR/api-migrating"
+API_MIGRATION_LIMIT_MIN="${API_MIGRATION_LIMIT_MIN:-45}"
+_API_MIGRATION_SINCE=""   # when the migration this process is watching began
+
+_api_migration_field() { sed -n "s/^$1=//p" "$API_MIGRATING_FILE" 2>/dev/null | tail -1; }
+
+# 0 while the process that wrote the file is alive and is still the API: a pid
+# can come round again. When ps cannot say, it counts as alive, which only ever
+# means waiting, and the limit bounds that.
+api_migrating() {
+  local pid args
+  pid="$(_api_migration_field pid)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  args="$(ps -p "$pid" -o args= 2>/dev/null)" || return 0
+  case "$args" in *AlgoTrading.Api*) return 0 ;; *) return 1 ;; esac
+}
+
+# Asked when /health has not answered:
+#   0  a migration is running, inside the limit: leave the API alone
+#   1  no migration is running
+#   2  one has run past the limit: restart the API
+#   3  one ended without finishing: it failed, or its process was killed
+api_migration_check() {
+  [ -f "$API_MIGRATING_FILE" ] || return 1
+  if ! api_migrating; then
+    # The API removes the file when it finishes, which can happen just now.
+    [ -f "$API_MIGRATING_FILE" ] || return 1
+    warn "the API stopped during a database migration: it failed or was killed (see logs/api.log)"
+    notify_at_most_hourly api-migration-failed "AlgoTrading API" "The API stopped during a database migration: it failed or was killed. Read logs/api.log. It is restarted as usual, and starts the migration again."
+    rm -f "$API_MIGRATING_FILE"
+    _API_MIGRATION_SINCE=""
+    return 3
+  fi
+  local now started elapsed pending
+  now="$(date +%s)"
+  started="$(_api_migration_field started)"
+  case "$started" in ''|*[!0-9]*) started="$now" ;; esac
+  elapsed=$(( now - started ))
+  if [ -z "$_API_MIGRATION_SINCE" ]; then
+    _API_MIGRATION_SINCE="$started"
+    pending="$(_api_migration_field pending)"
+    say "the API is applying ${pending:-its} database migration(s) (pid $(_api_migration_field pid), $(( elapsed / 60 )) min so far) — left alone for up to $API_MIGRATION_LIMIT_MIN min"
+    notify_at_most_hourly api-migration-started "AlgoTrading API" "The API is applying ${pending:-its} database migration(s), so it does not answer until they finish. The desk waits up to $API_MIGRATION_LIMIT_MIN min and does not restart it meanwhile."
+  fi
+  if [ "$elapsed" -ge "$(( API_MIGRATION_LIMIT_MIN * 60 ))" ]; then
+    warn "the database migration has run $(( elapsed / 60 )) min, past the $API_MIGRATION_LIMIT_MIN min limit — restarting the API, which rolls it back and starts it again"
+    notify_at_most_hourly api-migration-limit "AlgoTrading API" "A database migration has run $(( elapsed / 60 )) min, past the $API_MIGRATION_LIMIT_MIN min limit, so the API is being restarted: that rolls it back and starts it again. One this heavy has to be applied by hand with the desk stopped (scripts/aws/README.md)."
+    rm -f "$API_MIGRATING_FILE"
+    _API_MIGRATION_SINCE=""
+    return 2
+  fi
+  return 0
+}
+
+# /health has answered. Says how a migration this process watched ended, and
+# drops a file nothing removed: an API that answers is not migrating.
+api_migration_answered() {
+  [ -f "$API_MIGRATING_FILE" ] && rm -f "$API_MIGRATING_FILE"
+  [ -n "$_API_MIGRATION_SINCE" ] || return 0
+  local took=$(( ($(date +%s) - _API_MIGRATION_SINCE) / 60 ))
+  say "  the database migration finished (about $took min) and the API answers"
+  notify_at_most_hourly api-migration-finished "AlgoTrading API" "The database migration finished (about $took min) and the API answers again."
+  _API_MIGRATION_SINCE=""
+}
+
+# Waits for /health: two minutes, for as long as a migration runs inside its
+# limit, and two minutes more after one, for the seeding that follows it.
+# -> 0 it answered; 1 it did not, or a migration failed or ran past the limit.
+_api_wait_healthy() {
+  local waited=0 mig
+  while [ "$waited" -lt 120 ]; do
+    sleep 2
+    if api_healthy; then api_migration_answered; return 0; fi
+    mig=0; api_migration_check || mig=$?
+    case "$mig" in
+      0) waited=0; _api_restarting ;;   # holds off the desk's own health restart
+      1) waited=$((waited + 2)) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
 # --- how the API is built and run ---------------------------------------------------
 # By default `dotnet run`: a Debug build, and a `dotnet run` parent process of
 # about 245 MB that sits beside the API for its whole life. With
@@ -259,8 +368,13 @@ _api_launch() {  # dir command...
 # "ok" (built a moment ago, not again), "failed" (start the last good build at
 # once, no second compile while the API is down), empty (build it here).
 api_start() {
-  if api_healthy; then say "API already healthy"; _api_restarted; return 0; fi
+  if api_healthy; then say "API already healthy"; api_migration_answered; _api_restarted; return 0; fi
   _api_restarting
+  # An API applying migrations is not down: stopped here, a desk started during
+  # one would roll it back. The other answers go on to a fresh start.
+  local mig=0
+  api_migration_check || mig=$?
+  if [ "$mig" = 0 ] && _api_wait_healthy; then say "  API up"; _api_restarted; return 0; fi
   api_stop
   say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS${DESK_API_CONFIG:+, $DESK_API_CONFIG build})"
   # One log per API lifetime, kept under the time it ended, seven deep. Left
@@ -296,8 +410,8 @@ api_start() {
     notify_at_most_hourly api-build-failed "AlgoTrading API" "The API build failed and there is no last good build yet; trying the previous output in $(api_output_dir). Read logs/desk.log."
     _api_launch src/AlgoTrading.Api dotnet "$(api_output_dir)/AlgoTrading.Api.dll"
   fi
-  for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; _api_restarted; return 0; }; done
-  warn "the API did not come up within two minutes (see logs/api.log)"
+  if _api_wait_healthy; then say "  API up"; _api_restarted; return 0; fi
+  warn "the API did not come up (see logs/api.log)"
   _api_restarted
   return 1
 }
@@ -306,6 +420,11 @@ api_start() {
 #    that was already running was kept, not restarted.
 api_restart() {
   _api_restarting
+  # A migration under way finishes first, whoever asked for the restart: a
+  # deploy, the morning job, a person. Past its limit the restart goes ahead.
+  local mig=0
+  api_migration_check || mig=$?
+  if [ "$mig" = 0 ]; then _api_wait_healthy || true; fi
   # Built while the old API still serves: a slow build costs no downtime, and
   # a broken one costs nothing but a warning.
   if api_build >>"$LOG" 2>&1; then
