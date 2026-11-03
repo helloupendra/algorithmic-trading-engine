@@ -148,16 +148,21 @@ public static class DhanAutoSignInPolicy
 
     /// <summary>
     /// When to say loudly that the day has no token: <see cref="DhanAutoSignInSettings.NoTokenAlertIst"/>
-    /// (08:10), or later when the last token let the sign-in start only late, but
-    /// never after <see cref="DhanAutoSignInSettings.MorningUntilIst"/> (08:40),
-    /// which leaves a person five minutes to press Connect before the 08:45 job.
+    /// (08:10), or later when the last token let the sign-in start only late. A token
+    /// that ended by <see cref="DhanAutoSignInSettings.MorningUntilIst"/> (08:40) is
+    /// said by then, which leaves a person five minutes to press Connect before the
+    /// 08:45 job.
     /// </summary>
     /// <remarks>
     /// The later start is what the daily drift (see the class remarks) makes
     /// routine by Thursday: a token that ended at 08:07 is replaced from 08:09,
     /// and an alert at 08:10 sharp would call that sign-in failed while it runs.
     /// A refused token due to end past the window has no such sign-in coming, so
-    /// <paramref name="tokenRefused"/> keeps it at 08:10.
+    /// <paramref name="tokenRefused"/> keeps it at 08:10. Any other token ending past
+    /// the window does have one, and the window has gone by then: a Sign in now at
+    /// 09:06 ends at 09:06 the next day and is replaced from 09:08, and an alert the
+    /// second it ended would say "failed" before anything was tried, and use up the
+    /// day's one alert. It waits for that sign-in instead.
     /// </remarks>
     public static DateTime NoTokenAlertUtc(DateTime utcNow, DateTime? lastTokenEndsUtc, DhanAutoSignInSettings settings, bool tokenRefused = false)
     {
@@ -166,6 +171,7 @@ public static class DhanAutoSignInPolicy
         var latestUtc = day + settings.MorningUntilIst - IstOffset;
         if (tokenRefused && lastTokenEndsUtc > latestUtc) return alertUtc;
         var afterTries = EarliestAttemptUtc(utcNow, lastTokenEndsUtc, settings) + AlertGrace;
+        if (lastTokenEndsUtc > latestUtc) return afterTries;
         var at = afterTries < latestUtc ? afterTries : latestUtc;
         return at > alertUtc ? at : alertUtc;
     }

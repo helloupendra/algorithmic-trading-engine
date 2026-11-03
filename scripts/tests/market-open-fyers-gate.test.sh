@@ -15,7 +15,8 @@ check() {  # description, condition result (0 = pass)
 
 run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = already), clock HHMM,
               # [dhan_ok_after_sleeps (-1 = never, the default)], [dhan_failed_today (0/1)],
-              # [the calendar: trading (the default) | unknown], [feed verdict: fail (the default) | pass]
+              # [the calendar: trading (the default) | unknown], [feed verdict: fail (the default) | pass],
+              # [dropped: step 6 dropped the Dhan feed first (dhan_feed_failed)]
   (
     OUT="$(mktemp)"
     trap 'cat "$OUT"' EXIT   # fail() exits the case; its lines must still reach the checks
@@ -60,8 +61,10 @@ run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = alre
       esac
     }
     eval "$(sed -n '/^# >>> fyers-gate/,/^# <<< fyers-gate/p' scripts/market-open.sh)"
-    fyers_gate "$2"
+    if [ "${9:-}" = dropped ]; then dhan_feed_failed; fi
+    fyers_gate "$DHAN_PRIMARY"
     echo "exit: $?" >>"$OUT"
+    echo "failed today: $DHAN_FAILED_TODAY" >>"$OUT"
   )
 }
 
@@ -98,6 +101,20 @@ check "tells the owner" "$(grep -q 'notify: Dhan signed in at' <<<"$out"; echo $
 
 echo "Dhan was dropped after the open for delivering nothing, and is still 'signed in':"
 out="$(run_case silentDhan 0 1 0930 0 1)"
+check "does not hand the day back to Dhan" "$(! grep -q 'start_dhan_primary' <<<"$out"; echo $?)"
+check "waits for FYERS instead" "$(grep -q 'signed in at' <<<"$out"; echo $?)"
+
+echo "Step 6: no Dhan token at the feed check, FYERS not signed in, and a later code is accepted (the 09:19 case):"
+out="$(run_case noToken 1 -1 0918 2 0 trading fail dropped)"
+check "says Dhan has no token" "$(grep -q 'notify: Dhan has no token after the open' <<<"$out"; echo $?)"
+check "does not write Dhan off for the day" "$(grep -q 'failed today: 0' <<<"$out"; echo $?)"
+check "ends the wait on Dhan" "$(grep -q 'Dhan came up' <<<"$out" && grep -q 'exit: 0' <<<"$out"; echo $?)"
+check "starts Dhan as the feed again" "$(grep -q '^start_dhan_primary' <<<"$out"; echo $?)"
+
+echo "Step 6: Dhan signed in but silent at the feed check, FYERS signs in:"
+out="$(run_case silentAtCheck 1 1 0918 0 0 trading fail dropped)"
+check "writes Dhan off for the day" "$(grep -q 'failed today: 1' <<<"$out"; echo $?)"
+check "says it switched" "$(grep -q 'notify: Dhan feed delivered no prices' <<<"$out"; echo $?)"
 check "does not hand the day back to Dhan" "$(! grep -q 'start_dhan_primary' <<<"$out"; echo $?)"
 check "waits for FYERS instead" "$(grep -q 'signed in at' <<<"$out"; echo $?)"
 

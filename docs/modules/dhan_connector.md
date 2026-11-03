@@ -165,7 +165,9 @@ Dhan unreachable (no answer, a 5xx, 408 or 429, or a token Dhan issued that coul
 not be saved) is tried again after 15 minutes, three times a day.
 
 **The 08:10 alert.** On a trading day with no valid token at 08:10 (later when
-the last token only let the sign-in start late, never after 08:40), one Error
+the last token only let the sign-in start late, by 08:40 for a token that ended
+by then; a token ending after 08:40 gets its sign-in first, so one ending at
+09:06 is said at about 09:11), one Error
 message on Telegram says the automatic sign-in failed and to press Connect
 before 08:45, whatever the cause. The same moment, if the clock calls the token
 good, Dhan's profile is asked once whether it is: nothing else asks Dhan between

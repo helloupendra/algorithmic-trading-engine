@@ -285,6 +285,14 @@ public class DhanAutoSignInTests
         Assert.Equal(Ist(30, 8, 40), DhanAutoSignInPolicy.NoTokenAlertUtc(Ist(30, 8, 5), Ist(30, 8, 39), Window));
     }
 
+    [Fact]
+    public void A_token_that_ends_past_the_window_is_not_called_failed_until_its_sign_in_has_had_its_chance()
+    {
+        // Sign in now at 09:06:25 the day before: ends 09:06:25, tries from 09:08:25, three minutes to finish.
+        Assert.Equal(Ist(30, 9, 11, 25), DhanAutoSignInPolicy.NoTokenAlertUtc(Ist(30, 9, 6, 26), Ist(30, 9, 6, 25), Window));
+        Assert.Equal(Ist(30, 13, 5), DhanAutoSignInPolicy.NoTokenAlertUtc(Ist(30, 13, 0, 1), Ist(30, 13, 0), Window));
+    }
+
     [Theory]
     [InlineData("Invalid TOTP", DhanRefusal.Code)]
     [InlineData("DH-906 — Invalid TOTP", DhanRefusal.Code)]

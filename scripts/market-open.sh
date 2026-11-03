@@ -574,6 +574,23 @@ dhan_came_up() {
   [ "$(dhan_state 2>/dev/null | cut -d'|' -f1)" = ok ]
 }
 
+# Step 6: Dhan was the feed and nothing arrived after the open. Signed in but
+# silent, the wait below must not read "Dhan is signed in" as Dhan coming up, or
+# it would hand the day straight back to the feed that just failed. With no token
+# it is not silent, only waiting: the automatic sign-in keeps trying after a
+# refused code, and a code accepted at 09:19 must end the wait for FYERS too.
+dhan_feed_failed() {
+  if [ "$(dhan_state 2>/dev/null | cut -d'|' -f1)" = ok ]; then
+    warn "the Dhan feed delivered no prices — switching to the FYERS feed"
+    notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
+    DHAN_FAILED_TODAY=1
+  else
+    warn "Dhan has no token and its feed delivered no prices — FYERS takes over, or Dhan if its sign-in comes first"
+    notify "AlgoTrading" "Dhan has no token after the open. The morning carries on with whichever comes first: a Dhan sign-in (the automatic one keeps trying, or press Sign in now) or FYERS."
+  fi
+  DHAN_PRIMARY=0
+}
+
 wait_for_fyers() {  # blocks until FYERS (or, late, Dhan) is signed in; fails the run at LOGIN_WAIT_UNTIL
   say "  waiting for the FYERS sign-in — will keep watching until ${LOGIN_WAIT_UNTIL} IST"
   say "  (the token expired at 06:00; FYERS fixes that hour and has disabled refresh)"
@@ -788,22 +805,22 @@ fi
 # stopped and the FYERS feed takes over, so the strategies are not left
 # without prices.
 if [ "$FEED_VERDICT" = fail ] && [ "$DHAN_PRIMARY" = 1 ]; then
-  warn "the Dhan feed delivered no prices — switching to the FYERS feed"
-  notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
+  dhan_feed_failed
   stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
-  DHAN_PRIMARY=0
-  # Dhan is signed in but silent: the wait below must not read "Dhan is signed
-  # in" as Dhan coming up, or it would hand the day straight back to the feed
-  # that just failed.
-  DHAN_FAILED_TODAY=1
   # The morning did not wait for FYERS while Dhan was the feed; now it is needed.
   if ! connected; then
     say "  the FYERS feed needs a FYERS sign-in first"
     fyers_try_refresh || wait_for_fyers
   fi
-  start_fyers_feed
+  # The wait may have ended on Dhan signing in, which started its feed, and only one feed runs.
+  if [ "$DHAN_PRIMARY" = 1 ]; then
+    FEED_LABEL="(Dhan) "
+  else
+    start_fyers_feed
+    FEED_LABEL="(FYERS) "
+  fi
   sleep 90
-  check_feed "(FYERS) "
+  check_feed "$FEED_LABEL"
 fi
 
 if [ "$FEED_VERDICT" = fail ]; then
