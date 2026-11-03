@@ -8,6 +8,9 @@ const base: DhanAutoSignInStatus = {
   morningFromIst: '08:00',
   morningUntilIst: '08:40',
   stoppedForToday: false,
+  codesPausedUntilIst: null,
+  codesToday: 0,
+  maxCodesPerDay: 9,
   heldByDisconnect: false,
   tokenRefused: false,
   lastAttemptUtc: null,
@@ -43,6 +46,24 @@ describe('dhanAutoSignInView', () => {
     const view = dhanAutoSignInView({ ...base, stoppedForToday: true, lastOk: false, lastMessage: 'Dhan refused the PIN + TOTP sign-in (400: Invalid TOTP).' })
     expect(view.tone).toBe('neg')
     expect(view.detail).toContain('Invalid TOTP')
+  })
+
+  it('reads a pause after refused codes as neither stopped nor working, with the next try', () => {
+    const view = dhanAutoSignInView({ ...base, codesPausedUntilIst: '08:08', codesToday: 3, lastOk: false, lastMessage: 'Dhan refused the PIN + TOTP sign-in (400: Invalid TOTP).' })
+    expect(view.label).toBe('Paused')
+    expect(view.tone).toBe('warn')
+    expect(view.detail).toContain('Dhan refused 3 TOTP codes today')
+    expect(view.detail).toContain('08:08 IST')
+    expect(view.detail).toContain('up to 9 a day')
+  })
+
+  it('shows a pause after a restart too, when there is no last result to go on', () => {
+    expect(dhanAutoSignInView({ ...base, codesPausedUntilIst: '08:08', codesToday: 3 }).label).toBe('Paused')
+  })
+
+  it('calls the day stopped once the codes are used up, not paused', () => {
+    const view = dhanAutoSignInView({ ...base, stoppedForToday: true, codesToday: 9, lastOk: false, lastMessage: 'Dhan refused the PIN + TOTP sign-in (400: Invalid TOTP).' })
+    expect(view.label).toBe('Stopped for today')
   })
 
   it('says when it runs before it has ever run', () => {

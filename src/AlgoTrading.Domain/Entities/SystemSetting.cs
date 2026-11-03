@@ -94,6 +94,15 @@ public static class SystemSettingKeys
     public const string DhanAutoSignInStopped = "dhan.autosignin.stopped";
 
     /// <summary>
+    /// The TOTP codes the automatic Dhan sign-in has spent on an IST day without a
+    /// token, and when a machine may send the next, e.g. "2026-11-03: 3 codes, next
+    /// at 2026-11-03T02:38:01Z". Never a code. Saved before the codes go, so that no
+    /// restart can reset the day's limit; repeated refusals could lock the account.
+    /// It holds for that day only, and a successful sign-in removes it.
+    /// </summary>
+    public const string DhanAutoSignInCodes = "dhan.autosignin.codes";
+
+    /// <summary>
     /// Set once the default candle-pattern rules have been seeded, so rules an
     /// admin deleted stay deleted across restarts.
     /// </summary>

@@ -137,12 +137,32 @@ about a minute (the console's request must finish inside Cloudflare's 100
 seconds). Anything about the PIN, credentials or a lock stops the day at once.
 Wording not recognised gets one more code, then stops.
 
-**When it stops:** a refused PIN, three refused codes, two refusals with
-unrecognised wording, or a value missing or malformed stops the automatic tries
-for the rest of the IST day, with one Telegram message. Repeated wrong PINs can
-lock the account. Dhan unreachable (no answer, a 5xx, 408 or 429, or a token
-Dhan issued that could not be saved) is tried again after 15 minutes, three
-times a day.
+**Three refused codes pause the day; they do not stop it.** After a sign-in whose
+three codes were all refused as the code, the machine waits 5 minutes and sends
+one code, and so on, up to 6 such codes: at most 9 codes a day. A later code that
+Dhan takes clears everything, as any sign-in that works does. A later refusal
+about the PIN, or in wording not recognised, stops the day at once with no second
+code. A later code that gets no answer from Dhan comes under the rule for an
+unreachable Dhan below and does not count. During a pause neither the worker nor
+the morning job sends a code; the job's call gets 409, "Not tried: … next try at
+HH:mm IST", and the page shows **Paused**. **Sign in now** always tries, up to
+three codes as ever, and those count towards the 9 and restart the 5 minutes.
+
+Why: on Tue 3 Nov Dhan answered "Invalid TOTP" to the codes sent at 08:02:02,
+08:02:31 and 08:03:01, and that stopped the day, as three refused codes then did,
+so the 08:47 job said "Not tried: stopped for today" and nothing recovered until a
+person pressed **Sign in now** at 09:06:25, when the first code, from the same PIN
+and secret, was accepted. The server's clock was exact, and the same sign-in, two
+minutes after the last token, worked on most weekdays in October. The refusal
+comes and goes (28 and 30 Sep too) and its cause is not known; Dhan's documentation
+says nothing about lockouts or limits. The limit of 9 is there because repeated
+refusals could lock the account.
+
+**When it stops:** a refused PIN, 9 refused codes, two refusals with unrecognised
+wording, or a value missing or malformed stops the automatic tries for the rest of
+the IST day, with one Telegram message. Repeated wrong PINs can lock the account.
+Dhan unreachable (no answer, a 5xx, 408 or 429, or a token Dhan issued that could
+not be saved) is tried again after 15 minutes, three times a day.
 
 **The 08:10 alert.** On a trading day with no valid token at 08:10 (later when
 the last token only let the sign-in start late, never after 08:40), one Error
@@ -183,6 +203,18 @@ again. A stop from an earlier day is ignored. If the setting cannot be read, no
 automatic try is made: that costs a morning of pressing Connect, where trying
 could lock the account.
 
+The pause and the count **survive API restarts too**, or a restart would buy nine
+more codes. They are saved under `dhan.autosignin.codes` as the IST day, the codes
+spent and the next try (`2026-11-03: 3 codes, next at 2026-11-03T02:38:01Z`, never a
+code). The count is saved before the codes go, not after Dhan answers, so even a
+restart with a code on its way cannot start it again, and a machine that cannot
+save it does not send (a person's press goes regardless). A first sign-in counts
+its three together, so after a crash the count can read high, never low; a restart
+in that moment waits the 5 minutes as if they had been refused. The count covers
+one IST day, the next morning starts again with three codes, and a sign-in that
+works removes the setting. That makes one extra write and one delete on an ordinary
+morning, and no migration.
+
 **Sign in now** on the page always tries, whatever is saved, and a sign-in that
 works clears the saved stop. To take the automatic sign-in off for longer, set
 `Dhan:AutoSignIn:Enabled` to false; the morning job's call then gets 409 too.
@@ -201,8 +233,12 @@ works clears the saved stop. To take the automatic sign-in off for longer, set
   for the next step.
 - **Not cancelled by the caller.** The morning job's `curl` gives up after 30
   seconds; the sign-in carries on, so a token Dhan has issued is still saved.
-- Every attempt says what it did on Telegram (Connector category), and the panel
-  shows the last try and when the token it took ends.
+- A sign-in says what it did on Telegram (Connector category), and the panel shows
+  the last try and when the token it took ends. Refused codes make few messages: one
+  at the first refused sign-in saying it keeps trying until about HH:mm IST, one at
+  the final stop, and the usual success message saying how many Dhan refused first.
+  A machine's later code sends none; it is in `api.log`. A person's press that fails
+  still hears back.
 - **Every code is logged** in `api.log` with the IST time it was read, how many
   seconds into its TOTP step, whether the last token was still valid (and for
   how long) or when it ended, and Dhan's reason fields, with the PIN, secret and
@@ -816,7 +852,7 @@ is.
 | `Providers/Dhan/DhanRegistration.cs` | Registers everything below |
 | `Providers/Dhan/DhanApiClient.cs` | Headers, token choice (sign-in, then configuration), pacing (`DhanRateGate`), error reading |
 | `Providers/Dhan/DhanLogin.cs` | The daily sign-in: consent, login URL, callback exchange, the PIN + TOTP call, account pin |
-| `Providers/Dhan/DhanAutoSignIn.cs` | The automatic sign-in: when (`DhanAutoSignInPolicy`), how often (`DhanAutoSignInState`), the Telegram message, the hosted worker |
+| `Providers/Dhan/DhanAutoSignIn.cs` | The automatic sign-in: when (`DhanAutoSignInPolicy`), how often (`DhanAutoSignInState`), the day's saved count of codes (`DhanAutoSignInCodes`), the Telegram message, the hosted worker |
 | `Providers/Dhan/DhanHistory.cs` | History request and response rules |
 | `Providers/Dhan/DhanMarketDataProvider.cs` | `IMarketDataProvider` for history |
 | `Providers/Dhan/DhanOptionChain.cs`, `DhanOptionChainClient.cs` | Chain model and client |
@@ -829,7 +865,7 @@ is.
 | `Api/Controllers/DhanController.cs` | The endpoints above, and `GET`/`POST /api/Dhan/auto-sign-in` |
 | `tests/AlgoTrading.UnitTests/DhanConnectorTests.cs` | Rules pinned against real answers and master rows |
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
-| `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, the stop across a restart, one code per TOTP step, the morning job's call, expired pasted tokens |
+| `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, the stop across a restart, the pause and the limit of codes across a restart, one code per TOTP step, the morning job's call, expired pasted tokens |
 | `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, the on/off switch across restarts and its warning, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe; the store-only socket thread and the `dhan-emit` thread |

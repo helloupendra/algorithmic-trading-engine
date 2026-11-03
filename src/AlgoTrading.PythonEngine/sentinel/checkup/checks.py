@@ -223,6 +223,9 @@ def _auto_sign_in_words(auto: Optional[dict]) -> str:
     message = str(auto.get("lastMessage") or "").strip()
     if auto.get("stoppedForToday"):
         return "the automatic sign-in stopped for today" + (f": {message}" if message else "")
+    paused = auto.get("codesPausedUntilIst")
+    if paused:
+        return f"the automatic sign-in is paused after {auto.get('codesToday')} refused TOTP codes, next try at {paused} IST"
     if auto.get("lastOk") is False:
         return "the last automatic sign-in failed" + (f": {message}" if message else "")
     return ""
@@ -235,7 +238,7 @@ def _renewed_later(inp: Inputs, auto: Optional[dict]) -> str:
     Dhan's token lasts a day, so before 08:00 it is out as a matter of course.
     """
     if not isinstance(auto, dict) or not auto.get("configured") or not auto.get("enabled") \
-            or auto.get("stoppedForToday") or auto.get("lastOk") is False:
+            or auto.get("stoppedForToday") or auto.get("codesPausedUntilIst") or auto.get("lastOk") is False:
         return ""
     start, until = str(auto.get("morningFromIst") or ""), str(auto.get("morningUntilIst") or "")
     try:

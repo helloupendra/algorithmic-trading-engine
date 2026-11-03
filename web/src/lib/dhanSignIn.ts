@@ -15,6 +15,10 @@ export interface DhanAutoSignInStatus {
   morningFromIst: string
   morningUntilIst: string
   stoppedForToday: boolean
+  /** Dhan refused TOTP codes, and the desk is waiting to send one more at this time; null otherwise. */
+  codesPausedUntilIst: string | null
+  codesToday: number
+  maxCodesPerDay: number
   /** Someone pressed Disconnect; the desk does not sign in until someone connects. */
   heldByDisconnect?: boolean
   /** Dhan refused the token before its 24 hours were up. */
@@ -77,13 +81,23 @@ export function dhanAutoSignInView(status: DhanAutoSignInStatus | undefined): Dh
   }
 
   if (status.stoppedForToday) {
-    // A refused PIN, three refused codes, a missing value or three unreachable
-    // tries stop the day, and retrying a wrong PIN can lock the account: the
-    // machine waits for a person.
+    // A refused PIN, a day's limit of refused codes, a missing value or three
+    // unreachable tries stop the day, and retrying a wrong PIN can lock the
+    // account: the machine waits for a person.
     return {
       tone: 'neg',
       label: 'Stopped for today',
       detail: `${status.lastMessage ?? 'The last try failed.'} It tries again tomorrow; Sign in now tries at once.`,
+    }
+  }
+
+  if (status.codesPausedUntilIst) {
+    // Neither stopped nor working: on 3 Nov Dhan refused three codes, then took the
+    // next one sent an hour later, so the desk keeps sending one at a time.
+    return {
+      tone: 'warn',
+      label: 'Paused',
+      detail: `Dhan refused ${status.codesToday} TOTP ${status.codesToday === 1 ? 'code' : 'codes'} today. The next goes at ${status.codesPausedUntilIst} IST, up to ${status.maxCodesPerDay} a day; Sign in now tries at once.`,
     }
   }
 

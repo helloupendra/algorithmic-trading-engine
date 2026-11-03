@@ -132,6 +132,14 @@ class DhanTokenTests(Base):
         self.assertIn("stopped for today: Dhan refused the PIN", item.detail)
         self.assertIn("Connectors → Dhan → Connect", item.action)
 
+    def test_signed_out_during_a_pause_says_paused_and_when_rather_than_stopped_or_due_in_the_window(self):
+        # After a restart lastOk is unknown: the pause alone must keep it from reading as a sign-in still to come.
+        auto = dict(AUTO_OK, lastOk=None, lastMessage=None, codesPausedUntilIst="08:08", codesToday=3)
+        item = self.one(checks.dhan_token(self.inputs("on-request", self.api(provider("dhan", connected=False), auto), now=ist(8, 4))))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("paused after 3 refused TOTP codes, next try at 08:08 IST", item.detail)
+        self.assertNotIn("stopped", item.detail)
+
     def test_signed_out_before_the_automatic_sign_in_has_had_its_window_is_a_note(self):
         # 28 Sep, 04:00: an on-request checkup read yesterday's expired token as
         # "1 thing to do right now", four hours before the sign-in that renews it.

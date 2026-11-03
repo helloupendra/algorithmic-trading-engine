@@ -82,7 +82,7 @@ quotes until the close squares them off.
 | 07:15 | Mutual fund report jobs' retry: the benchmark TRIs and the TER again, only when the 23:45 run failed or fell short ([mutual funds](mutual_funds_module.md)) | every day, when needed | `MutualFundAnalyticsSchedule` in `MutualFundAnalyticsState.cs` |
 | 08:00–09:00 | AI Data Curator's morning pass: the trading day before, and today's expiries | trading days | `Ai:DataCuratorMorningIst`, `DataCuratorAgent.cs` |
 | until 08:40 | Deploys build and restart (no live run needed) | weekdays | `deploy_allowed`, `desk-common.sh` |
-| from 08:00 | Dhan automatic sign-in: first try at the later of 08:00 and 2 minutes after the last token ends; never while a token is live | weekdays | `DhanAutoSignIn.cs` |
+| from 08:00 | Dhan automatic sign-in: first try at the later of 08:00 and 2 minutes after the last token ends; never while a token is live; after three refused codes, one code every 5 minutes, at most 9 a day | weekdays | `DhanAutoSignIn.cs` |
 | 08:10 | Telegram alert if there is still no Dhan token (moves later with the token's end, never past 08:40) | trading days | `DhanAutoSignIn.cs` |
 | 08:45 | `market-open.sh`: FYERS token, feeds, the morning plan into the accounts; runners start about 08:46. It stops by itself on an exchange holiday. | weekdays | `scripts/desk.sh`, `scripts/market-open.sh` |
 | 08:50 | Forecasts issued | trading days | `ForecastScheduler.cs` |

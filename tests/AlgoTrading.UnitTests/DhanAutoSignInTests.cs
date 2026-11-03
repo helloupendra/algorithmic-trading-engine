@@ -621,7 +621,7 @@ public class DhanAutoSignInTests
     }
 
     [Fact]
-    public async Task Three_refused_codes_stop_the_day_each_code_from_a_new_step_within_two_minutes()
+    public async Task Three_refused_codes_pause_the_day_each_code_from_a_new_step_within_two_minutes()
     {
         var clock = new JumpingClock(TuesdayMorning); // 08:05:10, ten seconds into a step
         var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
@@ -637,9 +637,9 @@ public class DhanAutoSignInTests
             handler.Codes);
         Assert.Equal(3, handler.Codes.Distinct().Count());
         Assert.True(clock.Waited < TimeSpan.FromMinutes(2));
-        Assert.Equal("2026-09-29: Dhan refused 3 TOTP codes in a row", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInStopped));
 
-        // The machine has stopped for the day ...
+        // The machine is waiting ...
         Assert.Null(await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default));
         Assert.Equal(3, handler.Calls);
 
@@ -697,7 +697,7 @@ public class DhanAutoSignInTests
     }
 
     [Fact]
-    public async Task The_28_Sep_console_press_that_Dhan_keeps_refusing_still_stops_the_day()
+    public async Task The_28_Sep_console_press_that_Dhan_keeps_refusing_pauses_the_day_and_its_codes_count()
     {
         var handler = new Handler(InvalidTotp);
         var store = new MemoryStore();
@@ -707,7 +707,8 @@ public class DhanAutoSignInTests
 
         Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
         Assert.Equal(3, handler.Calls);
-        Assert.StartsWith("2026-09-28: ", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInStopped));
+        Assert.StartsWith("2026-09-28: 3 codes, next at ", store.Values[SystemSettingKeys.DhanAutoSignInCodes]);
     }
 
     [Fact]
@@ -766,6 +767,592 @@ public class DhanAutoSignInTests
             await saturday.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
 
         Assert.Empty(notifier.Sent);
+    }
+
+    // --------------------------------------------- refused codes pause (3 Nov)
+
+    private const string InvalidPin = """{"errorCode":"DH-905","errorMessage":"Invalid PIN"}""";
+    private const string Pressed = "Dhan did not sign in by itself";
+
+    // TuesdayMorning's three codes go at 08:05:10, 08:05:31 and 08:06:01; the next is due five minutes after the last.
+    private static DateTime LaterCode(int n) => Ist(29, 8, 11, 1).AddMinutes(5 * (n - 1));
+
+    private static DateTime Now(TimeProvider clock) => clock.GetUtcNow().UtcDateTime;
+
+    private static string StoredCodes(int codes, DateTime next) => new DhanAutoSignInCodes(new DateOnly(2026, 9, 29), codes, next).Stored;
+
+    [Fact]
+    public async Task Three_refused_codes_pause_rather_than_stop_and_no_code_goes_during_the_pause()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+
+        var result = await worker.CheckOnceAsync(default);
+
+        Assert.Equal(DhanSignInFailure.Refused, result!.Failure);
+        Assert.Equal(3, handler.Calls);
+        Assert.False(state.StoppedFor(Now(clock)));
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInStopped));
+        Assert.Equal(LaterCode(1), state.PausedUntil(Now(clock)));
+        Assert.Equal(StoredCodes(3, LaterCode(1)), store.Values[SystemSettingKeys.DhanAutoSignInCodes]);
+
+        clock.Set(LaterCode(1).AddSeconds(-1));
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Equal(3, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Each_later_round_sends_one_code_from_a_new_step_then_waits_again()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        using var provider = Services(handler, AutoOn(), current: null, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(1));
+        var later = await worker.CheckOnceAsync(default);
+
+        Assert.Equal(DhanSignInFailure.Refused, later!.Failure);
+        Assert.Equal(4, handler.Calls);
+        Assert.Equal(4, handler.Codes.Distinct().Count());
+        Assert.Equal(TimeSpan.FromSeconds(51), clock.Waited); // the first sign-in's only: a later code has no step to wait for
+        Assert.Equal(LaterCode(2), state.PausedUntil(Now(clock)));
+
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Equal(4, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_later_code_read_late_in_its_step_still_waits_for_the_next_step()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        using var provider = Services(handler, AutoOn(), current: null, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(Ist(29, 8, 11, 28)); // 28 s into its step
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(Totp.Generate(Secret, At(Ist(29, 8, 11, 31))), handler.Codes[3]);
+    }
+
+    [Fact]
+    public async Task A_success_in_a_later_round_clears_the_pause_and_the_count()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        await worker.CheckOnceAsync(default);
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(2));
+        var result = await worker.CheckOnceAsync(default);
+
+        Assert.True(result!.Ok);
+        Assert.Equal(5, handler.Calls);
+        Assert.Contains("Dhan refused 4 codes first; a fresh one worked.", result.Message);
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInCodes));
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInStopped));
+        Assert.Null(state.PausedUntil(Now(clock)));
+        Assert.Equal(0, state.CodesToday(Now(clock)));
+        Assert.True(state.LastOk);
+    }
+
+    [Fact]
+    public async Task The_ninth_refused_code_stops_the_day_with_a_reason_that_says_so()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        await worker.CheckOnceAsync(default);
+
+        for (int n = 1; n <= DhanAutoSignInPolicy.MaxLaterCodes; n++)
+        {
+            clock.Set(LaterCode(n));
+            Assert.False(state.StoppedFor(Now(clock)));
+            await worker.CheckOnceAsync(default);
+            Assert.Equal(3 + n, handler.Calls);
+        }
+
+        Assert.Equal(9, handler.Codes.Distinct().Count());
+        Assert.Equal("2026-09-29: Dhan refused 9 TOTP codes today", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+        Assert.True(state.StoppedFor(Now(clock)));
+        Assert.Null(state.PausedUntil(Now(clock)));
+
+        clock.Set(LaterCode(7));
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Equal(9, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_refused_PIN_in_a_later_round_stops_the_day_at_once()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(InvalidPin, HttpStatusCode.BadRequest).Then(Issued);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(4, handler.Calls);
+        Assert.Equal("2026-09-29: Dhan refused the PIN", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+        clock.Set(LaterCode(2));
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Equal(4, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Unrecognised_wording_in_a_later_round_stops_with_no_second_code()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then("""{"remarks":"Something went wrong"}""").Then(Issued);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(4, handler.Calls);
+        Assert.Equal("2026-09-29: Dhan refused the PIN or the code", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+    }
+
+    [Fact]
+    public async Task A_sign_in_whose_codes_were_not_all_refused_as_the_code_stops_as_it_did()
+    {
+        var handler = new Handler("""{"remarks":"Something went wrong"}""").Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: new JumpingClock(TuesdayMorning));
+
+        await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.Equal(3, handler.Calls);
+        Assert.Equal("2026-09-29: Dhan refused the PIN or the code", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+    }
+
+    [Fact]
+    public async Task An_unreachable_Dhan_in_a_later_round_waits_its_fifteen_minutes_and_spends_no_code_of_the_limit()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then("<html>bad gateway</html>", HttpStatusCode.BadGateway).Then(InvalidTotp);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(1));
+        var later = await worker.CheckOnceAsync(default);
+
+        Assert.Equal(DhanSignInFailure.Unreachable, later!.Failure);
+        Assert.Equal(3, state.CodesToday(Now(clock)));
+        Assert.StartsWith("2026-09-29: 3 codes", store.Values[SystemSettingKeys.DhanAutoSignInCodes]);
+
+        clock.Set(LaterCode(1).AddMinutes(15).AddSeconds(-1));
+        Assert.Null(await worker.CheckOnceAsync(default));
+        Assert.Equal(4, handler.Calls);
+
+        clock.Set(LaterCode(1).AddMinutes(15));
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(5, handler.Calls);   // one code, not a fresh three
+        Assert.Equal(4, state.CodesToday(Now(clock)));
+    }
+
+    [Fact]
+    public async Task An_unreachable_Dhan_before_any_refusal_still_gets_a_full_sign_in_next_time()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler("<html>bad gateway</html>", HttpStatusCode.BadGateway).Then(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        using var provider = Services(handler, AutoOn(), current: null, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(0, provider.GetRequiredService<DhanAutoSignInState>().CodesToday(Now(clock)));
+
+        clock.Set(TuesdayMorning.UtcDateTime.AddMinutes(16));
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(4, handler.Calls);
+    }
+
+    [Fact]
+    public void Refused_codes_do_not_spend_the_unreachable_tries()
+    {
+        var state = new DhanAutoSignInState();
+        var now = Ist(29, 8, 0);
+        state.CountCodes(now, 3);
+        Assert.Null(state.Failed(now, "automatic", "Invalid TOTP", DhanSignInFailure.Refused, DhanRefusal.Code));
+        state.CountCodes(now.AddMinutes(5), 1);
+        Assert.Null(state.Failed(now.AddMinutes(5), "automatic", "Invalid TOTP", DhanSignInFailure.Refused, DhanRefusal.Code));
+
+        Assert.Null(state.Failed(now.AddMinutes(10), "automatic", "down", DhanSignInFailure.Unreachable));
+
+        Assert.False(state.StoppedFor(now.AddMinutes(10)));
+        Assert.False(state.MayTryAutomatically(now.AddMinutes(24), out _));
+        Assert.True(state.MayTryAutomatically(now.AddMinutes(25), out _));
+    }
+
+    [Fact]
+    public async Task The_next_day_starts_again_with_three_codes_whatever_was_saved()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore();
+        using (var yesterday = Services(handler, AutoOn(), current: null, store: store, clock: clock))
+            await yesterday.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        clock.Set(Ist(30, 8, 0, 1));
+        using var today = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        await today.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.Equal(6, handler.Calls);
+        Assert.StartsWith("2026-09-30: 3 codes", store.Values[SystemSettingKeys.DhanAutoSignInCodes]);
+    }
+
+    // ............................................... a restart cannot reset it
+
+    [Fact]
+    public async Task The_cap_and_the_pause_survive_a_restart_before_every_code()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore();
+
+        async Task<DhanAutoSignInResult?> AfterARestart()
+        {
+            using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+            var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+            await worker.RestoreAsync(default);
+            return await worker.CheckOnceAsync(default);
+        }
+
+        await AfterARestart();
+        Assert.Equal(3, handler.Calls);
+
+        clock.Set(LaterCode(1).AddSeconds(-1));
+        await AfterARestart();
+        Assert.Equal(3, handler.Calls);
+
+        for (int n = 1; n <= DhanAutoSignInPolicy.MaxLaterCodes; n++)
+        {
+            clock.Set(LaterCode(n));
+            await AfterARestart();
+            Assert.Equal(3 + n, handler.Calls);
+        }
+
+        clock.Set(LaterCode(7));
+        await AfterARestart();
+        Assert.Equal(9, handler.Calls);
+        Assert.Equal(9, handler.Codes.Distinct().Count());
+        Assert.Equal("2026-09-29: Dhan refused 9 TOTP codes today", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+    }
+
+    [Fact]
+    public async Task The_count_is_in_the_database_before_the_codes_go()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var store = new MemoryStore();
+        var seen = new List<string?>();
+        var handler = new Handler(InvalidTotp) { OnSend = () => seen.Add(store.Values.GetValueOrDefault(SystemSettingKeys.DhanAutoSignInCodes)) };
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        await worker.CheckOnceAsync(default);
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+
+        Assert.All(seen.Take(3), value => Assert.StartsWith("2026-09-29: 3 codes", value));
+        Assert.StartsWith("2026-09-29: 4 codes", seen[3]);
+    }
+
+    [Fact]
+    public async Task A_restart_with_codes_on_their_way_does_not_start_the_count_again()
+    {
+        // The API died before Dhan answered: all that is left is what was saved first.
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInCodes] = StoredCodes(3, LaterCode(1)) } };
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        var held = await worker.CheckOnceAsync(default);
+        Assert.False(held!.Tried);
+        Assert.Equal(0, handler.Calls);
+
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+        Assert.Equal(1, handler.Calls);
+        Assert.StartsWith("2026-09-29: 4 codes", store.Values[SystemSettingKeys.DhanAutoSignInCodes]);
+    }
+
+    [Fact]
+    public async Task A_count_at_the_limit_stops_the_day_even_if_the_stop_was_never_saved()
+    {
+        var handler = new Handler(Issued);
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInCodes] = StoredCodes(9, Ist(29, 8, 0)) } };
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        var held = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.False(held!.Tried);
+        Assert.Contains("Dhan refused 9 TOTP codes today", held.Message);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_code_whose_count_cannot_be_saved_does_not_go_but_a_person_still_may()
+    {
+        var store = new MemoryStore { BrokenWrites = true };
+        var handler = new Handler(Issued);
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        var automatic = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.False(automatic!.Tried);
+        Assert.Contains("could not be saved", automatic.Message);
+        Assert.Equal(0, handler.Calls);
+        Assert.Equal(0, provider.GetRequiredService<DhanAutoSignInState>().CodesToday(TuesdayMorning.UtcDateTime));
+
+        Assert.Equal(StatusCodes.Status200OK, (await SignInNow(provider, "console")).StatusCode);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public void The_saved_count_reads_back_and_anything_else_reads_as_nothing()
+    {
+        var codes = new DhanAutoSignInCodes(new DateOnly(2026, 11, 3), 4, new DateTime(2026, 11, 3, 2, 38, 1, DateTimeKind.Utc));
+
+        Assert.Equal("2026-11-03: 4 codes, next at 2026-11-03T02:38:01Z", codes.Stored);
+        var back = DhanAutoSignInCodes.FromStored(codes.Stored);
+        Assert.Equal(codes, back);
+        Assert.Equal(DateTimeKind.Utc, back!.NextUtc.Kind);
+
+        Assert.Null(DhanAutoSignInCodes.FromStored(null));
+        Assert.Null(DhanAutoSignInCodes.FromStored("2026-11-03: Dhan refused the PIN"));
+        Assert.Null(DhanAutoSignInCodes.FromStored("2026-11-03: many codes, next at 2026-11-03T02:38:01Z"));
+        Assert.Null(DhanAutoSignInCodes.FromStored("2026-11-03: -1 codes, next at 2026-11-03T02:38:01Z"));
+        Assert.Null(DhanAutoSignInCodes.FromStored("2026-11-03: 4 codes, next at soon"));
+    }
+
+    // ........................................................ the morning job
+
+    [Fact]
+    public async Task The_morning_job_gets_the_not_tried_answer_during_a_pause_even_after_the_restart_it_makes()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        var store = new MemoryStore();
+        using (var before = Services(handler, AutoOn(), current: null, store: store, clock: clock))
+            await before.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        clock.Set(Ist(29, 8, 7));
+        using var after = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var morning = await SignInNow(after, "morning job");
+
+        Assert.Equal(StatusCodes.Status409Conflict, morning.StatusCode);
+        string said = System.Text.Json.JsonSerializer.Serialize(((ObjectResult)morning).Value);
+        Assert.Contains("Not tried: Dhan refused 3 TOTP codes today", said);
+        Assert.Contains("next try at 08:11 IST", said);
+        Assert.Equal(3, handler.Calls);
+
+        // Due: the morning job's call is a later code like the worker's, and only one.
+        clock.Set(LaterCode(1));
+        Assert.Equal(StatusCodes.Status200OK, (await SignInNow(after, "morning job")).StatusCode);
+        Assert.Equal(4, handler.Calls);
+    }
+
+    // ............................................................. a person
+
+    [Fact]
+    public async Task A_person_always_tries_during_a_pause_and_their_codes_count_towards_the_day()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(Ist(29, 8, 7));
+        var pressed = await SignInNow(provider, "console");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, pressed.StatusCode);
+        Assert.Equal(6, handler.Calls);
+        Assert.Equal(6, state.CodesToday(Now(clock)));
+        var until = state.PausedUntil(Now(clock));
+        Assert.Equal(Ist(29, 8, 13, 1), until);   // the 08:07:00 press's last code went at 08:08:01
+
+        for (int n = 0; n < 3; n++)
+        {
+            clock.Set(until!.Value.AddMinutes(5 * n));
+            await worker.CheckOnceAsync(default);
+        }
+        Assert.Equal(9, handler.Calls);
+        Assert.Equal("2026-09-29: Dhan refused 9 TOTP codes today", store.Values[SystemSettingKeys.DhanAutoSignInStopped]);
+    }
+
+    [Fact]
+    public async Task A_persons_press_that_works_during_a_pause_clears_it()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        var store = new MemoryStore();
+        using var provider = Services(handler, AutoOn(), current: null, store: store, clock: clock);
+        await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        clock.Set(Ist(29, 8, 7));
+        Assert.Equal(StatusCodes.Status200OK, (await SignInNow(provider, "console")).StatusCode);
+
+        Assert.Equal(4, handler.Calls);
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInCodes));
+        Assert.Null(provider.GetRequiredService<DhanAutoSignInState>().PausedUntil(Now(clock)));
+    }
+
+    // ............................................................. Telegram
+
+    [Fact]
+    public async Task Telegram_hears_of_the_pause_once_and_of_the_stop_and_nothing_per_later_code()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var notifier = new Notifier();
+        using var provider = Services(new Handler(InvalidTotp), AutoOn(), current: null, notifier, clock: clock);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+
+        await worker.CheckOnceAsync(default);
+        var first = Assert.Single(notifier.Sent);
+        Assert.Equal(Pressed, first.Title);
+        Assert.Contains("one code every 5 minutes, until about 08:36 IST", first.Message);
+
+        for (int n = 1; n < DhanAutoSignInPolicy.MaxLaterCodes; n++)
+        {
+            clock.Set(LaterCode(n));
+            await worker.CheckOnceAsync(default);
+        }
+        // The 08:10 alert, which stays as it was, and nothing else since.
+        Assert.Equal(2, notifier.Sent.Count);
+        Assert.Contains("press Connect", notifier.Sent[1].Title);
+
+        clock.Set(LaterCode(DhanAutoSignInPolicy.MaxLaterCodes));
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(3, notifier.Sent.Count);
+        var final = notifier.Sent[2];
+        Assert.Equal(Pressed, final.Title);
+        Assert.Contains("Dhan has refused 9 TOTP codes today, and why is not known", final.Message);
+        Assert.Contains("No more automatic tries today", final.Message);
+    }
+
+    [Fact]
+    public async Task Telegram_hears_a_later_success_says_it_came_after_retries_and_a_restart_does_not_repeat_the_first_message()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var notifier = new Notifier();
+        var store = new MemoryStore();
+        var handler = new Handler(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(InvalidTotp).Then(Issued);
+        using (var before = Services(handler, AutoOn(), current: null, notifier, store, clock))
+            await before.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        clock.Set(Ist(29, 8, 9, 0));
+        using var after = Services(handler, AutoOn(), current: null, notifier, store, clock);
+        var worker = after.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.RestoreAsync(default);
+        await worker.CheckOnceAsync(default);
+        Assert.Single(notifier.Sent);
+
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+        // The 08:10 alert, as it was; a refused later code has added nothing.
+        Assert.Equal(2, notifier.Sent.Count);
+
+        clock.Set(LaterCode(2));
+        await worker.CheckOnceAsync(default);
+
+        Assert.Equal(3, notifier.Sent.Count);
+        var success = notifier.Sent[2];
+        Assert.Equal(NotificationSeverity.Success, success.Severity);
+        Assert.Contains("Dhan refused 4 codes first; a fresh one worked.", success.Message);
+    }
+
+    [Fact]
+    public void The_last_code_is_six_pauses_after_the_first_sign_in_fewer_as_the_day_spends_them()
+    {
+        var next = Ist(29, 8, 11, 1);
+
+        Assert.Equal(Ist(29, 8, 36, 1), DhanAutoSignInPolicy.LastCodeAboutUtc(next, 3));
+        Assert.Equal(Ist(29, 8, 21, 1), DhanAutoSignInPolicy.LastCodeAboutUtc(next, 6));
+        Assert.Equal(next, DhanAutoSignInPolicy.LastCodeAboutUtc(next, 8));
+        Assert.Equal(next, DhanAutoSignInPolicy.LastCodeAboutUtc(next, 11));
+    }
+
+    // ........................................................... log and panel
+
+    [Fact]
+    public async Task A_later_code_is_logged_like_the_others_and_never_with_the_secrets()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var log = new ListLogger<DhanAutoSignInService>();
+        var handler = new Handler(InvalidTotp);
+        using var provider = Services(handler, AutoOn(), current: null, clock: clock, serviceLog: log);
+        var worker = provider.GetRequiredService<DhanAutoSignInWorker>();
+        await worker.CheckOnceAsync(default);
+
+        clock.Set(LaterCode(1));
+        await worker.CheckOnceAsync(default);
+
+        var tries = log.Lines.Where(line => line.Contains("read at")).ToList();
+        Assert.Equal(4, tries.Count);
+        Assert.Contains("code 3 of at most 3 read at 08:06:01.0 IST", tries[2]);
+        Assert.Contains("code 4 of at most 9 read at 08:11:01.0 IST", tries[3]);
+        foreach (string line in log.Lines)
+        {
+            Assert.DoesNotContain(Pin, line);
+            Assert.DoesNotContain(Secret, line);
+            foreach (string code in handler.Codes) Assert.DoesNotContain(code, line);
+        }
+    }
+
+    [Fact]
+    public async Task The_status_says_paused_with_the_next_try_but_not_once_a_good_token_is_there()
+    {
+        // The endpoint reads the real clock, so the pause is made by the real clock too.
+        var now = DateTime.UtcNow;
+        var state = new DhanAutoSignInState();
+        state.CountCodes(now, 3);
+        state.Failed(now, "automatic", "Invalid TOTP", DhanSignInFailure.Refused, DhanRefusal.Code);
+        string next = now.AddMinutes(5 + 330).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+        async Task<string> Status(BrokerSession? session)
+        {
+            var controller = new DhanController(null!, null!, null!, null!, null!, null!);
+            var result = await controller.AutoSignInStatus(new SettingsMonitor(AutoOn()), new Credentials(ClientId), state, new Sessions { Current = session }, default);
+            return System.Text.Json.JsonSerializer.Serialize(((ObjectResult)result).Value);
+        }
+
+        string paused = await Status(session: null);
+        Assert.Contains($"\"codesPausedUntilIst\":\"{next}\"", paused);
+        Assert.Contains("\"codesToday\":3", paused);
+        Assert.Contains("\"maxCodesPerDay\":9", paused);
+        Assert.Contains("\"stoppedForToday\":false", paused);
+
+        Assert.Contains("\"codesPausedUntilIst\":null", await Status(LiveByTheRealClock()));
     }
 
     // --------------------------------------------- a token Dhan ends early
@@ -1263,6 +1850,9 @@ public class DhanAutoSignInTests
         public string LastUrl => Urls.Count == 0 ? string.Empty : Urls[^1];
         public string LastMethod { get; private set; } = string.Empty;
 
+        /// <summary>Runs as each request arrives, to see what had been done by then.</summary>
+        public Action? OnSend { get; init; }
+
         /// <summary>The TOTP code each request carried, in order.</summary>
         public List<string> Codes => Urls.Select(u => u[(u.LastIndexOf("totp=", StringComparison.Ordinal) + 5)..]).ToList();
 
@@ -1274,6 +1864,7 @@ public class DhanAutoSignInTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            OnSend?.Invoke();
             var (answer, code) = _answers[Math.Min(Urls.Count, _answers.Count - 1)];
             Urls.Add(request.RequestUri!.OriginalString);
             LastMethod = request.Method.Method;
@@ -1342,18 +1933,19 @@ public class DhanAutoSignInTests
         }
     }
 
-    /// <summary>system_settings in memory; <see cref="Broken"/> fails every call, like a database that is down.</summary>
+    /// <summary>system_settings in memory; <see cref="Broken"/> fails every call, like a database that is down, <see cref="BrokenWrites"/> only the saves.</summary>
     private sealed class MemoryStore : IProcessSettingsStore
     {
         public Dictionary<string, string> Values { get; init; } = new();
         public bool Broken { get; init; }
+        public bool BrokenWrites { get; init; }
 
         public Task<string?> GetAsync(string key, CancellationToken cancellationToken = default) =>
             Broken ? Task.FromException<string?>(Down()) : Task.FromResult(Values.GetValueOrDefault(key));
 
         public Task SetAsync(string key, string value, string? updatedBy = null, CancellationToken cancellationToken = default)
         {
-            if (Broken) return Task.FromException(Down());
+            if (Broken || BrokenWrites) return Task.FromException(Down());
             Values[key] = value;
             return Task.CompletedTask;
         }

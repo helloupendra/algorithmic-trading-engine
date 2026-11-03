@@ -50,6 +50,23 @@ namespace AlgoTrading.Infrastructure.Providers.Dhan;
 /// before that end, while Dhan may still count that one as live. Nor does it undo
 /// a person's Disconnect (<see cref="DisconnectHold"/>).
 /// </para>
+/// <para>
+/// Three refused codes pause the machine; they used to stop the day. On Tue 3 Nov
+/// Dhan answered "Invalid TOTP" to the codes sent at 08:02:02, 08:02:31 and
+/// 08:03:01, the day stopped, the 08:47 morning job said "Not tried: stopped for
+/// today", and nothing recovered until a person pressed Sign in now at 09:06:25,
+/// when the first code, from the same PIN and secret, was accepted. The server's
+/// clock was exact (chrony 2 microseconds off, auth.dhan.co's Date header agreeing
+/// to the second), and the same sign-in, two minutes after the last token, worked
+/// on most weekdays in October. So the refusal comes and goes, as on 28 and 30 Sep,
+/// and its cause is not known; Dhan's documentation says nothing about lockouts or
+/// limits. After a sign-in whose three codes were all refused, a machine sends one
+/// code every <see cref="CodePause"/>, at most <see cref="MaxLaterCodes"/> of them,
+/// and only then stops the day. The limit stays because repeated refusals could
+/// lock the account, which is why the count outlives a restart
+/// (<see cref="DhanAutoSignInCodes"/>). Anything said about the PIN stops the day at
+/// once, as it always has.
+/// </para>
 /// </remarks>
 public static class DhanAutoSignInPolicy
 {
@@ -69,6 +86,15 @@ public static class DhanAutoSignInPolicy
 
     /// <summary>Codes one sign-in may send when Dhan refuses the code (not the PIN): the first and two retries.</summary>
     public const int MaxCodeTries = 3;
+
+    /// <summary>The wait after a refused code before a machine sends another.</summary>
+    public static readonly TimeSpan CodePause = TimeSpan.FromMinutes(5);
+
+    /// <summary>Single codes a machine may send, one per <see cref="CodePause"/>, after a sign-in's codes were all refused.</summary>
+    public const int MaxLaterCodes = 6;
+
+    /// <summary>Codes spent in a day before the day stops: the first sign-in's and the later ones.</summary>
+    public const int MaxCodesPerDay = MaxCodeTries + MaxLaterCodes;
 
     /// <summary>
     /// Time for a sign-in that could only start late to finish before
@@ -147,7 +173,8 @@ public static class DhanAutoSignInPolicy
     /// <summary>
     /// Whether one sign-in sends another code after a refusal. Only the code is
     /// worth it, and only with a fresh one; a PIN refusal never is, and wording
-    /// not recognised gets one more try.
+    /// not recognised gets one more try. A machine's later code gets none of this:
+    /// it goes alone (<see cref="DhanAutoSignInService.SignInAsync"/>).
     /// </summary>
     public static bool TryAnotherCode(DhanRefusal? refusal, int codesSent) => refusal switch
     {
@@ -155,6 +182,14 @@ public static class DhanAutoSignInPolicy
         DhanRefusal.Unrecognised => codesSent < 2,
         _ => false,
     };
+
+    /// <summary>
+    /// About when a machine sends its last code, if Dhan refuses every one: for
+    /// saying how long it will keep trying. <paramref name="nextCodeUtc"/> is when
+    /// the next goes, <paramref name="codesToday"/> how many the day has spent.
+    /// </summary>
+    public static DateTime LastCodeAboutUtc(DateTime nextCodeUtc, int codesToday) =>
+        nextCodeUtc + CodePause * Math.Max(0, MaxCodesPerDay - codesToday - 1);
 
     private static string Ist(DateTime utc) => (utc + IstOffset).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 }
@@ -182,17 +217,59 @@ public sealed record DhanAutoSignInStop(DateOnly Day, string Reason)
     }
 }
 
+/// <summary>
+/// The TOTP codes an IST day has spent without a token, and when a machine may send
+/// the next. Saved under <see cref="SystemSettingKeys.DhanAutoSignInCodes"/> as
+/// "2026-11-03: 3 codes, next at 2026-11-03T02:38:01Z". Never a code.
+/// </summary>
+/// <remarks>
+/// A cap that a restart resets is no cap: the morning job restarts the API at 08:45,
+/// a deploy can at any time, and each restart would have bought nine more codes,
+/// when repeated refusals could lock the account. So the count is saved before the
+/// codes go, not after Dhan answers, and a machine sends no code whose count did not
+/// save. It can read high after a crash (a first sign-in counts its three together),
+/// never low. A system setting because one line a day needs no table, as for the stop.
+/// </remarks>
+public sealed record DhanAutoSignInCodes(DateOnly Day, int Codes, DateTime NextUtc)
+{
+    private const string Between = " codes, next at ";
+    private const string UtcFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
+
+    public string Stored =>
+        $"{Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}: {Codes.ToString(CultureInfo.InvariantCulture)}{Between}{NextUtc.ToString(UtcFormat, CultureInfo.InvariantCulture)}";
+
+    /// <summary>The stored value read back, or null when it is absent or not in that shape.</summary>
+    public static DhanAutoSignInCodes? FromStored(string? stored)
+    {
+        var parts = (stored ?? string.Empty).Split(": ", 2, StringSplitOptions.TrimEntries);
+        if (parts.Length != 2
+            || !DateOnly.TryParseExact(parts[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day))
+        {
+            return null;
+        }
+
+        var rest = parts[1].Split(Between, 2, StringSplitOptions.TrimEntries);
+        return rest.Length == 2
+               && int.TryParse(rest[0], NumberStyles.None, CultureInfo.InvariantCulture, out int codes)
+               && DateTime.TryParseExact(rest[1], UtcFormat, CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var next)
+            ? new DhanAutoSignInCodes(day, codes, next)
+            : null;
+    }
+}
+
 /// <summary>What the automatic sign-in last did, shared by the worker, the endpoint and the connector page.</summary>
 /// <remarks>
-/// In memory; the stop for the day is also saved (<see cref="DhanAutoSignInService"/>),
-/// because this object does not survive the API restart the morning job makes.
+/// In memory; the stop for the day and the day's count of codes are also saved
+/// (<see cref="DhanAutoSignInService"/>), because this object does not survive the
+/// API restart the morning job makes.
 /// </remarks>
 public sealed class DhanAutoSignInState
 {
     /// <summary>
-    /// Tries per IST day when Dhan cannot be reached. A refusal that one sign-in
-    /// could not get past (<see cref="DhanAutoSignInPolicy.TryAnotherCode"/>), or
-    /// a missing value, stops the day at once.
+    /// Tries per IST day when Dhan cannot be reached. Refused codes pause the day
+    /// and stop it at <see cref="DhanAutoSignInPolicy.MaxCodesPerDay"/>; any other
+    /// refusal, or a missing value, stops it at once.
     /// </summary>
     public const int MaxTriesPerDay = 3;
 
@@ -205,6 +282,8 @@ public sealed class DhanAutoSignInState
     private int _triesToday;
     private string? _stoppedBecause;
     private long? _lastCodeStep;
+    private int _codesToday;
+    private DateTime? _codePauseUntil;
     private DateOnly? _noTokenAlertDay;
     private DateOnly? _tokenCheckDay;
 
@@ -231,13 +310,71 @@ public sealed class DhanAutoSignInState
         lock (_lock) _lastCodeStep = step;
     }
 
-    /// <summary>True once Dhan has refused today, or the tries are used up: no more automatic tries until tomorrow.</summary>
+    /// <summary>True once a refusal has stopped the day, or the tries or codes are used up: no more automatic tries until tomorrow.</summary>
     public bool StoppedFor(DateTime utcNow)
     {
         lock (_lock)
         {
             Roll(utcNow);
             return _stoppedBecause is not null;
+        }
+    }
+
+    /// <summary>
+    /// Codes the day has spent without a token, any on their way included; a
+    /// sign-in that works clears them. Above zero, a machine sends one at a time.
+    /// </summary>
+    public int CodesToday(DateTime utcNow)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            return _codesToday;
+        }
+    }
+
+    /// <summary>When a machine may send its next code, while refused codes have it waiting; otherwise null.</summary>
+    public DateTime? PausedUntil(DateTime utcNow)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            return _stoppedBecause is null && _codePauseUntil > utcNow ? _codePauseUntil : null;
+        }
+    }
+
+    /// <summary>
+    /// Counts codes before they go, and returns what to save first. The next-try time
+    /// in it is for a restart that comes while they are on their way, which then
+    /// waits as if Dhan had refused them.
+    /// </summary>
+    public DhanAutoSignInCodes CountCodes(DateTime utcNow, int codes)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            _codesToday += codes;
+            return new DhanAutoSignInCodes(_day, _codesToday, utcNow + DhanAutoSignInPolicy.CodePause);
+        }
+    }
+
+    /// <summary>Takes back codes that brought no refusal: never sent, or sent to a Dhan that did not answer, which has its own limit.</summary>
+    public void UncountCodes(DateTime utcNow, int codes)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            _codesToday = Math.Max(0, _codesToday - codes);
+        }
+    }
+
+    /// <summary>The day's count as it stands now, to save.</summary>
+    public DhanAutoSignInCodes Codes(DateTime utcNow)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            return new DhanAutoSignInCodes(_day, _codesToday, _codePauseUntil ?? utcNow);
         }
     }
 
@@ -256,7 +393,16 @@ public sealed class DhanAutoSignInState
                 why = $"stopped for today ({because})";
                 return false;
             }
-            if (LastOk == false && LastAttemptUtc is { } last && utcNow - last < RetryAfter)
+            if (_codePauseUntil is { } until)
+            {
+                if (utcNow < until)
+                {
+                    string next = (until + IstOffset).ToString("HH:mm", CultureInfo.InvariantCulture);
+                    why = $"Dhan refused {_codesToday} TOTP code{(_codesToday == 1 ? string.Empty : "s")} today, so the automatic sign-in is paused; next try at {next} IST";
+                    return false;
+                }
+            }
+            else if (LastOk == false && LastAttemptUtc is { } last && utcNow - last < RetryAfter)
             {
                 why = $"the last try failed at {last:HH:mm} UTC; waiting {RetryAfter.TotalMinutes:0} minutes";
                 return false;
@@ -277,12 +423,16 @@ public sealed class DhanAutoSignInState
             LastMessage = message;
             LastExpiresUtc = expiresUtc;
             _stoppedBecause = null;
+            _codesToday = 0;
+            _codePauseUntil = null;
         }
     }
 
     /// <returns>
     /// The stop, when this failure used up the day: say so once, loudly, and
-    /// save it. Null when automatic tries go on, or had already stopped.
+    /// save it. Null when automatic tries go on, or had already stopped. A refused
+    /// code below the day's limit is one of those: <see cref="PausedUntil"/> then
+    /// says when the next may go.
     /// </returns>
     public DhanAutoSignInStop? Failed(DateTime utcNow, string trigger, string message, DhanSignInFailure failure, DhanRefusal? refusal = null)
     {
@@ -293,8 +443,17 @@ public sealed class DhanAutoSignInState
             LastOk = false;
             LastTrigger = trigger;
             LastMessage = message;
-            _triesToday++;
+            // Dhan not reached, only: a refused code used to stop the day before this
+            // count could matter, and it now has a limit of its own.
+            if (failure == DhanSignInFailure.Unreachable) _triesToday++;
             if (_stoppedBecause is not null) return null;
+
+            // Null after anything else, so an unreachable Dhan waits by RetryAfter.
+            bool codeRefused = failure == DhanSignInFailure.Refused && refusal == DhanRefusal.Code;
+            _codePauseUntil = codeRefused && _codesToday < DhanAutoSignInPolicy.MaxCodesPerDay
+                ? utcNow + DhanAutoSignInPolicy.CodePause
+                : null;
+            if (_codePauseUntil is not null) return null;
 
             // Fixed phrases, never the message: this is saved, and the message
             // carries whatever reason Dhan gave.
@@ -303,7 +462,7 @@ public sealed class DhanAutoSignInState
                 DhanSignInFailure.Refused => refusal switch
                 {
                     DhanRefusal.Pin => "Dhan refused the PIN",
-                    DhanRefusal.Code => $"Dhan refused {DhanAutoSignInPolicy.MaxCodeTries} TOTP codes in a row",
+                    DhanRefusal.Code => CodesUsedUp(),
                     DhanRefusal.Account => "Dhan signed in to another account",
                     _ => "Dhan refused the PIN or the code",
                 },
@@ -364,6 +523,27 @@ public sealed class DhanAutoSignInState
         }
     }
 
+    /// <summary>
+    /// The day's count saved before a restart, taken back if it is from today (IST).
+    /// Returns whether it was. Never lowers what this process has counted; a count
+    /// at the limit stops the day, even if the stop itself could not be saved.
+    /// </summary>
+    public bool Restore(DhanAutoSignInCodes codes, DateTime utcNow)
+    {
+        lock (_lock)
+        {
+            Roll(utcNow);
+            if (codes.Day != _day || codes.Codes <= 0) return false;
+            _codesToday = Math.Max(_codesToday, codes.Codes);
+            if (_codePauseUntil is null || codes.NextUtc > _codePauseUntil) _codePauseUntil = codes.NextUtc;
+            if (_codesToday >= DhanAutoSignInPolicy.MaxCodesPerDay) _stoppedBecause ??= CodesUsedUp();
+            LastMessage ??= $"Before the API restarted, {_codesToday} TOTP code{(_codesToday == 1 ? string.Empty : "s")} had been spent today without a token.";
+            return true;
+        }
+    }
+
+    private string CodesUsedUp() => $"Dhan refused {_codesToday} TOTP codes today";
+
     private void Roll(DateTime utcNow)
     {
         var today = DateOnly.FromDateTime(utcNow + IstOffset);
@@ -371,6 +551,8 @@ public sealed class DhanAutoSignInState
         _day = today;
         _triesToday = 0;
         _stoppedBecause = null;
+        _codesToday = 0;
+        _codePauseUntil = null;
     }
 }
 
@@ -426,7 +608,10 @@ public sealed class DhanAutoSignInService
     /// more, each read one second into a TOTP step no code has come from
     /// (<see cref="DhanLoginFlow.WaitBeforeCode"/>), so all three go within about
     /// a minute. Not wider: the console's request comes through the Cloudflare
-    /// tunnel, which gives up after 100 seconds.
+    /// tunnel, which gives up after 100 seconds. Once the day has spent a code, a
+    /// machine sends one per sign-in, <see cref="DhanAutoSignInPolicy.CodePause"/>
+    /// apart. A person's press still sends up to three, and they count: the account
+    /// is the same whoever sent them.
     /// </remarks>
     public async Task<DhanAutoSignInResult> SignInAsync(string trigger, string reason, CancellationToken cancellationToken)
     {
@@ -449,14 +634,35 @@ public sealed class DhanAutoSignInService
             }
             else
             {
-                // A person is never held back; the last token is read for the log only.
+                // A person is never held back; the last token is read for the log only,
+                // and the day's count so that this press adds to it, not over it.
                 last = await LastTokenAsync(cancellationToken);
+                await RestoreCodesForAPersonAsync(cancellationToken);
             }
 
+            int codesBefore = _state.CodesToday(Now);
+            bool oneCode = trigger != ConsoleTrigger && codesBefore > 0;
+            int counted = oneCode ? 1 : DhanAutoSignInPolicy.MaxCodeTries;
+
+            // In the database before anything goes, so that no restart, even one with
+            // the code on its way, can start the count again. A machine that cannot
+            // save it does not send; a person's press goes regardless.
+            if (!await SaveCodesAsync(_state.CountCodes(Now, counted), trigger) && trigger != ConsoleTrigger)
+            {
+                _state.UncountCodes(Now, counted);
+                return new DhanAutoSignInResult(false,
+                    "Not tried: today's count of TOTP codes could not be saved, and a restart would forget a code it had not counted.",
+                    null, null, Tried: false);
+            }
+
+            int most = oneCode ? DhanAutoSignInPolicy.MaxCodesPerDay : DhanAutoSignInPolicy.MaxCodeTries;
             DhanSignIn signIn;
             var refused = new List<string>();
+            bool everyCodeReadAsTheCode = true;
             for (int codes = 1; ; codes++)
             {
+                // A later code is numbered in the day's count, the first sign-in's in its own.
+                int number = oneCode ? codesBefore + codes : codes;
                 DateTimeOffset? codeReadAt = null;
                 try
                 {
@@ -465,18 +671,20 @@ public sealed class DhanAutoSignInService
                         codeReadAt = _time.GetUtcNow();
                         _state.CodeSent(step);
                     }, cancellationToken);
-                    LogTry(trigger, codes, codeReadAt, last, ok: true, "a token");
+                    LogTry(trigger, number, most, codeReadAt, last, ok: true, "a token");
                     break;
                 }
                 catch (DhanSignInException ex)
                 {
-                    LogTry(trigger, codes, codeReadAt, last, ok: false,
+                    LogTry(trigger, number, most, codeReadAt, last, ok: false,
                         ex.Failure == DhanSignInFailure.Refused
                             ? $"refused ({ex.Refusal}): {(ex.DhanReason.Length > 0 ? ex.DhanReason : "no reason given")}"
                             : ex.Message);
 
+                    if (ex.Failure == DhanSignInFailure.Refused && ex.Refusal != DhanRefusal.Code) everyCodeReadAsTheCode = false;
+
                     // codeReadAt is null when no code went (not set up): nothing to retry.
-                    if (codeReadAt is not null && ex.Failure == DhanSignInFailure.Refused
+                    if (!oneCode && codeReadAt is not null && ex.Failure == DhanSignInFailure.Refused
                         && DhanAutoSignInPolicy.TryAnotherCode(ex.Refusal, codes))
                     {
                         refused.Add(ex.DhanReason.Length > 0 ? ex.DhanReason : "no reason given");
@@ -484,7 +692,11 @@ public sealed class DhanAutoSignInService
                     }
 
                     string failed = codes > 1 ? $"{ex.Message} {codes} codes were tried, each from a new TOTP step." : ex.Message;
-                    return await FailedAsync(trigger, failed, ex.Failure, cancellationToken, ex.Refusal);
+                    // Only a sign-in whose every code read "the code" earns the pause. Wording
+                    // not recognised, then "Invalid TOTP" twice, stops the day as it did.
+                    var refusal = ex.Refusal == DhanRefusal.Code && !everyCodeReadAsTheCode ? DhanRefusal.Unrecognised : ex.Refusal;
+                    int refusedHere = ex.Failure == DhanSignInFailure.Refused ? codes : codes - 1;
+                    return await FailedAsync(trigger, failed, ex.Failure, cancellationToken, refusal, counted - refusedHere, codesBefore);
                 }
                 catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
                 {
@@ -496,14 +708,17 @@ public sealed class DhanAutoSignInService
                     _logger.LogWarning("Dhan automatic sign-in ({Trigger}) failed unexpectedly ({Type}) at {Stack}",
                         trigger, ex.GetType().Name, ex.StackTrace);
                     return await FailedAsync(trigger, $"The Dhan sign-in failed unexpectedly ({ex.GetType().Name}).",
-                        DhanSignInFailure.Unreachable, cancellationToken);
+                        DhanSignInFailure.Unreachable, cancellationToken, unsentCodes: counted - (codes - 1), codesBefore: codesBefore);
                 }
             }
 
             string until = (signIn.ExpiresUtc + IstOffset).ToString("ddd HH:mm", CultureInfo.InvariantCulture);
-            string retried = refused.Count == 0
+            // Dhan's reasons are known for this sign-in's codes only: they are not saved.
+            int refusedFirst = codesBefore + refused.Count;
+            string reasons = refused.Count == 0 ? string.Empty : $" ({string.Join("; ", refused.Distinct())})";
+            string retried = refusedFirst == 0
                 ? string.Empty
-                : $" Dhan refused {refused.Count} code{(refused.Count == 1 ? string.Empty : "s")} first ({string.Join("; ", refused.Distinct())}); a fresh one worked.";
+                : $" Dhan refused {refusedFirst} code{(refusedFirst == 1 ? string.Empty : "s")} first{reasons}; a fresh one worked.";
             string message = $"Signed in with the PIN and a TOTP code ({reason}); token valid until {until} IST.{retried}";
             _state.Succeeded(Now, trigger, message, signIn.ExpiresUtc);
             await ClearStopAsync();
@@ -518,16 +733,19 @@ public sealed class DhanAutoSignInService
     }
 
     /// <summary>
-    /// At startup: a stop saved earlier today, back into the state, so the panel
-    /// and the worker's first look see it. A read that fails is only logged:
-    /// every automatic try reads it again first, and none is made while it cannot be.
+    /// At startup: a stop and a count of codes saved earlier today, back into the
+    /// state, so the panel and the worker's first look see them. A read that fails is
+    /// only logged: every automatic try reads them again first, and none is made while
+    /// they cannot be.
     /// </summary>
     public async Task RestoreStopAsync(CancellationToken cancellationToken)
     {
         DhanAutoSignInStop? stored;
+        DhanAutoSignInCodes? codes;
         try
         {
             stored = await ReadStopAsync(cancellationToken);
+            codes = await ReadCodesAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -536,12 +754,30 @@ public sealed class DhanAutoSignInService
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "Could not read whether the Dhan automatic sign-in was stopped earlier today; no automatic try is made until it can be read.");
+                "Could not read whether the Dhan automatic sign-in was stopped or paused earlier today; no automatic try is made until it can be read.");
             return;
         }
 
         if (stored is not null && _state.Restore(stored, Now))
             _logger.LogWarning("The Dhan automatic sign-in stays stopped for today across the restart: {Reason}.", stored.Reason);
+        if (codes is not null && _state.Restore(codes, Now))
+            _logger.LogWarning("The Dhan automatic sign-in keeps today's count across the restart: {Codes} of {Max} codes spent.", codes.Codes, DhanAutoSignInPolicy.MaxCodesPerDay);
+    }
+
+    /// <summary>
+    /// Before a person's press: the day's count, so a restart whose first read failed
+    /// cannot have the press save a lower one over it. A read that fails holds nobody back.
+    /// </summary>
+    private async Task RestoreCodesForAPersonAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await ReadCodesAsync(cancellationToken) is { } codes) _state.Restore(codes, Now);
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        {
+            _logger.LogWarning(ex, "Could not read today's count of Dhan TOTP codes before a person's sign-in; it goes regardless.");
+        }
     }
 
     /// <summary>What a machine gets instead of a new code, or null when it may send one.</summary>
@@ -561,7 +797,7 @@ public sealed class DhanAutoSignInService
 
     /// <summary>
     /// Why a machine may not try now: this process's own stop or pause, else a
-    /// stop saved earlier today, which outlives a restart.
+    /// stop or a pause saved earlier today, which outlive a restart.
     /// </summary>
     /// <remarks>
     /// A read that fails holds the machine back. Skipping costs a morning of
@@ -573,9 +809,11 @@ public sealed class DhanAutoSignInService
         if (!_state.MayTryAutomatically(now, out string why)) return why;
 
         DhanAutoSignInStop? stored;
+        DhanAutoSignInCodes? codes;
         try
         {
             stored = await ReadStopAsync(cancellationToken);
+            codes = await ReadCodesAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -584,12 +822,13 @@ public sealed class DhanAutoSignInService
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "Could not read whether the Dhan automatic sign-in was stopped earlier today; not trying (a PIN Dhan refused, sent again, can lock the account). Connect still works.");
-            return "could not read whether it was stopped earlier today";
+                "Could not read whether the Dhan automatic sign-in was stopped or paused earlier today; not trying (a PIN Dhan refused, sent again, can lock the account). Connect still works.");
+            return "could not read whether it was stopped or paused earlier today";
         }
 
-        if (stored is not null && _state.Restore(stored, now) && !_state.MayTryAutomatically(now, out why)) return why;
-        return null;
+        if (stored is not null) _state.Restore(stored, now);
+        if (codes is not null) _state.Restore(codes, now);
+        return _state.MayTryAutomatically(now, out why) ? null : why;
     }
 
     private async Task<DhanAutoSignInStop?> ReadStopAsync(CancellationToken cancellationToken)
@@ -599,6 +838,15 @@ public sealed class DhanAutoSignInService
         if (stop is null && !string.IsNullOrWhiteSpace(raw))
             _logger.LogWarning("Ignoring {Key}: \"{Value}\" is not \"yyyy-MM-dd: reason\".", SystemSettingKeys.DhanAutoSignInStopped, raw);
         return stop;
+    }
+
+    private async Task<DhanAutoSignInCodes?> ReadCodesAsync(CancellationToken cancellationToken)
+    {
+        string? raw = await _settings.GetAsync(SystemSettingKeys.DhanAutoSignInCodes, cancellationToken);
+        var codes = DhanAutoSignInCodes.FromStored(raw);
+        if (codes is null && !string.IsNullOrWhiteSpace(raw))
+            _logger.LogWarning("Ignoring {Key}: \"{Value}\" is not \"yyyy-MM-dd: n codes, next at time\".", SystemSettingKeys.DhanAutoSignInCodes, raw);
+        return codes;
     }
 
     /// <summary>When the last Dhan token on record ends or ended, valid or not; not <see cref="LastToken.Known"/> when it could not be read.</summary>
@@ -627,7 +875,7 @@ public sealed class DhanAutoSignInService
     /// 28 and 30 Sep were each one line, "Invalid TOTP", with nothing to say
     /// whether the code came late in its step or the last token was still live.
     /// </remarks>
-    private void LogTry(string trigger, int codes, DateTimeOffset? codeReadAt, LastToken last, bool ok, string answer)
+    private void LogTry(string trigger, int code, int most, DateTimeOffset? codeReadAt, LastToken last, bool ok, string answer)
     {
         var at = codeReadAt ?? _time.GetUtcNow();
         string ist = (at.UtcDateTime + IstOffset).ToString("HH:mm:ss.f", CultureInfo.InvariantCulture);
@@ -641,7 +889,7 @@ public sealed class DhanAutoSignInService
         double intoStep = (at - DateTimeOffset.FromUnixTimeSeconds(DhanLoginFlow.CodeStep(at) * 30)).TotalSeconds;
         _logger.Log(ok ? LogLevel.Information : LogLevel.Warning,
             "Dhan sign-in ({Trigger}) code {Code} of at most {Max} read at {Ist} IST, {IntoStep:0.0} s into its TOTP step; {Previous}. Dhan answered: {Answer}",
-            trigger, codes, DhanAutoSignInPolicy.MaxCodeTries, ist, intoStep, previous, answer);
+            trigger, code, most, ist, intoStep, previous, answer);
     }
 
     /// <summary>The last Dhan token on record, as far as the session store knows.</summary>
@@ -665,21 +913,74 @@ public sealed class DhanAutoSignInService
             : $"{(int)span.TotalHours} h {span.Minutes} min";
     }
 
-    private async Task<DhanAutoSignInResult> FailedAsync(string trigger, string message, DhanSignInFailure failure, CancellationToken cancellationToken, DhanRefusal? refusal = null)
+    /// <summary>
+    /// Records a failed sign-in and says so, once: at the first refused sign-in with
+    /// how long the machine will keep trying, and at the stop. A machine's later code
+    /// is the log's business only; a person who pressed the button still hears back.
+    /// </summary>
+    /// <param name="unsentCodes">Codes counted for this sign-in that brought no refusal.</param>
+    /// <param name="codesBefore">Codes the day had spent before this sign-in.</param>
+    private async Task<DhanAutoSignInResult> FailedAsync(string trigger, string message, DhanSignInFailure failure, CancellationToken cancellationToken,
+        DhanRefusal? refusal = null, int unsentCodes = 0, int codesBefore = 0)
     {
-        var stop = _state.Failed(Now, trigger, message, failure, refusal);
+        var now = Now;
+        _state.UncountCodes(now, unsentCodes);
+        var stop = _state.Failed(now, trigger, message, failure, refusal);
         _logger.LogWarning("Dhan automatic sign-in ({Trigger}) failed: {Message}", trigger, message);
 
+        // The exact pause and count, over what was saved before the codes went. If this
+        // fails, what is saved already holds the count, or more.
+        var codes = _state.Codes(now);
+        await SaveCodesAsync(codes, trigger);
+        var result = new DhanAutoSignInResult(false, message, null, failure);
+
+        var pausedUntil = _state.PausedUntil(now);
+        if (pausedUntil is not null && codesBefore > 0 && trigger != ConsoleTrigger) return result;
+
         bool saved = stop is null || await SaveStopAsync(stop, trigger);
-        string next = stop is not null
-            ? " No more automatic tries today (a wrong PIN, repeated, can lock the account)."
-            : $" It will be tried again in {DhanAutoSignInState.RetryAfter.TotalMinutes:0} minutes.";
+        string next;
+        if (pausedUntil is { } until)
+        {
+            string lastCode = (DhanAutoSignInPolicy.LastCodeAboutUtc(until, codes.Codes) + IstOffset).ToString("HH:mm", CultureInfo.InvariantCulture);
+            next = $" It keeps trying by itself, one code every {DhanAutoSignInPolicy.CodePause.TotalMinutes:0} minutes, until about {lastCode} IST.";
+        }
+        else if (trigger == ConsoleTrigger)
+        {
+            next = string.Empty;
+        }
+        else if (stop is null)
+        {
+            next = $" It will be tried again in {DhanAutoSignInState.RetryAfter.TotalMinutes:0} minutes.";
+        }
+        else if (refusal == DhanRefusal.Code)
+        {
+            next = $" Dhan has refused {codes.Codes} TOTP codes today, and why is not known. No more automatic tries today (repeated refusals could lock the account).";
+        }
+        else
+        {
+            next = " No more automatic tries today (a wrong PIN, repeated, can lock the account).";
+        }
         string unsaved = saved ? string.Empty : " The stop could not be saved: an API restart today would try again.";
         await _notifier.NotifyAsync(NotificationCategory.Connector, NotificationSeverity.Error,
             "Dhan did not sign in by itself",
-            $"{message}{(trigger == ConsoleTrigger ? string.Empty : next)}{unsaved} Press Connect on Connectors > Dhan.",
+            $"{message}{next}{unsaved} Press Connect on Connectors > Dhan.",
             cancellationToken: cancellationToken);
-        return new DhanAutoSignInResult(false, message, null, failure);
+        return result;
+    }
+
+    private async Task<bool> SaveCodesAsync(DhanAutoSignInCodes codes, string trigger)
+    {
+        try
+        {
+            // Not the caller's token, as for the stop: a hang-up must not lose the count.
+            await _settings.SetAsync(SystemSettingKeys.DhanAutoSignInCodes, codes.Stored, trigger, CancellationToken.None);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not save today's count of Dhan TOTP codes ({Codes}); a machine sends no code it has not counted.", codes.Codes);
+            return false;
+        }
     }
 
     private async Task<bool> SaveStopAsync(DhanAutoSignInStop stop, string trigger)
@@ -699,17 +1000,23 @@ public sealed class DhanAutoSignInService
         }
     }
 
-    /// <summary>A sign-in that worked ends any stop saved today: it is how "Sign in now" after fixing the PIN turns the machine back on.</summary>
+    /// <summary>
+    /// A sign-in that worked ends any stop and any count saved today: it is how "Sign
+    /// in now" after fixing the PIN turns the machine back on.
+    /// </summary>
     private async Task ClearStopAsync()
     {
-        try
+        foreach (string key in new[] { SystemSettingKeys.DhanAutoSignInStopped, SystemSettingKeys.DhanAutoSignInCodes })
         {
-            await _settings.DeleteAsync(SystemSettingKeys.DhanAutoSignInStopped, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            // The safe way round: the machine stays off until tomorrow.
-            _logger.LogWarning(ex, "Signed in to Dhan, but the day's saved stop could not be cleared; after an API restart the automatic sign-in stays off until tomorrow.");
+            try
+            {
+                await _settings.DeleteAsync(key, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // The safe way round: the machine stays held back until tomorrow at the latest.
+                _logger.LogWarning(ex, "Signed in to Dhan, but {Key} could not be cleared; after an API restart the automatic sign-in stays held back by it until tomorrow.", key);
+            }
         }
     }
 }
@@ -783,7 +1090,7 @@ public sealed class DhanAutoSignInWorker : BackgroundService
         }
     }
 
-    /// <summary>At startup: a stop saved earlier today, so the connector page shows it straight away.</summary>
+    /// <summary>At startup: a stop or a count of codes saved earlier today, so the connector page shows them straight away.</summary>
     public async Task RestoreAsync(CancellationToken cancellationToken)
     {
         var settings = _settings.CurrentValue;
@@ -796,7 +1103,7 @@ public sealed class DhanAutoSignInWorker : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Never stops the API from starting; every automatic try reads the stop itself.
+            // Never stops the API from starting; every automatic try reads them itself.
             _logger.LogWarning(ex, "Could not restore the Dhan automatic sign-in's stop at startup.");
         }
     }
@@ -834,6 +1141,8 @@ public sealed class DhanAutoSignInWorker : BackgroundService
         // Dhan has refused it: the next try waits for it (30 Sep, DhanAutoSignInPolicy).
         DateTime? lastEnds = session is { IsActive: true } ? session.ExpiresAtUtc : null;
         var earliest = DhanAutoSignInPolicy.EarliestAttemptUtc(now, lastEnds, settings.AutoSignIn);
+        // Woken for a later code too, so that a pause does not grow by a minute each time.
+        if (_state.PausedUntil(now) is { } paused && paused > earliest) earliest = paused;
         _earliestAttemptUtc = !disconnected && earliest > now ? earliest : null;
 
         DhanAutoSignInResult? result = null;

@@ -138,6 +138,10 @@ public class DhanController : ControllerBase
         if (string.IsNullOrWhiteSpace(s.Pin)) missing.Add("DHAN_PIN");
         if (string.IsNullOrWhiteSpace(s.TotpSecret)) missing.Add("DHAN_TOTP_SECRET");
         var last = await sessions.GetLastForProviderAsync(DhanProvider.Key, cancellationToken);
+        var now = DateTime.UtcNow;
+        // A Connect pressed during a pause does not pass through the sign-in's state:
+        // with a good token there is nothing left to be paused about.
+        DateTime? pausedUntil = last is not null && last.IsAuthenticatedAt(now) ? null : state.PausedUntil(now);
 
         return Ok(new
         {
@@ -146,7 +150,10 @@ public class DhanController : ControllerBase
             missing,
             morningFromIst = s.AutoSignIn.MorningFromIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
             morningUntilIst = s.AutoSignIn.MorningUntilIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
-            stoppedForToday = state.StoppedFor(DateTime.UtcNow),
+            stoppedForToday = state.StoppedFor(now),
+            codesPausedUntilIst = pausedUntil?.AddMinutes(330).ToString("HH:mm", CultureInfo.InvariantCulture),
+            codesToday = state.CodesToday(now),
+            maxCodesPerDay = DhanAutoSignInPolicy.MaxCodesPerDay,
             heldByDisconnect = last is { IsActive: false },
             tokenRefused = last is { IsTokenRefused: true },
             lastAttemptUtc = state.LastAttemptUtc,
@@ -161,8 +168,9 @@ public class DhanController : ControllerBase
     /// Sign in to Dhan now with the PIN and a TOTP code. <paramref name="trigger"/>
     /// is "console" for the button (always tries) or "morning job" for the 08:45
     /// script, which is held back like the worker with a 409 (switched off,
-    /// stopped for today even across a restart, or pausing after a failure) and,
-    /// within two minutes of a sign-in, answered with that one, not a new code.
+    /// stopped for today or paused after refused codes, both even across a restart,
+    /// or pausing after a failure) and, within two minutes of a sign-in, answered
+    /// with that one, not a new code.
     /// A failure is an error status, not 200 with ok:false: a caller that only
     /// checks the status must not read a refused PIN as a sign-in.
     /// </summary>

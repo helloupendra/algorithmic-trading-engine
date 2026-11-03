@@ -154,8 +154,9 @@ function DhanAutoSignInPanel() {
 
       <p className="muted small" style={{ marginTop: 10 }}>
         It never replaces a token while one is working during the session: Dhan ends a renewed token at once,
-        so a new one is taken only before the 08:45 start or when the old one has run out. A refused PIN or code
-        is not retried by the machine, because repeated wrong PINs can lock the account.
+        so a new one is taken only before the 08:45 start or when the old one has run out. A refused PIN is not
+        retried by the machine, because repeated wrong PINs can lock the account. Refused codes are: one every
+        five minutes after the first three, nine a day at most.
       </p>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
