@@ -206,6 +206,36 @@ public class MarketHolidayTests
         Assert.Equal(1, db.MarketSpecialSessions.Count());
     }
 
+    [Fact]
+    public async Task The_shipped_calendar_holds_the_2026_Muhurat_session_for_each_exchange()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "src", "AlgoTrading.Api", "SeedData", "market_calendar.json")))
+            dir = dir.Parent;
+
+        var (calendar, db) = BuildCalendar();
+        var seeder = new ReferenceDataSeeder(db, new Env(Path.Combine(dir!.FullName, "src", "AlgoTrading.Api")), NullLogger<ReferenceDataSeeder>.Instance);
+        await seeder.SeedMarketCalendarAsync(CancellationToken.None);
+        await calendar.RefreshAsync();
+        var service = new MarketSessionService(calendar);
+
+        // NSE/FAOP/76940: F&O trades 14:20 to 15:40, ten minutes past MCX.
+        foreach (var exchange in new[] { "NSE", "BSE" })
+        {
+            var before = service.GetSessionInfo(Ist(2026, 11, 8, 14, 19), exchange, "FO");
+            Assert.True(before.IsTradingDay);
+            Assert.False(before.IsMarketOpen);
+            Assert.Equal("Muhurat trading", before.SpecialSessionName);
+            Assert.True(service.IsMarketOpen(Ist(2026, 11, 8, 14, 20), exchange, "FO"));
+            Assert.True(service.IsMarketOpen(Ist(2026, 11, 8, 15, 39), exchange, "FO"));
+            Assert.False(service.IsMarketOpen(Ist(2026, 11, 8, 15, 40), exchange, "FO"));
+        }
+
+        Assert.False(service.IsMarketOpen(Ist(2026, 11, 8, 14, 19), "MCX", "FO"));
+        Assert.True(service.IsMarketOpen(Ist(2026, 11, 8, 15, 29), "MCX", "FO"));
+        Assert.False(service.IsMarketOpen(Ist(2026, 11, 8, 15, 30), "MCX", "FO"));
+    }
+
     private static (MarketCalendar Calendar, TradingDbContext Db) BuildCalendar()
     {
         var name = $"calendar-{Guid.NewGuid():N}";

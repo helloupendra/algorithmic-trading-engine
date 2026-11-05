@@ -1,5 +1,5 @@
 {
-  "_about": "Official 2026 trading holidays, read from each exchange's circular on 2026-09-14. Weekend holidays are omitted (weekends are already closed). A year is seeded once per exchange; later corrections go through the console (System > Market calendar). Muhurat trading on Sun 2026-11-08 is confirmed but its timings were not yet published: add it from the timings circular when it comes. The 2027 lists are usually published in mid-December.",
+  "_about": "Official 2026 trading holidays, read from each exchange's circular on 2026-09-14. Weekend holidays are omitted (weekends are already closed). A year is seeded once per exchange; later corrections go through the console (System > Market calendar). The 2027 lists are usually published in mid-December.",
   "holidays": [
     { "exchange": "NSE", "date": "2026-01-15", "name": "Municipal Corporation elections (Maharashtra)", "closure": "FullDay", "source": "NSE/CMTR/72260, NSE/FAOP/72262 (12 Jan 2026)" },
     { "exchange": "NSE", "date": "2026-01-26", "name": "Republic Day", "closure": "FullDay", "source": "NSE/CMTR/71775, NSE/FAOP/71777 (12 Dec 2025)" },
@@ -55,6 +55,9 @@
   ],
   "specialSessions": [
     { "exchange": "NSE", "date": "2026-02-01", "name": "Union Budget (Sunday live session)", "openIst": "09:15", "closeIst": "15:30", "source": "NSE/CMTR/72349, NSE/FAOP/72352 (16 Jan 2026)" },
-    { "exchange": "BSE", "date": "2026-02-01", "name": "Union Budget (Sunday live session)", "openIst": "09:15", "closeIst": "15:30", "source": "BSE notice 20260116-34 (16 Jan 2026)" }
+    { "exchange": "BSE", "date": "2026-02-01", "name": "Union Budget (Sunday live session)", "openIst": "09:15", "closeIst": "15:30", "source": "BSE notice 20260116-34 (16 Jan 2026)" },
+    { "exchange": "NSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "source": "NSE/FAOP/76940 (19 Oct 2026), the F&O hours" },
+    { "exchange": "BSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "source": "BSE notice of 19 Oct 2026, equity derivatives hours as reported by Angel One; the notice itself not read" },
+    { "exchange": "MCX", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:30", "source": "MCX/TRD/590/2026 (19 Oct 2026), as summarised by TeamLease and AlgoTest; the circular itself not read" }
   ]
 }
