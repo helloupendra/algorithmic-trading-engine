@@ -30,7 +30,7 @@ Once a minute it reads the desk and judges each rule: *found*, *healthy*,
 | --- | --- | --- | --- |
 | `api-down` | 08:40 to the day's last close | `GET /health` does not answer, or the API has gone down 3 times in 30 minutes (a crash loop the desk keeps restarting, each outage too short to page alone) | 3 min |
 | `api-degraded` | same | `/health` answers but every signed-in read fails, or one read has failed 5 checks in a row. `/health` is not a health check: it is the console's `index.html` (the SPA fallback in `Program.cs`) and never touches the database | 3 min |
-| `no-broker` | 09:00–15:30, and the MCX evening | neither Dhan nor FYERS is signed in (`isConnected` and `expiresUtc` only: `needsReconnect` means "saved on an earlier date", wrong for Dhan's 24-hour token) | 2 min |
+| `no-broker` | 09:00–15:30, and the MCX evening | neither Dhan nor FYERS is signed in (`isConnected` and `expiresUtc` only, so a token with time left counts whatever date it was saved on) | 2 min |
 | `no-ticks` | NSE open, 09:17–15:29 | the newest NSE/BSE tick in Redis `market:ticks` — what the strategies read — is over 3 minutes old; the API's index rows stand in only when the stream cannot be read | 3 min |
 | `redis-down` | same, and the MCX evening | Redis refuses the connection: every strategy is blind | 3 min |
 | `runs-not-up` | 09:30–15:00 | the morning plan has runs and none is live, or from 09:40 fewer than half of them have ever been live today | 2 min |

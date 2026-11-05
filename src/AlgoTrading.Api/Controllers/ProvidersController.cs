@@ -632,22 +632,31 @@ public class ProvidersController : ControllerBase
 
         var savedUtc = session.UpdatedUtc;
 
-        // A daily token is stale once the IST trading day it was issued on has
-        // passed; comparing dates in IST is what an operator actually means by
-        // "did I connect today?".
-        var ist = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-        var savedIst = TimeZoneInfo.ConvertTimeFromUtc(savedUtc, ist);
-        var nowIst = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ist);
-
         return new ProviderSessionResponse
         {
             IsConnected = true,
             ConnectedUtc = savedUtc,
             AgeSeconds = (int)(DateTime.UtcNow - savedUtc).TotalSeconds,
             ExpiresUtc = session.ExpiresAtUtc,
-            NeedsReconnect =
-                descriptor.Auth == ProviderAuthKind.OAuthDaily &&
-                savedIst.Date < nowIst.Date,
+            NeedsReconnect = IsReconnectDue(descriptor.Auth, savedUtc, session.ExpiresAtUtc, DateTime.UtcNow),
         };
+    }
+
+    internal static bool IsReconnectDue(ProviderAuthKind auth, DateTime savedUtc, DateTime? expiresUtc, DateTime nowUtc)
+    {
+        if (auth != ProviderAuthKind.OAuthDaily) return false;
+
+        // A token whose end is known is good until that end. Dhan's runs 24 hours
+        // from its sign-in, so the date rule below called it stale from midnight:
+        // on 4 Nov the 08:55 checkup said "Dhan is signed out" with the token good
+        // to 09:06 and the feed running, and pressing Sign in on that advice sends
+        // codes while a token is live.
+        if (expiresUtc is { } ends) return nowUtc >= ends;
+
+        // With no known end, a daily token is stale once the IST trading day it
+        // was issued on has passed; comparing dates in IST is what an operator
+        // actually means by "did I connect today?".
+        var ist = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+        return TimeZoneInfo.ConvertTimeFromUtc(savedUtc, ist).Date < TimeZoneInfo.ConvertTimeFromUtc(nowUtc, ist).Date;
     }
 }

@@ -47,8 +47,9 @@ public class ProviderSessionResponse
     public DateTime? ExpiresUtc { get; set; }
 
     /// <summary>
-    /// True for a connector whose token expires daily and whose session was last
-    /// saved before today's session started — a reconnect is due.
+    /// True for a connector whose token expires daily and whose token has reached
+    /// its known end, or, with no known end, was saved on an earlier IST date: a
+    /// reconnect is due.
     /// </summary>
     public bool NeedsReconnect { get; set; }
 }
