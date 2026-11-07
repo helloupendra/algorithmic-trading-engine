@@ -1,35 +1,117 @@
 /*
  * Today (/today): the owner's one page. Built from the console's own
- * vocabulary (panel, stat, table, badge, pill, the health bar) on the
+ * vocabulary (panel, table, badge, pill, the tabs, the health bar) on the
  * tokens, so it follows the theme; these rules only lay out what the page
- * adds. Calm: one 17px headline (the date), data text at 12.5px, colour only
- * for state, and every coloured thing also says what it is in words or an
- * icon.
+ * adds. Calm: one 17px headline (the date), the day's six figures in one
+ * strip, data text at 12.5px, colour only for state, and every coloured thing
+ * also says what it is in words or an icon.
  */
 
 .tdy-flush { margin: 0; }
 .tdy-n { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tdy-line { display: block; }
-.tdy-cols { align-items: start; }
 
-/* --- 1. the date and the markets ------------------------------------------------- */
+/* --- the date and the markets ------------------------------------------------------ */
 .tdy-head { align-items: flex-start; }
 .tdy-head__main { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .tdy-date { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
 .tdy-markets { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
 .pill.tdy-pill { padding: 2px 9px; }
 
-/* --- 2. needs a look ----------------------------------------------------------------- */
+/* The tabs sit right under the header; the overview's parts follow at one
+   rhythm (12px), tighter than the page's 16px, so they read as one sheet. */
+.page.tdy > .tdy-tabs { margin-top: 12px; }
+.tdy-tab__n {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.oc-tab--on .tdy-tab__n { color: var(--text-2); }
+.tdy-body { display: grid; gap: 12px; min-width: 0; }
+
+.tdy-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.tdy-strong { font-weight: 600; }
+
+/* --- the day in six figures: one bordered strip, cells split by hairlines -------------- */
+.tdy-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tdy-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 16px 13px;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+.tdy-kpi:first-child { border-left: 0; }
+.tdy-kpi--go { cursor: pointer; transition: background-color 0.15s ease; }
+.tdy-kpi--go:hover { background: var(--surface2); }
+.tdy-kpi--go:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.tdy-kpi__label {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tdy-kpi__value {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tdy-kpi__sub { color: var(--text-2); font-size: var(--fs-s); line-height: 1.4; overflow-wrap: anywhere; }
+
+/* --- the overview's grids ---------------------------------------------------------------- */
+.tdy-grid { display: grid; gap: 12px; align-items: stretch; min-width: 0; }
+.tdy-grid--main { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+.tdy-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tdy-body .panel { padding: 14px 16px; }
+.tdy-body .panel__head { margin-bottom: 10px; }
+
+/* --- needs a look ------------------------------------------------------------------------ */
 .tdy-calm { margin: 0; font-size: 13px; color: var(--text-2); }
 .tdy-att { list-style: none; margin: 0; padding: 0; }
-/* A row: the level (icon and word), what and why, then the kind, the time and the link.
+/* A row: the level (icon and word), what and why, then the kind and the time.
    The rule on the left repeats the level's colour; the word already says it. */
 .tdy-att__row {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr) auto;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 3px 12px;
-  padding: 8px 0 8px 10px;
+  gap: 2px 10px;
+  padding: 7px 0 7px 10px;
   border-left: 2px solid var(--line-strong);
   border-bottom: 1px solid var(--line-soft);
 }
@@ -49,17 +131,42 @@
 .tdy-level svg { width: 13px; height: 13px; flex: none; align-self: center; }
 .tdy-level--neg { color: var(--neg); }
 .tdy-level--warn { color: var(--warn); }
-.tdy-att__title { font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
-.tdy-att__detail { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--text-2); overflow-wrap: anywhere; }
-.tdy-att__meta { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-s); color: var(--text-3); white-space: nowrap; }
+.tdy-att__title { font-size: var(--fs); font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+a.tdy-att__link { color: var(--text); text-decoration: none; }
+a.tdy-att__link:hover { color: var(--brand-hi); text-decoration: underline; }
+/* Two lines at most; the whole detail is the row's tooltip and on the page it links to. */
+.tdy-att__detail {
+  margin-top: 1px;
+  font-size: var(--fs-s);
+  line-height: 1.45;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tdy-att__meta { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
 .tdy-open { color: var(--brand-hi); text-decoration: none; font-size: 12px; white-space: nowrap; }
 .tdy-open:hover { text-decoration: underline; }
+.tdy-fold {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--brand-hi);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tdy-fold:hover { text-decoration: underline; }
 
-/* --- 3. trading today ----------------------------------------------------------------- */
-.stat-grid.tdy-accounts { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
-.tdy-accounts .stat__label { text-transform: none; letter-spacing: 0.01em; font-size: 11.5px; }
-.tdy-accounts .stat__sub { line-height: 1.55; }
+/* --- trading today ------------------------------------------------------------------------- */
+.tdy-accts .table td, .tdy-accts .table th { padding-top: 6px; padding-bottom: 6px; }
+.tdy-acct__name { font-weight: 550; }
+.tdy-accts tfoot td { border-bottom: 0; border-top: 1px solid var(--line); color: var(--text-2); font-weight: 600; }
 .tdy-runs { margin-top: 12px; }
+.tdy-runs .table td { padding-top: 6px; padding-bottom: 6px; }
 .tdy-caption {
   caption-side: top;
   padding: 7px 12px 6px;
@@ -71,6 +178,45 @@
 a.tdy-run { color: var(--text); font-weight: 550; text-decoration: none; }
 a.tdy-run:hover { color: var(--brand-hi); text-decoration: underline; }
 .table td.tdy-reason { white-space: normal; min-width: 170px; max-width: 340px; color: var(--text-2); line-height: 1.4; }
+
+/* --- markets, agents ------------------------------------------------------------------------ */
+.table.tdy-mkt th { position: static; background: transparent; padding: 0 0 6px; border-bottom: 1px solid var(--line-soft); }
+.table.tdy-mkt th:first-child, .table.tdy-mkt td:first-child { padding-left: 0; }
+.table.tdy-mkt th:last-child, .table.tdy-mkt td:last-child { padding-right: 0; }
+.table.tdy-mkt td { padding: 6px 0 6px 12px; }
+.table.tdy-mkt tbody + tbody tr:first-child td { border-top: 1px solid var(--line); }
+.table.tdy-mkt tbody:last-child tr:last-child td { border-bottom: 0; }
+.tdy-mkt__name { font-weight: 550; }
+.tdy-mkt__ct { font-size: var(--fs-xs); }
+
+.tdy-mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 10px; }
+.tdy-mini > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg1); }
+.tdy-mini dt { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tdy-mini dd { margin: 0; font-size: 16px; font-weight: 600; }
+.tdy-trouble { list-style: none; margin: 0; padding: 0; font-size: var(--fs); }
+.tdy-trouble li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tdy-trouble li:last-child { border-bottom: 0; }
+.tdy-trouble__name { min-width: 0; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tdy-trouble__what { flex: none; font-size: var(--fs-s); white-space: nowrap; }
+
+/* --- narrower screens ----------------------------------------------------------------------- */
+@media (max-width: 1280px) {
+  .tdy-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tdy-kpi:nth-child(3n + 1) { border-left: 0; }
+  .tdy-kpi:nth-child(n + 4) { border-top: 1px solid var(--line-soft); }
+  .tdy-grid--three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tdy-grid--three > :last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 1024px) {
+  .tdy-grid--main { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* The runs as a list, a phone's view of the table (shown under 640px): the net
    stays on the first line instead of past the edge of a sideways table. */
@@ -207,10 +353,21 @@ a.tdy-mems__id:hover { text-decoration: underline; }
 
 /* --- a phone ---------------------------------------------------------------------------------- */
 @media (max-width: 640px) {
-  /* The level and the kind, time and link on the first line; what and why under them, full width. */
+  .tdy-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tdy-kpi { padding: 10px 12px 11px; }
+  .tdy-kpi:nth-child(n) { border-left: 1px solid var(--line-soft); border-top: 1px solid var(--line-soft); }
+  .tdy-kpi:nth-child(odd) { border-left: 0; }
+  .tdy-kpi:nth-child(-n + 2) { border-top: 0; }
+  .tdy-kpi__value { font-size: 19px; }
+  .tdy-grid--three { grid-template-columns: minmax(0, 1fr); }
+  .tdy-body .panel { padding: 12px 12px; }
+
+  /* The level and the kind and time on the first line; what and why under them, full width. */
   .tdy-att__row { grid-template-columns: minmax(0, 1fr) auto; }
   .tdy-att__body { grid-column: 1 / -1; grid-row: 2; }
-  .tdy-att__meta { grid-column: 2; grid-row: 1; justify-self: end; }
+  .tdy-att__meta { grid-column: 2; grid-row: 1; justify-self: end; flex-direction: row; gap: 8px; }
+
+  .tdy-wide { display: none; }
 
   .tdy-runs { display: none; }
   .tdy-rl { display: block; }

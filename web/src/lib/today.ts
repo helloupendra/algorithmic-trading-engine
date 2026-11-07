@@ -688,3 +688,101 @@ export function plural(n: number, one: string, many = `${one}s`): string {
 function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
+
+// ---------- the overview -----------------------------------------------------------
+//
+// 7 Nov 2026, the owner: the page opened on everything at once and read as a
+// mess. It now opens on an overview (the day's figures in one strip, then
+// short lists: trading, what needs a look, markets, agents, system) and keeps
+// the long sections in full under tabs (every run, the AI Trader, the agents
+// and learning, the decision log). These are the overview's sums and counts,
+// kept here so they are tested.
+
+/** The tabs of the page, in order; the overview is the default and has no ?tab=. */
+export const TODAY_TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'trading', label: 'Trading' },
+  { key: 'ai', label: 'AI' },
+  { key: 'decisions', label: 'Decisions' },
+] as const
+
+export type TodayTab = (typeof TODAY_TABS)[number]['key']
+
+/** The tab a ?tab= value names; the overview for none or one this page does not have. */
+export function todayTab(v: string | null): TodayTab {
+  return TODAY_TABS.find((t) => t.key === v)?.key ?? 'overview'
+}
+
+/**
+ * A sum of figures where some may be unknown: the sum of the known ones,
+ * `partial` when at least one was not known, and null when none was.
+ * An unknown figure is never added in as ₹0.
+ */
+export function sumKnown(values: readonly (number | null)[]): { sum: number | null; partial: boolean } {
+  const known = values.filter((v): v is number => v != null)
+  return { sum: known.length === 0 ? null : known.reduce((a, b) => a + b, 0), partial: known.length > 0 && known.length < values.length }
+}
+
+/** The day's trading in a few figures, for the strip at the top. */
+export interface DayTotals {
+  net: number | null
+  gross: number | null
+  charges: number | null
+  /** Some account sent no net: the net is of the accounts that did. */
+  partial: boolean
+  accounts: number
+  live: number
+  stopped: number
+  /** Of the stopped, the runs whose status is Failed (they ended on an error, not on a rule). */
+  failed: number
+  openLegs: number
+}
+
+export function dayTotals(t: TodayTrading): DayTotals {
+  const net = sumKnown(t.accounts.map((a) => a.net))
+  return {
+    net: net.sum,
+    gross: sumKnown(t.accounts.map((a) => a.gross)).sum,
+    charges: sumKnown(t.accounts.map((a) => a.charges)).sum,
+    partial: net.partial,
+    accounts: t.accounts.length,
+    live: t.accounts.reduce((n, a) => n + a.runsLive, 0),
+    stopped: t.accounts.reduce((n, a) => n + a.runsStopped, 0),
+    failed: t.runs.filter((r) => r.status.toLowerCase() === 'failed').length,
+    openLegs: t.accounts.reduce((n, a) => n + a.openLegs, 0),
+  }
+}
+
+/** How many items need a look at each level, most serious first: [["High", 2], ["Medium", 4]]; levels with none left out. */
+export function attentionCounts(items: readonly AttentionItem[]): { label: string; tone: Tone; n: number }[] {
+  const by = new Map<string, { label: string; tone: Tone; rank: number; n: number }>()
+  for (const item of items) {
+    const l = attentionLevel(item.level)
+    const row = by.get(l.label) ?? { label: l.label, tone: l.tone, rank: l.rank, n: 0 }
+    row.n += 1
+    by.set(l.label, row)
+  }
+  return [...by.values()].sort((a, b) => a.rank - b.rank).map(({ label, tone, n }) => ({ label, tone, n }))
+}
+
+/** The strongest tone in a list that needs a look: neg for a critical or high item, warn for a medium one. */
+export function attentionTone(items: readonly AttentionItem[]): Tone {
+  const tones = items.map((i) => attentionLevel(i.level).tone)
+  return tones.includes('neg') ? 'neg' : tones.includes('warn') ? 'warn' : 'neutral'
+}
+
+/** An agent worth a line on the overview: on, and with a failed call or a bad report today. */
+export function agentTrouble(a: TodayAgent): boolean {
+  return a.failedCallsToday > 0 || a.reportsToday.failed > 0 || a.reportsToday.invalid > 0
+}
+
+/** The agents' day in totals: built, on, calls, failed calls, invalid and failed reports. */
+export function agentTotals(agents: readonly TodayAgent[]) {
+  return {
+    built: agents.length,
+    on: agents.filter((a) => a.on === true).length,
+    calls: agents.reduce((n, a) => n + a.callsToday, 0),
+    failedCalls: agents.reduce((n, a) => n + a.failedCallsToday, 0),
+    badReports: agents.reduce((n, a) => n + a.reportsToday.failed + a.reportsToday.invalid, 0),
+  }
+}

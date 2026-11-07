@@ -3,10 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { actionText } from './aiTrader'
 import {
   SENTINEL_STALE_MINUTES,
+  agentTotals,
+  agentTrouble,
   agoText,
+  attentionCounts,
   attentionKind,
   attentionLevel,
+  attentionTone,
   consoleLink,
+  dayTotals,
   decisionStatus,
   examText,
   istWhen,
@@ -19,9 +24,11 @@ import {
   recapText,
   runStatus,
   sentinelState,
+  sumKnown,
+  todayTab,
   worstFirst,
 } from './today'
-import type { AttentionItem, TodayRun } from './today'
+import type { AttentionItem, TodayAgent, TodayRun, TodayTrading } from './today'
 
 /** 11:00 IST on 1 Oct 2026. */
 const NOW = Date.parse('2026-10-01T05:30:00Z')
@@ -570,5 +577,99 @@ describe('the words', () => {
     expect(plural(1, 'call')).toBe('1 call')
     expect(plural(5, 'call')).toBe('5 calls')
     expect(plural(2, 'open leg')).toBe('2 open legs')
+  })
+})
+
+describe('the overview', () => {
+  const run = (net: number | null, status = 'Running'): TodayRun => ({
+    runId: 1,
+    userName: 'admin',
+    strategy: 'X',
+    underlying: 'NIFTY',
+    status,
+    net,
+    trades: 1,
+    startedUtc: null,
+    stoppedUtc: null,
+    stopReason: null,
+  })
+
+  it('opens on the overview, and on a tab only when the address names one it has', () => {
+    expect(todayTab(null)).toBe('overview')
+    expect(todayTab('trading')).toBe('trading')
+    expect(todayTab('decisions')).toBe('decisions')
+    expect(todayTab('nonsense')).toBe('overview')
+  })
+
+  it('adds the known figures only: an unknown is never ₹0, and none known is unknown', () => {
+    expect(sumKnown([100, -40.5])).toEqual({ sum: 59.5, partial: false })
+    expect(sumKnown([100, null])).toEqual({ sum: 100, partial: true })
+    expect(sumKnown([null, null])).toEqual({ sum: null, partial: false })
+    expect(sumKnown([])).toEqual({ sum: null, partial: false })
+  })
+
+  it("totals the accounts' day and counts the failed runs among the stopped", () => {
+    const t: TodayTrading = {
+      accounts: [
+        { userName: 'admin', net: -8765, gross: -3844, charges: 4921, runsLive: 7, runsStopped: 3, openLegs: 8 },
+        { userName: 'coderforchange', net: 5092, gross: 8217, charges: 3125, runsLive: 7, runsStopped: 3, openLegs: 5 },
+      ],
+      runs: [run(-10, 'Failed'), run(5, 'Stopped'), run(1), run(null, 'failed')],
+      recapsToday: 0,
+    }
+    expect(dayTotals(t)).toEqual({
+      net: -3673,
+      gross: 4373,
+      charges: 8046,
+      partial: false,
+      accounts: 2,
+      live: 14,
+      stopped: 6,
+      failed: 2,
+      openLegs: 13,
+    })
+    const oneUnknown = dayTotals({ ...t, accounts: [t.accounts[0], { ...t.accounts[1], net: null }] })
+    expect(oneUnknown.net).toBe(-8765)
+    expect(oneUnknown.partial).toBe(true)
+    expect(dayTotals({ accounts: [], runs: [], recapsToday: 0 }).net).toBeNull()
+  })
+
+  it('counts what needs a look by level, most serious first, and takes the strongest tone', () => {
+    const item = (level: string): AttentionItem => ({ level, kind: 'system', title: level, detail: null, link: null, atUtc: null })
+    const items = [item('info'), item('medium'), item('high'), item('medium'), item('critical')]
+    expect(attentionCounts(items)).toEqual([
+      { label: 'Critical', tone: 'neg', n: 1 },
+      { label: 'High', tone: 'neg', n: 1 },
+      { label: 'Medium', tone: 'warn', n: 2 },
+      { label: 'Info', tone: 'neutral', n: 1 },
+    ])
+    expect(attentionTone(items)).toBe('neg')
+    expect(attentionTone([item('medium'), item('info')])).toBe('warn')
+    expect(attentionTone([item('info')])).toBe('neutral')
+    expect(attentionTone([])).toBe('neutral')
+  })
+
+  it("names an agent on the overview only for a failed call or a bad report, and totals the agents' day", () => {
+    const agent = (on: boolean | null, calls: number, failed: number, invalid = 0, bad = 0): TodayAgent => ({
+      key: 'k',
+      name: 'K',
+      on,
+      callsToday: calls,
+      failedCallsToday: failed,
+      reportsToday: { ok: 1, invalid, failed: bad },
+      lastActivityUtc: null,
+      highlights: [],
+    })
+    expect(agentTrouble(agent(true, 10, 0))).toBe(false)
+    expect(agentTrouble(agent(true, 10, 1))).toBe(true)
+    expect(agentTrouble(agent(true, 10, 0, 1))).toBe(true)
+    expect(agentTrouble(agent(true, 10, 0, 0, 1))).toBe(true)
+    expect(agentTotals([agent(true, 10, 1, 2), agent(false, 0, 0), agent(null, 4, 0, 0, 1)])).toEqual({
+      built: 3,
+      on: 1,
+      calls: 14,
+      failedCalls: 1,
+      badReports: 3,
+    })
   })
 })
