@@ -318,7 +318,8 @@ function layout({ page, body, toc, prev, next, description, dateModified }) {
 <meta name="description" content="${esc(description)}">
 <link rel="canonical" href="${url}">
 <meta name="robots" content="index,follow,max-image-preview:large">
-<meta name="theme-color" content="#070b11">
+<meta name="theme-color" content="#f6f8f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1115" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="${SITE.name}">
 <meta property="og:title" content="${esc(page.index ? SITE.name + ' Docs' : page.title)}">
@@ -355,7 +356,7 @@ ${jsonLd({
 <a class="skip" href="#content">Skip to content</a>
 <header class="top">
   <div class="top__wrap">
-    <a class="brand" href="/" aria-label="${SITE.name} home"><img src="/brand/openfno-mark.svg" alt="" width="26" height="26"><span>open<b>fno</b></span></a>
+    <a class="brand" href="/" aria-label="${SITE.name} home"><svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false"><path fill="var(--leaf)" d="M16 11.4C11.2 11.4 8.4 8.6 8.4 4.6C12.8 4.6 16 7.2 16 11.4Z"/><path fill="var(--leaf)" d="M16 9.4C16 5.4 18.8 2.4 23.6 2.4C23.6 6.6 20.6 9.4 16 9.4Z"/><rect fill="var(--leaf)" x="14.7" y="9" width="2.6" height="7" rx="1.3"/><rect fill="var(--candle)" x="10.8" y="15" width="10.4" height="11" rx="2.3"/><rect fill="var(--candle)" x="14.7" y="25" width="2.6" height="5" rx="1.3"/></svg><span>OpenFNO</span></a>
     <span class="top__sep" aria-hidden="true">/</span>
     <a class="top__docs" href="/docs/">Docs</a>
     <button class="top__menu" type="button" aria-label="Menu" aria-controls="sidenav" aria-expanded="false">☰</button>
