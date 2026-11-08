@@ -95,7 +95,8 @@
 .tdy-kpi__sub { color: var(--text-2); font-size: var(--fs-s); line-height: 1.4; overflow-wrap: anywhere; }
 
 /* --- the overview's grids ---------------------------------------------------------------- */
-.tdy-grid { display: grid; gap: 12px; align-items: stretch; min-width: 0; }
+/* Cards hug their content (see desk.css .dk-sheet): a short card beside a long one ends where its content does. */
+.tdy-grid { display: grid; gap: 12px; align-items: start; min-width: 0; }
 .tdy-grid--main { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
 .tdy-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tdy-body .panel { padding: 14px 16px; }

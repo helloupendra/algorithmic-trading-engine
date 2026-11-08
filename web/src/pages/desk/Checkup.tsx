@@ -28,7 +28,7 @@ import { Chip, Dot, Failed, PanelHead, Waiting } from './parts'
 
 const STATE_DOT: Record<string, 'pos' | 'warn' | 'neg' | null> = { ok: 'pos', warn: 'warn', fail: 'neg', info: null, skip: null }
 
-/** A list longer than this folds its passed checks into one line, when there are more than one. */
+/** A list longer than this folds its passed checks, and its notes with nothing to do, into one line. */
 const FOLD_PAST = 8
 
 const chipTone = (tone: string) => (tone === 'pos' ? 'pos' : tone === 'neg' ? 'neg' : tone === 'warn' ? 'warn' : undefined)
@@ -142,10 +142,15 @@ export function Checkup({ view, links }: { view: DeskView; links: DeskLinks }) {
   const stale = staleNote(latest.data.lastCompletedUtc, view.nowMs, formatDateTime)
   const foldable = foldReadiness(c.slot, view.clock, now)
   const folded = foldable && !unfolded
-  // A passed check folds away once the list is long; one that came right since the checkup is the news, and stays.
-  const isPassed = (i: ItemNow) => i.state === 'ok' && !i.changed
-  const passed = now.items.filter(isPassed).length
-  const canFoldPassed = now.items.length > FOLD_PAST && passed > 1
+  // Once the list is long, what needs no hand folds away: a passed check, and a
+  // note (info) that carries no action. One that changed since the checkup is
+  // the news, and stays; so does every warning, failure and note with an action.
+  // An evening list of fifteen notes used to stand three screens tall beside
+  // two short cards.
+  const isPassed = (i: ItemNow) => !i.changed && (i.state === 'ok' || (i.state === 'info' && !i.item.action))
+  const passed = now.items.filter((i) => isPassed(i) && i.state === 'ok').length
+  const notes = now.items.filter((i) => isPassed(i) && i.state !== 'ok').length
+  const canFoldPassed = now.items.length > FOLD_PAST && passed + notes > 1
   const showPassed = passedShownFor === c.id
   // Each row keeps its place in the checkup's own list, so a fold does not remount the rest.
   const rows = now.items.map((it, i) => ({ it, i })).filter(({ it }) => !canFoldPassed || showPassed || !isPassed(it))
@@ -188,7 +193,9 @@ export function Checkup({ view, links }: { view: DeskView; links: DeskLinks }) {
           )}
           {canFoldPassed && (
             <button type="button" className="dk-linkbtn dk-okmore" aria-expanded={showPassed} onClick={() => setPassedShownFor(showPassed ? null : c.id)}>
-              {showPassed ? 'Fold the passed checks' : `${passed} checks passed · show all`}
+              {showPassed
+                ? 'Fold them again'
+                : `${[passed ? `${passed} passed` : '', notes ? `${notes} note${notes === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')} · show all`}
             </button>
           )}
         </>

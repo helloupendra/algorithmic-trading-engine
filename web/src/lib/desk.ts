@@ -333,10 +333,14 @@ type Row = ReadonlyArray<readonly [PanelKey, number, PanelKey?]>
  */
 const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
   pre: {
+    // The morning checkup reads first and, like the evening one, can run to
+    // many items with advice: its own full-width row, so nothing short stands
+    // beside it with a void underneath.
     admin: [
-      [['checkup', 5], ['overnight', 3], ['forecast', 4, 'flows']],
-      [['news', 4], ['week', 4], ['plan', 4]],
-      [['indices', 8], ['legs', 4, 'timeline']],
+      [['checkup', 12]],
+      [['overnight', 4], ['forecast', 4, 'flows'], ['plan', 4]],
+      [['news', 4], ['week', 4], ['legs', 4, 'timeline']],
+      [['indices', 12]],
     ],
     trader: [
       [['overnight', 4], ['news', 4], ['plan', 4]],
@@ -365,10 +369,16 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
     // checkup, folded, is about as tall as the scoreboard over the week and
     // the timeline over the flows, so the three share a row with little to
     // spare; the indices and the movers are the same height.
+    // The checkup has its own full-width row: after the close it is the list
+    // of what to fix before tomorrow and can run to fifteen items with advice,
+    // which in a four-column cell stood three screens tall beside two short
+    // cards (8 Nov 2026). Alone in its row it is wide and short, and nothing
+    // waits beside it.
     admin: [
       [['grid', 8, 'legs'], ['pnl', 4]],
-      [['checkup', 4], ['scores', 4, 'week'], ['timeline', 4, 'flows']],
-      [['indices', 8], ['movers', 4]],
+      [['checkup', 12]],
+      [['scores', 4, 'week'], ['timeline', 4, 'flows'], ['movers', 4]],
+      [['indices', 12]],
     ],
     trader: [
       [['grid', 8], ['pnl', 4]],

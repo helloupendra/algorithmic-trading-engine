@@ -82,6 +82,10 @@
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
+  /* A card is as tall as what it holds. Stretched to the row, a short card
+     beside a long one was a white box with a void under its last line; now
+     the page shows through instead, which is air, not an empty card. */
+  align-items: start;
 }
 /* Each cell is a card in the Today page's language (panel: surface, hairline,
    the shell's radius), no longer a pane of one bordered sheet. */
@@ -216,6 +220,8 @@
 .dk-ck { align-items: center; margin-bottom: 4px; }
 .dk-ck-said { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; margin: 0 0 8px; }
 /* Each item says whose reading it is: "now" (read again, in the indigo of now) or the checkup's time. */
+/* In a full-width card the advice keeps a reading measure; the row's width is the table's. */
+.dk-ck-t td > div { max-width: 78ch; }
 .dk-ck-t td.dk-when {
   width: 36px;
   padding-left: 8px;
