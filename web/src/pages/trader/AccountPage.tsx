@@ -198,6 +198,13 @@ export function AccountPage() {
               <Badge tone={user?.role === 'Admin' ? 'accent' : 'neutral'}>{user?.role ?? '—'}</Badge>
             </Row>
             <Row k="Allocated capital">{formatInrWhole(user?.totalCapital ?? 0)}</Row>
+            <Row k="Modules">
+              {user?.role === 'Admin'
+                ? 'all, as admin'
+                : user?.moduleGrants?.length
+                  ? user.moduleGrants.join(', ')
+                  : 'none yet · ask your admin for Trade or Research'}
+            </Row>
             <Row k="Package strategies">
               {strategies.data ? String(strategies.data.length) : strategies.isError ? 'none granted yet' : '…'}
             </Row>
