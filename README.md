@@ -86,6 +86,21 @@ sidebar gives way to a tab bar at the bottom.
   </tr>
 </table>
 
+### Desk: the trader's sheet
+
+Desk is the page a trader keeps open through the session: the day's figures in
+one row, then cards for the runs' net P&L by underlying, the open legs, the day's
+P&L curve by account and by strategy, the indices with their option-chain
+levels, and the day's events. It follows the clock: before the open it shows
+what was carried in and the morning plan, after the close the result.
+
+<table>
+  <tr>
+    <td width="72%"><img src="docs/image/console-desk.png" alt="The Desk in the light theme: net today, runs, open legs, feed, incidents and checkup in one row; the runs' net P&L by underlying, the open legs, the day's P&L curve and the indices with their chain levels (invented data, strategy names hidden)"></td>
+    <td><img src="docs/image/console-desk-phone.png" alt="The Desk at phone width: the figures two to a row and the cards one under the other"></td>
+  </tr>
+</table>
+
 ### Markets: the option chain
 
 Calls left, puts right, strike in the middle: open interest and its change,
