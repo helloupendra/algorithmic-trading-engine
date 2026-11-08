@@ -1475,6 +1475,11 @@ a.pill:hover { border-color: var(--line-strong); }
 
 .run-card__section { margin-top: 12px; }
 
+/* The positions table carries fourteen columns; at the table's usual cell
+   padding the Square-off button sat past the card's edge on a 1440px screen. */
+.run-card .table th,
+.run-card .table td { padding-left: 9px; padding-right: 9px; }
+
 /* Collapsible sub-sections (activity, runner output). */
 .disclosure__btn {
   width: 100%;
