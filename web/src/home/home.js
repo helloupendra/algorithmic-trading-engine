@@ -2,3 +2,4 @@
 // and the replayed minute in the hero (the chain and candles follow the slider).
 import './market-clock.js'
 import './replay.js'
+import './theme-pick.js'

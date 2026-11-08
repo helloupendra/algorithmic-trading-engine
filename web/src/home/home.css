@@ -16,14 +16,64 @@
 @font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 @font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-mono-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
-/* The console's light palette over the prototype's own variables. */
+/* The console's palette (styles.css, sprout v1) as the page's own tokens:
+   every colour below is one of these, so the dark set is a second list and
+   nothing else. Light is the default; public/theme-boot.js sets data-theme
+   from the console's key (openfno.theme) before the first paint, and the
+   footer's Light / Dark / System control (theme-pick.js) changes it. */
 :root {
+  color-scheme: light;
+  --surface: #ffffff;
+  --well: #f5f6f9;
   --paper: #f6f8f9;
+  --line: #e1e4ed;
+  --line-strong: #d2d6e0;
+  --muted: #646c7c;
+  --ink-2: #494554;
   --ink: #22263a;
   --violet: #6252e0;
+  --violet-ink: #6d5caa;
+  --violet-mid: #8f7df0;
+  --violet-line: #cabdef;
   --violet-soft: #eeecfd;
   --green: #127a52;
+  --green-line: #c7e3d6;
+  --green-soft: #eaf3ef;
   --red: #bf3446;
+  --red-line: #e5b0bc;
+  --red-soft: #f6e9ed;
+  --warn: #956b39;
+  --warn-line: #e7d6b7;
+  --warn-soft: #f7f4ed;
+  --on-violet: #ffffff;
   --leaf: #2fbf8a;
   --candle: #353b52;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface: #161a20;
+  --well: #12161b;
+  --paper: #0e1115;
+  --line: #252b34;
+  --line-strong: #343c49;
+  --muted: #8d98a7;
+  --ink-2: #c3cad5;
+  --ink: #eaeef3;
+  --violet: #9d91ff;
+  --violet-ink: #b3a9ff;
+  --violet-mid: #8b80e6;
+  --violet-line: #4a4480;
+  --violet-soft: #262443;
+  --green: #3ccf95;
+  --green-line: #1f5b45;
+  --green-soft: #13261f;
+  --red: #ff6b7a;
+  --red-line: #6b3038;
+  --red-soft: #2a171b;
+  --warn: #e3ad4f;
+  --warn-line: #5c4a22;
+  --warn-soft: #292213;
+  --on-violet: #11131a;
+  --leaf: #4fd9a5;
+  --candle: #e8ecf1;
 }
