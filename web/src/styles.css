@@ -164,8 +164,8 @@
   --brand-soft: rgba(98, 82, 224, 0.09);
   --brand-line: rgba(98, 82, 224, 0.38);
   --selection: rgba(98, 82, 224, 0.2);
-  --live: #0b7f86;
-  --live-soft: rgba(11, 127, 134, 0.1);
+  --live: #087379; /* 4.9:1 on --bg1, 5.5:1 on --surface */
+  --live-soft: rgba(8, 115, 121, 0.1);
   --leaf: #2fbf8a;
   --candle: #353b52;
 
@@ -964,6 +964,8 @@ select.field__input { appearance: auto; }
   margin: 0;
   font-size: 13px;
 }
+/* The one action that fixes an empty state, on the sentence's line or the next. */
+.empty__action { display: inline-flex; margin-left: 10px; vertical-align: middle; }
 /* Still reading (components/ui.tsx Loading sets role="status"): a dot that
    breathes before the text, so a loading line is told from an empty one. */
 .empty[role='status']::before {
@@ -1370,17 +1372,18 @@ a.checklist__item:hover { background: var(--brand-soft); }
 
   /* Buttons and inputs are touch targets first on a phone. */
   .btn { min-height: 40px; }
-  .btn--sm { min-height: 32px; }
+  .btn--sm { min-height: 36px; }
   .field__input, select, input[type='date'], input[type='time'] { min-height: 40px; font-size: 16px; }
 
   /* A segmented control is a row of buttons: 34px of button in 3px of well. */
   .seg { padding: 3px; }
-  .seg__btn { min-height: 34px; padding: 6px 12px; }
+  .seg__btn { min-height: 40px; padding: 6px 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .splash__spinner,
   .empty[role='status']::before,
+  .dk-wait[role='status']::before,
   .pill--pos .pill__dot,
   .pill--live .pill__dot { animation: none; }
   .flash-up, .flash-down { animation: none; }
@@ -2873,7 +2876,7 @@ a.oc-tab { text-decoration: none; }
 .oc-toggle[aria-pressed='true'] .oc-toggle__box::after { transform: translateX(10px); background: #fff; }
 /* On a phone these are touch targets like the segmented controls. */
 @media (max-width: 760px) {
-  .oc-seg button, .oc-toggle { min-height: 34px; }
+  .oc-seg button, .oc-toggle { min-height: 40px; }
 }
 
 @media (max-width: 520px) {
@@ -3040,7 +3043,8 @@ a.oc-tab { text-decoration: none; }
   padding: 6px 9px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg1);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
   box-shadow: var(--shadow-2);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;

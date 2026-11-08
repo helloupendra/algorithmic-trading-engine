@@ -776,3 +776,7 @@ button.pop__row:focus-visible { outline-offset: -2px; }
 @media (max-width: 400px) {
   .st--conn .st__label { display: none; }
 }
+
+/* The palette input is the one control with the focus while the palette is
+   open; its ring is drawn inside the field, as the sidebar links draw theirs. */
+.palette__input:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }

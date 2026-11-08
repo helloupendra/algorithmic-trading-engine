@@ -83,8 +83,14 @@ export function Badge({
   return <span className={`badge badge--${tone}`}>{children}</span>
 }
 
-export function EmptyState({ children }: { children: ReactNode }) {
-  return <p className="empty">{children}</p>
+/** Nothing here yet: one sentence of what is missing and, when there is one, the one action that fixes it. */
+export function EmptyState({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <p className="empty">
+      {children}
+      {action && <span className="empty__action">{action}</span>}
+    </p>
+  )
 }
 
 /** Price text that flashes green/red when the value moves (live tables). */
