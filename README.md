@@ -96,7 +96,7 @@ rebuilt for any stored minute, which is what makes an option strategy testable
 at all. Above it: spot, the future and its premium, VIX, PCR, max pain, support
 and resistance.
 
-![The NIFTY option chain: spot, future, VIX, PCR, max pain, support and resistance, the open positions, and the strike ladder with OI, OI change, volume, IV, LTP and build-up labels around the at-the-money strike (invented data)](docs/image/console-option-chain.png)
+![The NIFTY option chain: spot, future, VIX, PCR, max pain, support and resistance, the open positions, and the strike ladder with OI, OI change, volume, IV, LTP and build-up labels around the at-the-money strike (invented data)](docs/image/console-chain.png)
 
 ### Trade: run history
 
@@ -105,7 +105,7 @@ lot size**, its risk rules, net P&L after charges, and the reason it stopped.
 Nothing is dismissed: a run stopped by a risk rule, by the close, by hand or by
 a restart is still here.
 
-![Run history: today's 20 runs with account, strategy, risk rules, lots × lot size, net P&L after charges and why each stopped (invented data, strategy names hidden)](docs/image/console-run-history.png)
+![Run history: today's 20 runs with account, strategy, risk rules, lots × lot size, net P&L after charges and why each stopped (invented data, strategy names hidden)](docs/image/console-runs.png)
 
 ### Research: backtests, coverage first
 
@@ -114,7 +114,7 @@ resolution, from when to when, and what is missing. A backtest you cannot run is
 better than one that quietly replays a gap. Results are after costs, and most of
 them lose: that is the finding, not a bug.
 
-![Backtests: recent runs with net P&L after costs (most of them losing), and the historical data on hand per index with its resolutions and range (invented data, strategy names hidden)](docs/image/console-backtests.png)
+![Backtests: recent runs with net P&L after costs (most of them losing), and the historical data on hand per index with its resolutions and range (invented data, strategy names hidden)](docs/image/console-backtests-coverage.png)
 
 ### System: health
 
