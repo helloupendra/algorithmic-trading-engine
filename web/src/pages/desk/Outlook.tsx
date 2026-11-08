@@ -50,7 +50,7 @@ export function Overnight({ view }: { view: DeskView }) {
     <>
       <PanelHead title="Overnight" meta={`GIFT & global${last ? ` · ${istHm(last)}` : ''}`} />
       {!snaps.data && !snaps.isError ? (
-        <Waiting>Reading the morning snapshots…</Waiting>
+        <Waiting reading>Reading the morning snapshots…</Waiting>
       ) : !snaps.data ? (
         // Unread is not "none yet": say the read failed and claim nothing about GIFT or the rest.
         <Failed what="The morning snapshots" error={snaps.error} />
@@ -123,7 +123,7 @@ export function Forecast({ view, links }: { view: DeskView; links: DeskLinks }) 
       {list.isError && !list.data ? (
         <Failed what="Forecasts" error={list.error} />
       ) : !list.data ? (
-        <Waiting>Reading today’s forecasts…</Waiting>
+        <Waiting reading>Reading today’s forecasts…</Waiting>
       ) : rows.length === 0 ? (
         <Waiting>None issued for {view.day === view.today ? 'today' : dayLabel(view.day)} yet; they come at 08:50 on trading days.</Waiting>
       ) : (
@@ -186,7 +186,7 @@ export function Scores({ view, links }: { view: DeskView; links: DeskLinks }) {
       {list.isError && !list.data ? (
         <Failed what="Forecasts" error={list.error} />
       ) : !list.data ? (
-        <Waiting>Reading the forecasts…</Waiting>
+        <Waiting reading>Reading the forecasts…</Waiting>
       ) : rows.length === 0 ? (
         <Waiting>No forecasts were issued for this session.</Waiting>
       ) : (
@@ -250,7 +250,7 @@ export function Flows({ view, links }: { view: DeskView; links: DeskLinks }) {
       {flows.isError && !flows.data ? (
         <Failed what="Flows" error={flows.error} />
       ) : !flows.data ? (
-        <Waiting>Reading the flows…</Waiting>
+        <Waiting reading>Reading the flows…</Waiting>
       ) : !last ? (
         <Waiting>No flows recorded yet.</Waiting>
       ) : (
@@ -337,7 +337,7 @@ function WeekTable({
       {events.isError && !events.data ? (
         <Failed what="The calendar" error={events.error} />
       ) : !events.data ? (
-        <Waiting>Reading the calendar…</Waiting>
+        <Waiting reading>Reading the calendar…</Waiting>
       ) : rows.length === 0 ? (
         <Waiting>Nothing scheduled in the next few days.</Waiting>
       ) : (

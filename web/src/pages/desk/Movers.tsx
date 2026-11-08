@@ -25,7 +25,7 @@ function Breadth({ view }: { view: DeskView }) {
   const breadth = useIntelBreadth(shiftDay(view.day, -10), true)
   const last = [...(breadth.data ?? [])].sort((a, b) => a.date.localeCompare(b.date)).at(-1)
   if (breadth.isError && !breadth.data) return <Failed what="Breadth" error={breadth.error} />
-  if (!breadth.data) return <Waiting>Reading breadth…</Waiting>
+  if (!breadth.data) return <Waiting reading>Reading breadth…</Waiting>
   if (!last) return <Waiting>No breadth recorded yet.</Waiting>
   const total = Math.max(1, last.advances + last.declines + last.unchanged)
   return (
@@ -89,7 +89,7 @@ export function Movers({ view, links }: { view: DeskView; links: DeskLinks }) {
       {movers.isError && !m ? (
         <Failed what="Movers" error={movers.error} />
       ) : !m ? (
-        <Waiting>Reading the movers…</Waiting>
+        <Waiting reading>Reading the movers…</Waiting>
       ) : !m.configured ? (
         <Waiting>{view.isAdmin ? `Angel One is not set up${m.missing?.length ? `: ${m.missing.join(', ')} missing` : ''}.` : 'Movers are not available right now.'}</Waiting>
       ) : (

@@ -47,7 +47,7 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
       {news.isError && !news.data && <Failed what="Headlines" error={news.error} />}
       {filings.isError && !filings.data && <Failed what="Filings" error={filings.error} />}
       {waiting ? (
-        <Waiting>Reading the news…</Waiting>
+        <Waiting reading>Reading the news…</Waiting>
       ) : lines.length === 0 && !readAll ? null : lines.length === 0 ? (
         <Waiting>{tab === 'held' ? 'Nothing on held or watched names.' : tab === 'results' ? 'No results news.' : 'Nothing recorded since yesterday.'}</Waiting>
       ) : (

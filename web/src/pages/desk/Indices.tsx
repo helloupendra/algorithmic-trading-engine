@@ -198,7 +198,7 @@ function IndexTable({
       {pulse.isError && !pulse.data ? (
         <Failed what="The market pulse" error={pulse.error} />
       ) : rows.length === 0 ? (
-        <Waiting>Reading the market…</Waiting>
+        <Waiting reading>Reading the market…</Waiting>
       ) : (
         <>
           <div className={`dk-ix dk-ix--head${fc ? '' : ' dk-ix--nofc'}`}>

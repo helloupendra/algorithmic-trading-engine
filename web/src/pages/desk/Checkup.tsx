@@ -135,7 +135,7 @@ export function Checkup({ view, links }: { view: DeskView; links: DeskLinks }) {
     </>
   )
   if (latest.isError && !latest.data) return <>{head}<Failed what="The checkup" error={latest.error} /></>
-  if (!latest.data) return <>{head}<Waiting>Reading the latest checkup…</Waiting></>
+  if (!latest.data) return <>{head}<Waiting reading>Reading the latest checkup…</Waiting></>
   if (!c || !now) return <>{head}{asking}<Waiting>No checkup has finished yet.</Waiting></>
 
   const at = istHm(c.completedUtc)

@@ -142,7 +142,7 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
     />
   )
   if (view.runsError && !grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
-  if (!grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
+  if (!grid) return <>{head}<Waiting reading>Reading today’s runs…</Waiting></>
   if (grid.rows.length === 0) return <>{head}<Waiting>Nothing traded yet.</Waiting></>
   const multi = grid.totals.length > 1
   return (

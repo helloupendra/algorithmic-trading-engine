@@ -80,7 +80,7 @@ function Body({ view, links, forecasts }: { view: DeskView; links: DeskLinks; fo
         </div>
       )}
       {loading ? (
-        <Waiting>Reading the day…</Waiting>
+        <Waiting reading>Reading the day…</Waiting>
       ) : events.length === 0 ? (
         <Waiting>Nothing on the desk yet today.</Waiting>
       ) : (

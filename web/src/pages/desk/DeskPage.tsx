@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import { accessFor, allows } from '../../lib/modules'
 import type { PanelKey, PhasePick, PhasePin, Scope } from '../../lib/desk'
@@ -257,6 +258,20 @@ export function DeskPage() {
         <p className="dk-note" role="status">
           No session today: the desk shows {dayLabel(day)}, the last day with runs.
         </p>
+      )}
+      {!access.isAdmin && access.grants !== null && !strategies && (
+        <section className="dk-cell dk-welcome" aria-label="Getting started">
+          <h2 className="dk-welcome__title">Welcome{user?.userName ? `, ${user.userName}` : ''}.</h2>
+          <p className="dk-welcome__text">
+            Your account has no trading modules yet, so this desk shows the market and nothing of your own. Ask your
+            admin for the Trade module to run strategies on paper, or link your broker on your Account page to read
+            your own holdings under Portfolio.
+          </p>
+          <div className="dk-welcome__actions">
+            <Link className="btn btn--primary btn--sm" to="/account">Open my account</Link>
+            <Link className="btn btn--sm" to="/portfolio">Portfolio</Link>
+          </div>
+        </section>
       )}
       <StatusStrip view={view} />
       {rows.length > 0 && (

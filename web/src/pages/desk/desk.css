@@ -142,6 +142,16 @@
   line-height: 1.45;
 }
 .dk-wait { color: var(--text-3); }
+.dk-wait[role='status']::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  margin: 0 7px 1px 0;
+  animation: empty-breathe 1.4s ease-in-out infinite;
+}
 .dk-fail { color: var(--warn); }
 .dk-note { color: var(--text-3); font-size: var(--fs-xs); }
 .dk-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: var(--fs-xs); color: var(--text-3); }
@@ -225,6 +235,14 @@
 .dk-was[open] summary::after { content: ' ▾'; }
 .dk-was summary:hover { color: var(--text-2); }
 .dk-was p { margin: 2px 0 0; line-height: 1.4; }
+
+/* --- a trader's first screen ------------------------------------------------------- */
+/* No module grant yet: one card says what the desk can and cannot show them, and
+   where to go. The same card as every other panel, so it is not an alert. */
+.dk-welcome { display: grid; gap: 8px; }
+.dk-welcome__title { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.dk-welcome__text { margin: 0; max-width: 72ch; color: var(--text-2); font-size: 13px; line-height: 1.55; }
+.dk-welcome__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 
 /* --- the status strip -------------------------------------------------------------- */
 .dk-strip {
@@ -503,8 +521,8 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-seg .dk-short { display: inline; }
   .dk-bar { flex-wrap: wrap; gap: 8px; }
   /* The switches are a phone's main controls on these pages: a finger's height. */
-  .dk-seg button, .dk-pin { height: 34px; }
-  .dk-pin { min-width: 34px; }
+  .dk-seg button, .dk-pin { height: 40px; }
+  .dk-pin { min-width: 40px; }
 
   .dk-sheet { grid-template-columns: minmax(0, 1fr); }
   .dk-sheet > .dk-cell { grid-column: 1 / -1; }

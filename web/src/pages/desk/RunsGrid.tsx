@@ -234,7 +234,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   // Before any early return: a hook's place in the render must not move when the runs arrive.
   const [wrapRef, overflows, width] = useOverflowX<HTMLDivElement>()
   if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
-  if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
+  if (!view.grid) return <>{head}<Waiting reading>Reading today’s runs…</Waiting></>
   const { grid } = view
   if (grid.rows.length === 0) {
     return (
@@ -538,7 +538,7 @@ function FilePlan({ view, links }: { view: DeskView; links: DeskLinks }) {
       more={links.runs ? { to: links.runs, label: 'Runs' } : null}
     />
   )
-  if (!ready) return <>{head}<Waiting>Reading the plan…</Waiting></>
+  if (!ready) return <>{head}<Waiting reading>Reading the plan…</Waiting></>
   if (missing) {
     return (
       <>
@@ -649,7 +649,7 @@ export function PlanGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
 function DeployedGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
   const head = <PanelHead title="Deployed" meta="✓ waiting for its session" more={links.runs ? { to: links.runs, label: 'My runs' } : null} />
   if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
-  if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
+  if (!view.grid) return <>{head}<Waiting reading>Reading today’s runs…</Waiting></>
   const { grid } = view
   if (grid.rows.length === 0) return <>{head}<Waiting>Nothing deployed yet today.</Waiting></>
   const multi = grid.accounts.length > 1

@@ -40,7 +40,7 @@ export function Legs({ view, links }: { view: DeskView; links: DeskLinks }) {
     <>
       <PanelHead title={title} meta={meta} more={links.positions ? { to: links.positions, label: 'Positions' } : null} />
       {list == null ? (
-        error ? <Failed what="The open legs" error={error} /> : <Waiting>Reading the open legs…</Waiting>
+        error ? <Failed what="The open legs" error={error} /> : <Waiting reading>Reading the open legs…</Waiting>
       ) : list.length === 0 ? (
         <Waiting>{view.phase === 'pre' ? 'Nothing was carried in.' : view.phase === 'post' ? 'Nothing is held overnight.' : 'No leg is open.'}</Waiting>
       ) : (
@@ -90,7 +90,7 @@ export function Legs({ view, links }: { view: DeskView; links: DeskLinks }) {
                       </>
                     )}
                   </td>
-                  <td className="r dk-n dk-t2">{l.lots}L</td>
+                  <td className="r dk-n dk-t2">{l.lots}</td>
                   <td className="r dk-n dk-hide-s">{l.ltp != null ? plainNumber(l.ltp, l.ltp >= 1000 ? 0 : 2) : '—'}</td>
                   <td className="r">{l.pnl != null ? <Money value={l.pnl} compact unit={pnlUnit} /> : <span className="dk-t3">no mark</span>}</td>
                 </tr>

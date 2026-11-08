@@ -34,8 +34,9 @@ export function PanelHead({ title, meta, tools, more }: {
 }
 
 /** Data not here yet: said quietly, never shown as a zero. */
-export function Waiting({ children }: { children: ReactNode }) {
-  return <p className="dk-wait">{children}</p>
+/** A quiet line in a panel: an empty state, or (`reading`) one still being read, which the breathing dot tells apart. */
+export function Waiting({ children, reading = false }: { children: ReactNode; reading?: boolean }) {
+  return <p className="dk-wait" role={reading ? 'status' : undefined}>{children}</p>
 }
 
 function failText(error: unknown): string {
