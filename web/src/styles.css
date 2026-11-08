@@ -2291,10 +2291,12 @@ a.pill:hover { border-color: var(--line-strong); }
   background: var(--bg1);
 }
 
-/* Metric grid on the run page (more tiles than a run card's strip). */
+/* Metric grid on the run page (more tiles than a run card's strip). A tile
+   that carries a pair ("+₹1,286 / −₹482") needs the wider column, or its
+   figure breaks over two lines; on a 1440px screen that is five a row. */
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
   gap: 10px;
 }
 
