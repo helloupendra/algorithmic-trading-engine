@@ -1,29 +1,50 @@
-# AlgoTrading Engine
+<p align="center">
+  <img src="web/public/brand/openfno-mark.svg" width="68" height="68" alt="">
+</p>
 
-A polyglot, event-driven algorithmic trading platform for Indian equity and
-derivatives markets. A .NET 10 backend owns persistence, risk and broker
-integration; a Python engine owns live ingestion and strategy execution; Redis
-Streams carry ticks between them; TimescaleDB stores the time series; and a
-React **web console** operates the whole thing from the browser — live feeds and
-historical data, strategy runs and backtests, risk and alerts, the data vendors
-and brokers it connects to, and who on the team may do what.
+<h1 align="center">OpenFNO</h1>
+
+<p align="center">
+  <b>Not a black box.</b> A self-hosted, source-available paper-trading desk for Indian F&amp;O:<br>
+  every tick stored, every rule written down, every rupee accounted for.
+</p>
+
+<p align="center">
+  <a href="https://openfno.com">openfno.com</a> ·
+  <a href="https://openfno.com/docs/">Docs</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#what-i-found">What I found</a> ·
+  <a href="LICENSE">PolyForm Noncommercial 1.0.0</a>
+</p>
+
+![The Today page in the light theme: the day's net P&L after charges, live runs, open legs, what needs a look, trading by account and the worst runs, under a sidebar of workspaces and a live market ticker (invented data, strategy names hidden)](docs/image/console-today.png)
+
+This repository is the whole desk: a polyglot, event-driven platform for Indian
+equity and derivatives markets. A .NET 10 backend owns persistence, risk and
+broker integration; a Python engine owns live ingestion and strategy execution;
+Redis Streams carry ticks between them; TimescaleDB stores the time series; and
+a React **web console** operates the whole thing from the browser — live feeds
+and historical data, strategy runs and backtests, risk and alerts, the data
+vendors and brokers it connects to, and who on the team may do what.
 
 > **Trading involves financial risk.** This software is provided for research
-> and educational use. Run it in paper/simulation mode until you have validated
-> it end to end. See [LICENSE](LICENSE) and [SECURITY.md](SECURITY.md).
+> and educational use. Everything here trades on paper; validate end to end
+> before you trust anything with money. See [LICENSE](LICENSE) and
+> [SECURITY.md](SECURITY.md).
 
 **In one minute**
 
 - **What it is:** a trading desk for Indian index and commodity options, from
   the market data to the paper order: a .NET API, a Python strategy engine and
-  a React console, running on one server.
+  a React console, running on one server you control, with your own broker keys.
 - **What runs every trading day, unattended:** the data vendor signs itself in,
   the morning job deploys each account's plan of strategies and reports how
   many are live, the strategies trade on paper with statutory charges counted,
   and a rules-based watchman opens an incident when something breaks.
 - **What is not proven:** no strategy here has shown an edge after costs. The
   research that says so is in [What I found](#what-i-found), with its method.
-  Everything runs on paper.
+- **Why it is public:** so that more people can learn to trade with their eyes
+  open. The source is free for noncommercial use.
 
 ---
 
@@ -31,106 +52,106 @@ and brokers it connects to, and who on the team may do what.
 
 Everything below is driven from the browser; there is no separate admin tool.
 
-The console is six workspaces along the top: **Desk** (today on one sheet),
-**Markets** (the chain, charts, movers, flows and news), **Trade** (runs, the
-strategy library, history, orders and risk), **Research** (backtests, forecasts,
-the filter lab and notebooks), **Data** (feeds, stored history, instruments) and
-**System** (health, checkups, incidents, logs, connectors and people). An
-**admin** sees all six. A **trader** sees the workspaces their module grants
+Nine workspaces sit in a sidebar: **Today** (the day on one read-only page),
+**Desk** (today's sheet of runs, P&L and risk), **Markets** (the chain, charts,
+movers, flows and news), **Trade** (runs, the strategy library, history, orders
+and risk), **Portfolio**, **Research** (backtests, forecasts, the filter lab and
+notebooks), **AI** (an assistant, agents and a paper AI Trader behind a
+validator), **Data** (feeds, stored history, instruments, replay) and **System**
+(health, incidents, logs, the calendar, connectors and people). The open
+workspace lists its pages; the ticker across the top and the market session at
+the foot of the sidebar are live on every page.
+
+An **admin** sees all nine. A **trader** sees the workspaces their module grants
 allow, and only their own runs inside them. That split is enforced by the API,
 not by hiding menu items: a trader calling an admin endpoint directly is
 refused.
 
-The screenshots are this deployment's own data, exported from the server on
-Sunday 27 September 2026 and replayed into the console; the trading day on the
-Desk is Friday 25 September, the last session with runs. Strategy names are
-hidden behind letters (Strategy A, B, …); every number is the one the console
-showed.
+**About these screenshots.** They are the console as it ships, served by a local
+mock of the API with an invented trading day (Friday 6 November 2026, 13:45
+IST). Strategy names are letters and the accounts are `admin` and `paper-2`.
+Nothing in them is a quote or a result of this deployment.
 
-### The Desk
+### Light by default, dark by choice, and on a phone
 
-**Desk** — the page both consoles open on, and the one kept open all day. Each
-account's result after charges, the runs grid (strategy by underlying, net of
-charges), the day's P&L by account and by strategy, the latest checkup, what is
-held overnight, the week's events, FII and DII flows, and the indices with their
-option levels. The sheet reorders itself at the open and at the close; the
-buttons above it show any part of the day. On a weekend it opens on the last day
-with runs and says so.
+The console is light by default. The dark theme is a set of its own (surfaces
+that step up from the page, hairlines instead of shadows, every accent lifted),
+chosen from the account menu or left to follow the device. On a phone the
+sidebar gives way to a tab bar at the bottom.
 
-![The Desk after the close: each account's result after charges, the runs grid by strategy and underlying, day P&L, the checkup, the week ahead, flows and index levels (strategy names hidden)](docs/image/console-desk.png)
+<table>
+  <tr>
+    <td width="72%"><img src="docs/image/console-today-dark.png" alt="The Today page in the dark theme (invented data, strategy names hidden)"></td>
+    <td><img src="docs/image/console-today-phone.png" alt="The Today page at phone width: the day's figures in one column and the workspaces in a bottom tab bar"></td>
+  </tr>
+</table>
 
-**On a phone** — the same sheet in one column. The runs grid keeps its
-columns; the workspaces move to a tab bar at the bottom.
+### Markets: the option chain
 
-<p align="center"><img src="docs/image/console-desk-phone.png" width="300" alt="The Desk at phone width: the day's result per account, the runs grid in one column and the workspaces in a bottom tab bar (strategy names hidden)"></p>
+Calls left, puts right, strike in the middle: open interest and its change,
+volume, IV, LTP and what each pair means (long build-up, short covering and so
+on), with the open positions marked on their strikes. Every chain is stamped
+with when it was captured and by which vendor, and the same chain can be
+rebuilt for any stored minute, which is what makes an option strategy testable
+at all. Above it: spot, the future and its premium, VIX, PCR, max pain, support
+and resistance.
 
-**A trader's Desk** — the same page for a trader. The API answers with their
-own runs and nothing else, so the sheet is their day: their result after
-charges, their runs, their charges, and no admin panels.
+![The NIFTY option chain: spot, future, VIX, PCR, max pain, support and resistance, the open positions, and the strike ladder with OI, OI change, volume, IV, LTP and build-up labels around the at-the-money strike (invented data)](docs/image/console-option-chain.png)
 
-![A trader's Desk: one account's result, runs and charges, with the market panels beside them (strategy names hidden)](docs/image/console-trader-desk.png)
+### Trade: run history
 
-**⌘K** — one search box for pages, symbols, strategies and today's runs, on
-every screen. It lists only what the viewer may open.
+Every run, attached to the account that started it, with quantity as **lots ×
+lot size**, its risk rules, net P&L after charges, and the reason it stopped.
+Nothing is dismissed: a run stopped by a risk rule, by the close, by hand or by
+a restart is still here.
 
-![The command palette over the Desk, searching "nifty": the NIFTY option chain and the NIFTY indices](docs/image/console-palette.png)
+![Run history: today's 20 runs with account, strategy, risk rules, lots × lot size, net P&L after charges and why each stopped (invented data, strategy names hidden)](docs/image/console-run-history.png)
 
-### Markets
+### Research: backtests, coverage first
 
-**Option chain** — calls left, puts right, strike in the middle: open interest
-and its change, volume, IV, LTP and what each pair means (long build-up, short
-covering and so on). Every chain is stamped with when it was captured and by
-which vendor, and the same chain can be rebuilt for any stored minute. Below
-it, open interest by strike and the put-call ratio through the session.
+Before offering a backtest the console says what history it holds per index and
+resolution, from when to when, and what is missing. A backtest you cannot run is
+better than one that quietly replays a gap. Results are after costs, and most of
+them lose: that is the finding, not a bug.
 
-![Option chain for NIFTY after the close: spot, future, VIX, PCR, max pain, support and resistance, the strike ladder with build-up labels, and OI charts](docs/image/console-option-chain.png)
+![Backtests: recent runs with net P&L after costs (most of them losing), and the historical data on hand per index with its resolutions and range (invented data, strategy names hidden)](docs/image/console-backtests.png)
 
-**Flows** — FII, DII, pro and client positions in index futures, the FII long
-share over recent sessions, and cash-market buying and selling. Each section
-says how fresh it is and what our own testing found; here, that nothing has
-been tested yet.
+### System: health
 
-![Market factors, FII and DII: index futures positions by participant, FII net positions by session and cash-market flows, labelled "not tested yet"](docs/image/console-market-factors.png)
+The kill switch, the connectors, the live feed and the market; the server, its
+database (with TimescaleDB compression per table) and the processes on it; and
+Sentinel's latest checkup, each item with what to do about it.
 
-### Trade
+![System health: kill switch off, five connectors ready, the Dhan feed live, the market open, the server's disk, memory, swap, CPU and load, the largest database tables and the processes (invented data)](docs/image/console-system.png)
 
-**Run history** — every live run, attached to the account that started it, with
-quantity as **lots × lot size**, net P&L after charges, and the reason it
-stopped. Nothing is dismissed: a run stopped by a risk rule, by the close, by
-hand or by a restart is still here.
+### Also in the console
 
-![Run history for Friday: 26 runs with account, strategy, lots × lot size, risk rules, net P&L after charges and why each stopped (strategy names hidden)](docs/image/console-run-history.png)
+- **Desk:** each account's result after charges, the runs grid by strategy and
+  underlying, the day's P&L, the latest checkup, what is held overnight, the
+  week's events, FII and DII flows and the indices with their option levels.
+- **⌘K:** one search box for pages, symbols, strategies and today's runs, on
+  every screen, listing only what the viewer may open.
+- **Flows:** FII, DII, pro and client positions in index futures and cash-market
+  flows, each section saying how fresh it is and what our own testing found.
+- **Forecasts:** models forecast the day's range, trend and direction before the
+  open, and every forecast is scored after the close; a backtest is shown as
+  history, not proof.
+- **Incidents and checkups:** Sentinel, the desk's watchman, keeps one row per
+  problem with its cause and fix, and writes a checklist before the open, after
+  the close and weekly.
 
-### Research
+### The homepage and the sign-in
 
-**Backtests** — coverage first. Before offering a backtest the console says
-what history it holds per index and resolution, where it came from (`live` bars
-the ingestor recorded, or a `backfill`), and what is missing. A backtest you
-cannot run is better than one that quietly replays a gap.
+[openfno.com](https://openfno.com) is static HTML, about 30 KB over the wire,
+with no WebGL to wait for. Accounts are issued by an administrator; there is no
+public sign-up.
 
-![Backtests: stored history per index and resolution with its range, sessions, bars and source](docs/image/console-backtests.png)
-
-**Forecasts** — four models forecast the day's range, trend and direction
-before the open, and every forecast is scored after the close. The scoreboard
-judges a model on live forecasts only; its backtest is shown beside it as
-history, not proof. None has a live score yet.
-
-![Forecasts scoreboard: four models collecting their first live forecasts, one opened to show its backtest labelled "history, not proof"](docs/image/console-forecasts.png)
-
-### System
-
-**Checkup** — Sentinel, the desk's watchman, writes a checklist before the
-open, after the close, at the end of the day and weekly, each item with what to
-do about it. This one is the weekly review. A checkup only reads the desk.
-
-![The weekly checkup: one thing worth a look (the Drive archive), two notes, nine checks fine, and the checkup history](docs/image/console-checkup.png)
-
-**Incidents** — each problem is one row however often it is seen, and the
-history keeps what caused it and what fixed it. The row opened here is the
-morning archive to Google Drive, which failed every day from 23 September until
-Sentinel's first scan of the logs caught it on the 27th.
-
-![Incident history: an archive failure opened to show its root cause, what was done, the fix and its one episode](docs/image/console-incidents.png)
+<table>
+  <tr>
+    <td><img src="docs/image/openfno-home.png" alt="The openfno.com homepage: Not a black box, with a minute on the desk: NIFTY candles and the option chain, and a slider to rewind the chain (synthetic, not a quote)"></td>
+    <td><img src="docs/image/openfno-sign-in.png" alt="The sign-in page: Sign in. The engine wakes. A synthetic session of candles beside the form"></td>
+  </tr>
+</table>
 
 ---
 

@@ -147,14 +147,17 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: stretch;
+  /* Items that do not fit wrap to a second line, which is clipped: an
+     instrument is shown whole or not at all, never cut mid-number. */
+  flex-wrap: wrap;
+  align-content: flex-start;
   align-self: stretch;
   list-style: none;
   margin: 0;
   padding: 0;
   overflow: hidden;
 }
-.tick li { flex: 0 1 auto; min-width: 0; display: flex; }
+.tick li { flex: 0 0 auto; height: 100%; display: flex; }
 .tick li + li { border-left: 1px solid var(--line); }
 .tick__item {
   display: flex;
