@@ -5,8 +5,8 @@
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#030406",
-  "theme_color": "#030406",
+  "background_color": "#f6f8f9",
+  "theme_color": "#f6f8f9",
   "icons": [
     {
       "src": "/brand/openfno-mark-192.png",

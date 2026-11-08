@@ -17,11 +17,11 @@ describe('parseThemePref', () => {
     expect(parseThemePref('system')).toBe('system')
     expect(parseThemePref('dark')).toBe('dark')
   })
-  it('falls back to dark for a missing or corrupted value', () => {
-    expect(parseThemePref(null)).toBe('dark')
-    expect(parseThemePref(undefined)).toBe('dark')
-    expect(parseThemePref('LIGHT')).toBe('dark')
-    expect(parseThemePref('{"x":1}')).toBe('dark')
+  it('falls back to light for a missing or corrupted value', () => {
+    expect(parseThemePref(null)).toBe('light')
+    expect(parseThemePref(undefined)).toBe('light')
+    expect(parseThemePref('DARK')).toBe('light')
+    expect(parseThemePref('{"x":1}')).toBe('light')
   })
 })
 
@@ -37,25 +37,25 @@ describe('resolveTheme', () => {
 describe('the stored preference', () => {
   it('reads what was written', () => {
     const s = fakeStorage()
-    writeThemePref('light', s)
-    expect(readThemePref(s)).toBe('light')
+    writeThemePref('dark', s)
+    expect(readThemePref(s)).toBe('dark')
     writeThemePref('system', s)
     expect(readThemePref(s)).toBe('system')
   })
   it('stores the default as no key, so a reset browser reads the same', () => {
-    const s = fakeStorage({ [THEME_KEY]: 'light' })
-    writeThemePref('dark', s)
+    const s = fakeStorage({ [THEME_KEY]: 'dark' })
+    writeThemePref('light', s)
     expect(s.map.has(THEME_KEY)).toBe(false)
-    expect(readThemePref(s)).toBe('dark')
+    expect(readThemePref(s)).toBe('light')
   })
-  it('is dark where storage is unavailable or throws', () => {
-    expect(readThemePref(null)).toBe('dark')
+  it('is light where storage is unavailable or throws', () => {
+    expect(readThemePref(null)).toBe('light')
     const throwing = {
       getItem: () => {
         throw new Error('blocked')
       },
     }
-    expect(readThemePref(throwing)).toBe('dark')
-    expect(() => writeThemePref('light', { setItem: throwing.getItem, removeItem: throwing.getItem })).not.toThrow()
+    expect(readThemePref(throwing)).toBe('light')
+    expect(() => writeThemePref('dark', { setItem: throwing.getItem, removeItem: throwing.getItem })).not.toThrow()
   })
 })

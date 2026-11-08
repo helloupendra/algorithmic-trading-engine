@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <!-- The brand mark, not an emoji: a 90px glyph in a 100px box rendered as a
@@ -13,10 +13,11 @@
          scrolling and around the status bar. -->
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#030406" />
-    <!-- The theme before the first paint, so a light console does not flash
-         dark on every load: the same rule as lib/theme.ts (openfno.theme =
-         dark | light | system, default dark). The public pages keep their
-         own black identity whatever the preference. -->
+    <!-- The theme before the first paint, so a dark console does not flash
+         light on every load: the same rule as lib/theme.ts (openfno.theme =
+         light | dark | system, default light). <html> already says light, so
+         a page whose script cannot run still paints the default. The public
+         pages keep their own identity whatever the preference. -->
     <script>
       (function () {
         try {
@@ -26,13 +27,13 @@
           var signedIn = !!localStorage.getItem('algotrading.accessToken')
           var isPublic = path === '/' || path.indexOf('/invite/') === 0 || (path === '/login' && !signedIn)
           var pref = localStorage.getItem('openfno.theme')
-          var light = !isPublic && (pref === 'light' || (pref === 'system' && matchMedia('(prefers-color-scheme: light)').matches))
-          var theme = light ? 'light' : 'dark'
+          var dark = isPublic || pref === 'dark' || (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+          var theme = dark ? 'dark' : 'light'
           document.documentElement.setAttribute('data-theme', theme)
           if (isPublic) document.documentElement.setAttribute('data-public', '')
           document.documentElement.style.colorScheme = theme
           var meta = document.querySelector('meta[name="theme-color"]')
-          if (meta) meta.setAttribute('content', light ? '#f4f6f9' : isPublic ? '#030406' : '#070b11')
+          if (meta) meta.setAttribute('content', !dark ? '#f6f8f9' : isPublic ? '#030406' : '#0e1115')
         } catch (e) {}
       })()
     </script>
@@ -113,7 +114,7 @@
          contents of #root on mount, so this needs no teardown. -->
     <style>
       /* The console's ground (--bg0); the public pages' black on their routes. */
-      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #070b11; }
+      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #0e1115; }
       :root[data-public] #boot { background: #030406; }
       #boot .b { display: flex; align-items: flex-end; gap: 7px; height: 64px; }
       #boot .b span { display: block; width: 10px; border-radius: 2px; transform-origin: bottom; animation: bootc 1.9s cubic-bezier(.45,0,.3,1) infinite; }
@@ -133,10 +134,10 @@
       @keyframes bootp { from { opacity: 0 } to { opacity: 1 } }
       @keyframes bootc { 0% { transform: scaleY(.25); opacity: .35 } 35% { transform: scaleY(1); opacity: 1 } 70% { transform: scaleY(.62); opacity: .85 } 100% { transform: scaleY(.25); opacity: .35 } }
       @media (prefers-reduced-motion: reduce) { #boot .b span { animation: none } }
-      :root[data-theme='light'] #boot { background: #f4f6f9; }
-      :root[data-theme='light'] #boot p { color: rgba(17,24,39,.5); }
-      :root[data-theme='light'] #boot .b span:nth-child(odd) { background: #147951; }
-      :root[data-theme='light'] #boot .b span:nth-child(even) { background: #c13833; }
+      :root[data-theme='light'] #boot { background: #f6f8f9; }
+      :root[data-theme='light'] #boot p { color: rgba(34,38,58,.5); }
+      :root[data-theme='light'] #boot .b span:nth-child(odd) { background: #127a52; }
+      :root[data-theme='light'] #boot .b span:nth-child(even) { background: #bf3446; }
       /* The homepage as text (#landing-text): never drawn while scripting is
          on, so a visitor sees the loader and then the page, with nothing in
          between. The noscript style in the head shows it, and hides the loader,

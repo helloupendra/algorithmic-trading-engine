@@ -1,6 +1,6 @@
 /**
- * The console's theme: dark (the default, the product's identity) or light,
- * or "system" to follow the device. The choice lives in localStorage under
+ * The console's theme: light (the default since the sprout redesign, 8 Nov
+ * 2026) or dark, or "system" to follow the device. The choice lives in localStorage under
  * `openfno.theme` and lands on <html data-theme="…">, which styles.css reads
  * to swap the token block. index.html carries a copy of `resolveTheme` in an
  * inline script so the first paint is already the right colour; this module
@@ -22,7 +22,7 @@ export type ThemePref = Theme | 'system'
 
 export const THEME_KEY = 'openfno.theme'
 export const THEME_EVENT = 'openfno:theme'
-export const THEME_PREFS: readonly ThemePref[] = ['dark', 'light', 'system']
+export const THEME_PREFS: readonly ThemePref[] = ['light', 'dark', 'system']
 
 /**
  * The colour the browser paints around the page (the iOS status bar, the
@@ -30,12 +30,12 @@ export const THEME_PREFS: readonly ThemePref[] = ['dark', 'light', 'system']
  * top bar are one colour. The public pages are blacker; their forced theme
  * uses PUBLIC_COLOR.
  */
-export const THEME_COLOR: Record<Theme, string> = { dark: '#070b11', light: '#f4f6f9' }
+export const THEME_COLOR: Record<Theme, string> = { dark: '#0e1115', light: '#f6f8f9' }
 export const PUBLIC_COLOR = '#030406'
 
 /** A stored value read back: anything but the three words is the default. */
 export function parseThemePref(raw: string | null | undefined): ThemePref {
-  return raw === 'light' || raw === 'system' ? raw : 'dark'
+  return raw === 'dark' || raw === 'system' ? raw : 'light'
 }
 
 /** Which of the two token blocks a preference means, given what the device asks for. */
@@ -57,14 +57,14 @@ export function readThemePref(store: Pick<Storage, 'getItem'> | null = storage()
   try {
     return parseThemePref(store?.getItem(THEME_KEY))
   } catch {
-    return 'dark'
+    return 'light'
   }
 }
 
 export function writeThemePref(pref: ThemePref, store: Pick<Storage, 'setItem' | 'removeItem'> | null = storage()): void {
   try {
     // The default is not worth a key: a fresh browser and a reset one read the same.
-    if (pref === 'dark') store?.removeItem(THEME_KEY)
+    if (pref === 'light') store?.removeItem(THEME_KEY)
     else store?.setItem(THEME_KEY, pref)
   } catch {
     // Nothing to do: the theme still applies for this page's lifetime.
@@ -75,9 +75,9 @@ function systemDark(): boolean {
   return typeof window === 'undefined' || typeof window.matchMedia !== 'function' ? true : !window.matchMedia('(prefers-color-scheme: light)').matches
 }
 
-/** The theme currently on <html>; dark until something has been applied. */
+/** The theme currently on <html>; light unless dark has been applied. */
 export function currentTheme(doc: Pick<Document, 'documentElement'> = document): Theme {
-  return doc.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
+  return doc.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
 }
 
 /**
@@ -156,8 +156,8 @@ export function setThemePref(next: ThemePref): void {
 
 /** The preference and the theme it currently means, live. */
 export function useTheme(): { pref: ThemePref; theme: Theme; setPref: (next: ThemePref) => void } {
-  const current = useSyncExternalStore(subscribe, pref, () => 'dark' as ThemePref)
-  const theme = useSyncExternalStore(subscribe, wanted, () => 'dark' as Theme)
+  const current = useSyncExternalStore(subscribe, pref, () => 'light' as ThemePref)
+  const theme = useSyncExternalStore(subscribe, wanted, () => 'light' as Theme)
   // The first subscriber applies the stored preference: index.html painted it
   // already, and this is what keeps it applied after client-side navigation.
   useEffect(() => applyTheme(wanted()), [])
@@ -177,4 +177,4 @@ export function useForcedTheme(theme: Theme): void {
 }
 
 /** The label a control shows for each preference. */
-export const THEME_LABELS: Record<ThemePref, string> = { dark: 'Dark', light: 'Light', system: 'System' }
+export const THEME_LABELS: Record<ThemePref, string> = { light: 'Light', dark: 'Dark', system: 'System' }

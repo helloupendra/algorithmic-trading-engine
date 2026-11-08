@@ -7,8 +7,8 @@
   "scope": "/ira",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#070b11",
-  "theme_color": "#070b11",
+  "background_color": "#0e1115",
+  "theme_color": "#0e1115",
   "categories": ["finance", "productivity"],
   "icons": [
     {

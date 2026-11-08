@@ -33,17 +33,21 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
 }
 
 /**
- * The OpenFNO mark: an option chain — calls left, puts right, the ATM row the
- * longest, the strike ladder down the middle. Filled, not stroked, so it
- * reads at 15px on the sidebar tile as well as at 64px on the favicon
- * (public/favicon.svg carries the same geometry on the brand gradient).
+ * The OpenFNO mark. Filled, not stroked, so it reads at 16px in a tab as well
+ * as at 64px on a page.
  */
 export const IconLogo = (p: SVGProps<SVGSVGElement>) => (
-  <Icon strokeWidth="0" {...p}>
-    {/* Three candles with their wicks — the one picture this platform is
-        about, and the only glyph that still reads at 16px in a tab. */}
-    <g fill="currentColor" stroke="none"><rect x="4.9" y="8.4" width="1.2" height="9.4" rx=".6" opacity=".5"/><rect x="3.6" y="10.6" width="3.8" height="5.2" rx="1.2"/><rect x="11.4" y="4.6" width="1.2" height="12.6" rx=".6" opacity=".5"/><rect x="10.1" y="6.6" width="3.8" height="8.2" rx="1.2"/><rect x="17.9" y="6.6" width="1.2" height="10.6" rx=".6" opacity=".5"/><rect x="16.6" y="8.8" width="3.8" height="6.2" rx="1.2"/></g>
-  </Icon>
+  // The sprout (8 Nov 2026): a chart candle whose wick grows two leaves.
+  // OpenFNO is given away so that new traders can learn and test on paper
+  // first; the mark says that. Two colour roles, --leaf and --candle, so it
+  // follows the theme; public/favicon.svg carries the same geometry.
+  <svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true" focusable="false" {...p}>
+    <path d="M16 11.4C11.2 11.4 8.4 8.6 8.4 4.6C12.8 4.6 16 7.2 16 11.4Z" fill="var(--leaf, #2fbf8a)" />
+    <path d="M16 9.4C16 5.4 18.8 2.4 23.6 2.4C23.6 6.6 20.6 9.4 16 9.4Z" fill="var(--leaf, #2fbf8a)" />
+    <rect x="14.7" y="9" width="2.6" height="7" rx="1.3" fill="var(--leaf, #2fbf8a)" />
+    <rect x="10.8" y="15" width="10.4" height="11" rx="2.3" fill="var(--candle, #353b52)" />
+    <rect x="14.7" y="25" width="2.6" height="5" rx="1.3" fill="var(--candle, #353b52)" />
+  </svg>
 )
 
 export const IconDashboard = (p: SVGProps<SVGSVGElement>) => (

@@ -1,7 +1,8 @@
 /*
  * AlgoTrading design system — one visual language for the whole console.
  *
- * Dark, dense, operator-grade. Every screen builds from the same vocabulary:
+ * Light by default with a designed dark theme (sprout v1, 8 Nov 2026), dense
+ * where the data is. Every screen builds from the same vocabulary:
  * tokens → primitives (btn/field/badge/pill) → surfaces (panel/table/stat) →
  * shell (components/shell/shell.css: top bar, workspace tabs, phone bar).
  * Legacy pages keep working because the class vocabulary is stable; only its
@@ -12,110 +13,109 @@
  * hairline rules instead of floating cards, and one colour per account.
  */
 
+/* Geist and Geist Mono, self-hosted (SIL OFL, public/fonts/Geist-OFL.txt): the
+   API's CSP allows fonts from 'self' only. latin-ext carries the rupee sign. */
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-latin-ext.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-mono-latin-ext.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(/fonts/geist-mono-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
 :root {
+  /* Sprout v1 (8 Nov 2026): the palette "Violet + mint". Light is the
+     default theme (index.html paints it before the first frame); this block
+     is the dark one, designed as its own set rather than an inversion:
+     surfaces step up from the page, hairlines instead of shadows, and every
+     accent lifted so it reads on the dark ground. */
+
   /* Layers, darkest to lightest. */
-  --bg0: #070b11; /* page */
-  --bg1: #0b1017; /* wells, inputs */
-  /* v2 was #101724 / #16202e. One step darker, so the page reads as one sheet
-     and panels stop floating above it. */
-  --surface: #0d131c; /* panels */
-  --surface2: #131c29; /* hover, nested panels, the active tab */
-  --surface3: #1c2836; /* a pressed or hovered control on --surface2 */
+  --bg0: #0e1115; /* page */
+  --bg1: #12161b; /* wells, inputs */
+  --surface: #161a20; /* panels */
+  --surface2: #1c2129; /* hover, nested panels, the active tab */
+  --surface3: #252b35; /* a pressed or hovered control on --surface2 */
 
-  --line: #1c2735;
-  --line-soft: #151f2b;
-  --line-strong: #2b3a4e;
-  --line-hover: #3b4d66; /* a control's border under the pointer */
+  --line: #252b34;
+  --line-soft: #1e232b;
+  --line-strong: #343c49;
+  --line-hover: #46505f; /* a control's border under the pointer */
 
-  --text: #e2e9f3;
-  --text-2: #91a0b4;
-  /* This token also colours real reading content (.empty, .small-note), not
-     just micro-labels, so it must pass AA on every surface it sits on: 5.0:1
-     on --surface and 4.6:1 on --surface2 (the v2 #74849a was 4.49 there). */
-  --text-3: #76869c;
+  --text: #eaeef3;
+  --text-2: #aab3c0;
+  /* Also colours real reading content (.empty, .small-note), so it passes AA
+     on every surface it sits on: 5.6:1 on --surface, 5.1:1 on --surface2. */
+  --text-3: #8d98a7;
 
-  /* Brand: electric indigo-blue. --live: teal, reserved for streaming data. */
-  --brand: #4f7dff;
-  --brand-hi: #7096ff;
-  --brand-soft: rgba(79, 125, 255, 0.12);
-  --brand-line: rgba(79, 125, 255, 0.38);
-  /* Selected text. --brand-soft is a wash for fills and barely shows on a
-     cell; a figure being copied has to look selected. */
-  --selection: rgba(79, 125, 255, 0.35);
-  --live: #2bd4bd;
-  --live-soft: rgba(43, 212, 189, 0.1);
+  /* Brand: violet. --live: teal, reserved for streaming data. --leaf: the
+     sprout's mint, for the mark and nothing that carries data. */
+  --brand: #9d91ff;
+  --brand-hi: #b3a9ff;
+  --brand-soft: rgba(157, 145, 255, 0.14);
+  --brand-line: rgba(157, 145, 255, 0.42);
+  --selection: rgba(157, 145, 255, 0.32);
+  --live: #3dd6c6;
+  --live-soft: rgba(61, 214, 198, 0.1);
+  --leaf: #4fd9a5;
+  --candle: #e8ecf1;
 
-  --pos: #31c48d;
-  --pos-soft: rgba(49, 196, 141, 0.11);
+  --pos: #3ccf95;
+  --pos-soft: rgba(60, 207, 149, 0.12);
   /* Text on a --pos fill (the buy button): dark on the bright green, white on the deep one. */
   --on-pos: #04120c;
-  --neg: #f4635e;
-  --neg-soft: rgba(244, 99, 94, 0.11);
-  --warn: #e3b341;
-  --warn-soft: rgba(227, 179, 65, 0.11);
+  --on-brand: #11131a;
+  --neg: #ff6b7a;
+  --neg-soft: rgba(255, 107, 122, 0.12);
+  --warn: #e3ad4f;
+  --warn-soft: rgba(227, 173, 79, 0.12);
 
-  /* One series colour per trading account, validated as a pair on --bg1
-     (colour-blind ΔE 29, both 5:1 or better). Always shown with the account's
-     name: colour is never the only signal. */
-  --acct-1: #5f88ff;
-  --acct-2: #c9772a;
+  /* One series colour per trading account, a validated pair; always shown
+     with the account's name, so colour is never the only signal. */
+  --acct-1: #6f97ff;
+  --acct-2: #d98a3a;
 
-  /* The chart's VWAP line (components/charts.tsx): a hue no other line or
-     candle on that chart uses. The other studies take --warn, --brand-hi and
-     --text-3. */
-  --study-vwap: #b48cff;
+  /* The chart's VWAP line: a hue no other line or candle on that chart uses
+     (violet is the brand now, so pink). */
+  --study-vwap: #f07ab8;
 
-  /* Zones painted behind the candles on the structure chart. Deliberately not
-     --pos-soft / --neg-soft: that alpha was tuned for a flat fill on a panel,
-     and a block and a gap routinely share the same band of price, where two of
-     them compound into a slab that hides the candles. Each pair is a weak fill
-     and a much stronger edge, so a zone still reads by its border once the fill
-     washes out. Read from JS by SmcChart, which falls back to these same
-     numbers if a token goes missing — a lost token costs the knob, never the
-     layer. They were chosen against the palette rather than against a live
-     chart, so this is the place to tune them. */
-  --zone-ob-bull: rgba(49, 196, 141, 0.1);
-  --zone-ob-bull-edge: rgba(49, 196, 141, 0.55);
-  --zone-ob-bear: rgba(244, 99, 94, 0.1);
-  --zone-ob-bear-edge: rgba(244, 99, 94, 0.55);
-  /* Fainter again: every fast three-candle move prints a gap, so this is the
-     layer that crowds the chart first. */
-  --zone-fvg-bull: rgba(49, 196, 141, 0.07);
-  --zone-fvg-bull-edge: rgba(49, 196, 141, 0.34);
-  --zone-fvg-bear: rgba(244, 99, 94, 0.07);
-  --zone-fvg-bear-edge: rgba(244, 99, 94, 0.34);
-  /* Stronger: the delivery band is a thin strip under the candles with nothing
-     behind it to obscure, so it can carry the alpha the others cannot. */
-  --zone-flow-bull: rgba(49, 196, 141, 0.2);
-  --zone-flow-bull-edge: rgba(49, 196, 141, 0.6);
-  --zone-flow-bear: rgba(244, 99, 94, 0.2);
-  --zone-flow-bear-edge: rgba(244, 99, 94, 0.6);
+  /* Zones behind the candles on the structure chart: a weak fill and a much
+     stronger edge, so a zone still reads by its border once the fill washes
+     out. Read from JS by SmcChart, which falls back to its own numbers. */
+  --zone-ob-bull: rgba(60, 207, 149, 0.1);
+  --zone-ob-bull-edge: rgba(60, 207, 149, 0.55);
+  --zone-ob-bear: rgba(255, 107, 122, 0.1);
+  --zone-ob-bear-edge: rgba(255, 107, 122, 0.55);
+  --zone-fvg-bull: rgba(60, 207, 149, 0.07);
+  --zone-fvg-bull-edge: rgba(60, 207, 149, 0.34);
+  --zone-fvg-bear: rgba(255, 107, 122, 0.07);
+  --zone-fvg-bear-edge: rgba(255, 107, 122, 0.34);
+  --zone-flow-bull: rgba(60, 207, 149, 0.2);
+  --zone-flow-bull-edge: rgba(60, 207, 149, 0.6);
+  --zone-flow-bear: rgba(255, 107, 122, 0.2);
+  --zone-flow-bear-edge: rgba(255, 107, 122, 0.6);
 
-  /* Rules and cells, not cards: v2 was 10 / 7. */
-  --radius: 6px;
-  --radius-sm: 4px;
+  /* Cards with air between them, as in the sprout prototype. */
+  --radius: 10px;
+  --radius-sm: 7px;
+  --radius-lg: 14px;
 
-  /* Data text, then secondary and micro text. One 16–17px headline a screen. */
+  /* Data text, then secondary and micro text. One headline a screen. */
   --fs: 12.5px;
   --fs-s: 11.5px;
   --fs-xs: 10.5px;
 
-  /* The shell: the sticky top bar, the workspace tab strip under it, and the
-     phone's bottom bar. Pages that fill the window subtract these. */
-  --topbar-h: 44px;
-  --tabbar-h: 38px;
+  /* The shell: the sidebar, the top bar over the page, and the phone's
+     bottom bar. Pages that fill the window subtract these. */
+  --sidebar-w: 224px;
+  --topbar-h: 56px;
+  --tabbar-h: 46px;
   --bottombar-h: 56px;
 
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Noto Sans', Helvetica,
-    Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
-  /* Panels sit on hairlines, not shadows; only what truly floats (menus,
-     dialogs) keeps one. */
+  /* Panels sit on hairlines on the dark sheet; only what truly floats keeps a shadow. */
   --shadow-1: none;
-  --shadow-2: 0 8px 28px -8px rgb(0 0 0 / 0.55);
-  /* Behind a dialog or the palette: the page, dimmed. */
-  --scrim: rgb(3 5 8 / 0.62);
+  --shadow-2: 0 10px 30px -8px rgb(0 0 0 / 0.6);
+  --scrim: rgb(0 0 0 / 0.55);
 
   /* v1 token aliases — legacy components (charts.tsx) read these from JS. */
   --success: var(--pos);
@@ -137,67 +137,68 @@
 }
 
 /*
- * Light: the same vocabulary on paper. Chosen against the light surfaces the
- * way the dark set was chosen against the dark ones: every text token at
- * AA (4.5:1) on --surface, --surface2, --bg0 and --bg1 (the totals rows and
- * inputs), the accents deep enough to carry a figure on a white cell, and
- * the two account colours still a pair. Only tokens change; no page rule
- * knows which theme it is in. index.html sets data-theme before the first
- * paint; lib/theme.ts keeps it set.
+ * Light: the default. Every text token at AA (4.5:1) on --surface, --surface2,
+ * --bg0 and --bg1, the accents deep enough to carry a figure on a white cell,
+ * and the two account colours still a pair. Only tokens change; no page rule
+ * knows which theme it is in.
  */
 :root[data-theme='light'] {
-  --bg0: #f4f6f9;
-  --bg1: #eaeef3;
+  --bg0: #f6f8f9;
+  --bg1: #eef1f4;
   --surface: #ffffff;
-  --surface2: #f0f3f7;
-  --surface3: #e4e9f0;
+  --surface2: #f4f6f8;
+  --surface3: #e8ecf0;
 
-  --line: #d9dfe7;
-  --line-soft: #e6ebf1;
-  --line-strong: #b9c3d0;
-  --line-hover: #a5b1c1;
+  --line: #e3e7ec;
+  --line-soft: #edf0f3;
+  --line-strong: #cfd5de;
+  --line-hover: #b6bfcb;
 
-  --text: #111827;
-  --text-2: #4b5768;
-  --text-3: #5e6c7d; /* 5.4:1 on --surface, 4.6:1 on --bg1 */
+  --text: #22263a;
+  --text-2: #4a5068;
+  --text-3: #626a80; /* 5.4:1 on --surface, 4.7:1 on --bg1 */
 
-  --brand: #3962d7; /* 5.4:1 on white, so it can be link text; white on it 5.4:1 */
-  --brand-hi: #2f56c9;
-  --brand-soft: rgba(57, 98, 215, 0.1);
-  --brand-line: rgba(57, 98, 215, 0.4);
-  --selection: rgba(57, 98, 215, 0.24);
-  --live: #0a7868;
-  --live-soft: rgba(10, 120, 104, 0.1);
+  --brand: #6252e0; /* 5.6:1 on white, so it can be link text; white on it 5.6:1 */
+  --brand-hi: #5242d0;
+  --brand-soft: rgba(98, 82, 224, 0.09);
+  --brand-line: rgba(98, 82, 224, 0.38);
+  --selection: rgba(98, 82, 224, 0.2);
+  --live: #0b7f86;
+  --live-soft: rgba(11, 127, 134, 0.1);
+  --leaf: #2fbf8a;
+  --candle: #353b52;
 
-  --pos: #147951;
-  --pos-soft: rgba(20, 121, 81, 0.1);
+  --pos: #127a52;
+  --pos-soft: rgba(18, 122, 82, 0.09);
   --on-pos: #ffffff;
-  --neg: #c13833;
-  --neg-soft: rgba(193, 56, 51, 0.09);
+  --on-brand: #ffffff;
+  --neg: #bf3446;
+  --neg-soft: rgba(191, 52, 70, 0.08);
   --warn: #916100;
-  --warn-soft: rgba(145, 97, 0, 0.11);
+  --warn-soft: rgba(145, 97, 0, 0.1);
 
   --acct-1: #2f5fd8;
   --acct-2: #9e5817;
 
-  --study-vwap: #7448c9;
+  --study-vwap: #b4307a;
 
-  --zone-ob-bull: rgba(20, 121, 81, 0.1);
-  --zone-ob-bull-edge: rgba(20, 121, 81, 0.55);
-  --zone-ob-bear: rgba(193, 56, 51, 0.1);
-  --zone-ob-bear-edge: rgba(193, 56, 51, 0.55);
-  --zone-fvg-bull: rgba(20, 121, 81, 0.07);
-  --zone-fvg-bull-edge: rgba(20, 121, 81, 0.34);
-  --zone-fvg-bear: rgba(193, 56, 51, 0.07);
-  --zone-fvg-bear-edge: rgba(193, 56, 51, 0.34);
-  --zone-flow-bull: rgba(20, 121, 81, 0.2);
-  --zone-flow-bull-edge: rgba(20, 121, 81, 0.6);
-  --zone-flow-bear: rgba(193, 56, 51, 0.2);
-  --zone-flow-bear-edge: rgba(193, 56, 51, 0.6);
+  --zone-ob-bull: rgba(18, 122, 82, 0.1);
+  --zone-ob-bull-edge: rgba(18, 122, 82, 0.55);
+  --zone-ob-bear: rgba(191, 52, 70, 0.1);
+  --zone-ob-bear-edge: rgba(191, 52, 70, 0.55);
+  --zone-fvg-bull: rgba(18, 122, 82, 0.07);
+  --zone-fvg-bull-edge: rgba(18, 122, 82, 0.34);
+  --zone-fvg-bear: rgba(191, 52, 70, 0.07);
+  --zone-fvg-bear-edge: rgba(191, 52, 70, 0.34);
+  --zone-flow-bull: rgba(18, 122, 82, 0.2);
+  --zone-flow-bull-edge: rgba(18, 122, 82, 0.6);
+  --zone-flow-bear: rgba(191, 52, 70, 0.2);
+  --zone-flow-bear-edge: rgba(191, 52, 70, 0.6);
 
-  /* Paper shows a shadow where the dark sheet showed a hairline; keep both faint. */
-  --shadow-2: 0 8px 28px -8px rgb(15 23 42 / 0.28);
-  --scrim: rgb(15 23 42 / 0.4);
+  /* Paper lifts its cards with the faintest shadow; dialogs a little more. */
+  --shadow-1: 0 1px 2px rgb(30 34 60 / 0.04), 0 4px 14px rgb(30 34 60 / 0.03);
+  --shadow-2: 0 12px 32px -10px rgb(30 34 60 / 0.22);
+  --scrim: rgb(20 24 40 / 0.36);
 
   color-scheme: light;
 }
@@ -509,20 +510,18 @@ select.field__input { appearance: auto; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 
-/* The brand tile. The shell draws its own (shell.css); the invite page borrows
-   this one beside its heading. */
+/* The brand mark (the sprout carries its own two colours, so no tile behind
+   it). The shell sizes its own (shell.css); the invite page borrows this one
+   beside its heading. */
 .shell__brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--brand), var(--live));
-  color: #fff;
   flex: none;
 }
-.shell__brand-mark svg { width: 16px; height: 16px; }
+.shell__brand-mark svg { width: 100%; height: 100%; }
 
 /* --- pages ---------------------------------------------------------------- */
 .page > * + * { margin-top: 16px; }

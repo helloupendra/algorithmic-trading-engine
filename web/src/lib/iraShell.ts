@@ -29,7 +29,7 @@ export const IRA_SHELL_SWAPS: readonly ShellSwap[] = [
   { what: 'the home-screen name', find: /<meta name="apple-mobile-web-app-title" content="[^"]*"\s*\/?>/, replace: '<meta name="apple-mobile-web-app-title" content="Ira" />' },
   { what: 'the title', find: /<title>[^<]*<\/title>/, replace: '<title>Ira · OpenFNO</title>' },
   // The console's ground (--bg0), not the public pages' black: the status bar and the page are one colour.
-  { what: 'the browser colour', find: /<meta name="theme-color" content="[^"]*"\s*\/?>/, replace: '<meta name="theme-color" content="#070b11" />' },
+  { what: 'the browser colour', find: /<meta name="theme-color" content="[^"]*"\s*\/?>/, replace: '<meta name="theme-color" content="#0e1115" />' },
   { what: 'the robots line', find: /<meta name="robots" content="[^"]*"\s*\/?>/, replace: '<meta name="robots" content="noindex,nofollow" />' },
   { what: 'the loading label', find: /Loading the console/, replace: 'Ira' },
 ]

@@ -1,7 +1,10 @@
 /*
- * The console shell, v3: a 44px top bar (brand, workspaces, search, status,
- * account), a 38px strip of the workspace's tabs, and on a phone a 56px bar of
- * workspaces at the bottom. No sidebar: its 240px went back to the data.
+ * The console shell, sprout v1 (8 Nov 2026): a sidebar (brand, workspaces in
+ * three groups with the current one opened to its pages, the market session
+ * at its foot), and beside it a top bar (the market ticker, search, status,
+ * account) over a strip that says where you are. On a phone the sidebar gives
+ * way to a 56px bar of workspaces at the bottom and a scrolling strip of the
+ * workspace's pages.
  *
  * Status items are text with a dot, not bordered pills. Colour marks only what
  * needs a hand (warn, neg); a calm item keeps quiet text and a coloured dot,
@@ -10,11 +13,122 @@
 
 .shell {
   min-height: 100%;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+.shell__body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* --- top bar -------------------------------------------------------------- */
+/* --- sidebar ---------------------------------------------------------------- */
+.shell__side {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 14px 14px max(14px, env(safe-area-inset-left));
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  padding: 2px 8px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+.shell__brand-mark { width: 26px; height: 26px; flex: none; }
+.shell__brand--bar { display: none; }
+
+.side { display: flex; flex-direction: column; gap: 14px; }
+.side__group { display: flex; flex-direction: column; gap: 2px; }
+.side__label {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.side__link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.side__link svg { width: 17px; height: 17px; flex: none; color: var(--text-3); }
+.side__link:hover { background: var(--surface2); color: var(--text); }
+.side__ws.is-on > .side__link { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.side__ws.is-on > .side__link svg { color: var(--brand); }
+.side__link:focus-visible,
+.side__page:focus-visible { outline-offset: -2px; }
+
+.side__pages {
+  list-style: none;
+  margin: 4px 0 6px 19px;
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.side__page {
+  display: block;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.side__page:hover { color: var(--text); background: var(--surface2); }
+.side__page[aria-current='page'] { color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+
+/* The market session, at the sidebar's foot. */
+.sess {
+  margin-top: auto;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg0);
+  font-size: var(--fs-s);
+  color: var(--text-2);
+}
+.sess p { margin: 0; }
+.sess__head { display: flex; align-items: center; gap: 7px; }
+.sess__head b { color: var(--text); font-weight: 600; font-size: 12.5px; }
+.sess__head span { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); }
+.sess__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; display: inline-block; }
+.sess__dot--on { background: var(--pos); box-shadow: 0 0 0 3px var(--pos-soft); }
+.sess__bar { height: 5px; margin: 10px 0 7px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.sess__bar span { display: block; height: 100%; border-radius: inherit; background: var(--pos); }
+.sess__left { margin-top: 6px; }
+.sess__ends { display: flex; justify-content: space-between; margin-top: 6px; color: var(--text-3); font-size: var(--fs-xs); }
+.sess__mcx { display: flex; align-items: center; gap: 7px; margin-top: 10px !important; padding-top: 10px; border-top: 1px solid var(--line); }
+
+/* --- top bar ---------------------------------------------------------------- */
 .shell__top {
   position: sticky;
   top: 0;
@@ -23,73 +137,59 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
-  background: var(--bg0);
+  padding: 0 max(20px, env(safe-area-inset-right)) 0 20px;
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
-.shell__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
+/* The ticker: what the market is doing, in one glance, on every page. */
+.tick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.tick li { flex: 0 1 auto; min-width: 0; display: flex; }
+.tick li + li { border-left: 1px solid var(--line); }
+.tick__item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 16px;
+  min-width: 0;
   color: var(--text);
   text-decoration: none;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-.shell__brand .shell__brand-mark { width: 20px; height: 20px; border-radius: 5px; }
-.shell__brand .shell__brand-mark svg { width: 14px; height: 14px; }
-.shell__brand b { color: var(--live); font-weight: 600; }
-
-/* Workspaces: the bar's own height, underlined when current. An admin has
-   nine since Portfolio (18 Oct): the links tighten as the bar narrows (below),
-   and where they still do not fit the row scrolls sideways under a fade (it
-   is a .scroll-x) instead of pushing the page wider than the window. The row,
-   not each link, reaches 1px down over the bar's rule, so the scroll box
-   does not clip the underline. */
-.shell__ws {
-  display: flex;
-  align-self: stretch;
-  gap: 2px;
-  min-width: 0;
-  margin-bottom: -1px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.shell__ws::-webkit-scrollbar { display: none; }
-.shell__ws-link {
-  display: flex;
-  flex: none;
-  align-items: center;
-  padding: 0 10px;
   white-space: nowrap;
-  border-bottom: 2px solid transparent;
-  color: var(--text-2);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
 }
-.shell__ws-link:hover { color: var(--text); }
-.shell__ws-link[aria-current] { color: var(--text); border-bottom-color: var(--brand); }
-.shell__ws-link:focus-visible { outline-offset: -3px; }
+.tick li:first-child .tick__item { padding-left: 0; }
+.tick__item:hover .tick__name { color: var(--brand); }
+.tick__name { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.tick__row { display: flex; align-items: baseline; gap: 7px; }
+.tick__row b { font-size: 13px; font-weight: 600; }
+.tick__chg { font-size: 11px; color: var(--text-3); }
+.tick__chg--pos { color: var(--pos); }
+.tick__chg--neg { color: var(--neg); }
 
 .shell__grow { flex: 1; min-width: 0; }
 
 /* The ⌘K trigger reads as a field, because that is what it opens. */
 .shell__search {
   flex: none;
-  width: 220px;
-  height: 26px;
+  width: auto;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg1);
+  border-radius: var(--radius);
+  background: var(--bg0);
   color: var(--text-3);
   font: inherit;
   font-size: var(--fs-s);
@@ -206,17 +306,17 @@ a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
 /* --- account menu --------------------------------------------------------- */
 .shell__user { position: relative; flex: none; }
 .shell__avatar {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   padding: 0;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  background: var(--surface2);
-  color: var(--text-2);
+  background: var(--brand-soft);
+  color: var(--brand);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   cursor: pointer;
 }
@@ -335,22 +435,21 @@ button.pop__row:focus-visible { outline-offset: -2px; }
 .pop__seg button[aria-pressed='true'] { background: var(--surface2); color: var(--text); }
 .pop__seg button:focus-visible { outline-offset: -2px; }
 
-/* --- workspace tab strip ---------------------------------------------------- */
-/* Sticky under the bar it hangs from: a long page keeps its sub-navigation.
-   Under the bar's stacking context, so the popovers (fixed, inside the bar)
-   still paint over it. The Desk's strip is the exception: it carries the
-   page's own switches and wraps to two rows on a phone. */
+/* --- where you are ---------------------------------------------------------- */
+/* Sticky under the top bar: a breadcrumb on a computer (the sidebar lists the
+   pages), the workspace's pages on a phone. Under the bar's stacking context,
+   so the popovers (fixed, inside the bar) still paint over it. The Desk's
+   strip is the exception: it carries the page's own switches. */
 .shell__tabs {
   position: sticky;
   top: var(--topbar-h);
   z-index: 29;
-  height: var(--tabbar-h);
+  min-height: 46px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  padding: 0 max(24px, env(safe-area-inset-right)) 0 24px;
   background: var(--bg0);
-  border-bottom: 1px solid var(--line-soft);
 }
 .shell__tabs--desk { position: static; }
 .shell__tabs-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
@@ -358,9 +457,14 @@ button.pop__row:focus-visible { outline-offset: -2px; }
 /* Where a page puts its own switches (the Desk's phase and account). */
 .shell__tabs-tools { flex: 1; min-width: 0; display: flex; align-items: center; }
 
-/* Scrolls sideways inside itself on a narrow screen; the page never does. */
+.shell__crumb { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--text-3); white-space: nowrap; }
+.shell__crumb a { color: var(--text-3); text-decoration: none; }
+.shell__crumb a:hover { color: var(--brand); }
+.shell__crumb b { color: var(--text); font-weight: 500; }
+
+/* The workspace's pages: only on a phone, where there is no sidebar. */
 .shell__tablist {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 2px;
   min-width: 0;
@@ -373,8 +477,8 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   flex: none;
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 9px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   color: var(--text-2);
   text-decoration: none;
@@ -383,11 +487,10 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   white-space: nowrap;
 }
 .shell__tab:hover { color: var(--text); }
-.shell__tab[aria-current='page'] { color: var(--text); background: var(--surface2); }
+.shell__tab[aria-current='page'] { color: var(--brand); background: var(--brand-soft); }
 .shell__tab:focus-visible { outline-offset: -2px; }
 /* Brackets a tab that holds more than one page (Backtests: overview, new,
-   runs), so the pages between two rules read as one tab; never drawn
-   between two single-page tabs, where it would only be rhythm. */
+   runs), so the pages between two rules read as one tab. */
 .shell__tabsep {
   flex: none;
   width: 1px;
@@ -400,7 +503,7 @@ button.pop__row:focus-visible { outline-offset: -2px; }
 .shell__main {
   flex: 1;
   min-width: 0;
-  padding: 16px max(16px, env(safe-area-inset-right)) 36px max(16px, env(safe-area-inset-left));
+  padding: 4px max(24px, env(safe-area-inset-right)) 40px 24px;
   /* clip, not hidden: hidden makes this a scroll container, and every
      position: sticky inside it would stick to it instead of the window. */
   overflow-x: clip;
@@ -493,20 +596,22 @@ button.pop__row:focus-visible { outline-offset: -2px; }
 .palette__foot span:last-child { margin-left: auto; }
 
 /* --- narrower screens ------------------------------------------------------------ */
-/* What gives way as the bar narrows, least useful first, so the health label
-   (the item that says what needs a hand) keeps its words longest, and in
-   full: the search field's words; the clock, the kill switch's words and
-   the health's long form ("Backend up 6m" → "API up"); the brand's word and
-   the long market and live labels; on a phone the market's word, and on a
-   narrow phone the live item's, leaving their dots and titles. Every state
+/* The sidebar's session card says what the market items in the bar would,
+   so on a computer the bar leaves them out. What gives way as the window
+   narrows, least useful first: the search field's word; the clock and the
+   long status labels; then the sidebar folds to a rail of icons (and the
+   bar takes the market items back, the strip the page tabs). Every state
    stays written in a title or aria-label at every width. */
-@media (max-width: 1320px) {
-  .shell__search { width: auto; }
+@media (min-width: 1101px) {
+  .shell__top .st--market { display: none; }
+}
+
+@media (max-width: 1440px) {
   .shell__search span { display: none; }
   .shell__search kbd { margin-left: 0; }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .st--clock { display: none; }
   .st__long { display: none; }
   .st__short { display: inline; }
@@ -514,63 +619,45 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   .st--health .st__narrow { display: inline; }
 }
 
-@media (max-width: 980px) {
+/* A tablet, or a narrow window: the sidebar becomes a rail of icons. */
+@media (max-width: 1100px) {
+  :root { --sidebar-w: 68px; }
+  .shell__side { padding: 16px 10px; align-items: center; }
+  .shell__brand { padding: 2px; }
+  .shell__brand-word,
+  .side__label,
+  .side__pages,
+  .sess { display: none; }
+  .side__link { width: 44px; height: 40px; justify-content: center; padding: 0; }
+  .side__link span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .side__link svg { width: 19px; height: 19px; }
+  .side__group + .side__group { padding-top: 10px; border-top: 1px solid var(--line); }
+  .shell__crumb { display: none; }
+  /* A workspace of one page has no tabs to show: the strip names it instead. */
+  .shell__crumb--solo { display: flex; }
+  .shell__tablist { display: flex; }
   .shell__top { gap: 12px; }
   .shell__status { gap: 11px; }
-}
-
-@media (max-width: 900px) {
-  .shell__brand-word { display: none; }
-  .shell__ws-link { padding: 0 8px; }
-  .st__wide { display: none; }
-  .st__narrow { display: inline; }
-}
-
-/* An admin's bar: nine workspaces since Portfolio (18 Oct), about 75px more
-   than before and twice a trader's. The same things give way, earlier, and
-   the links tighten, measured on the admin bar (private/screens/portfolio/
-   measure-topbar.mjs) so that above 1000px no workspace scrolls out of sight.
-   A trader's bar keeps the breakpoints above. */
-@media (max-width: 1560px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search { width: auto; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search span { display: none; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__search kbd { margin-left: 0; }
-}
-@media (max-width: 1440px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws { gap: 0; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws-link { padding: 0 6px; }
-}
-@media (max-width: 1320px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__ws-link { padding: 0 5px; font-size: 12.5px; }
-}
-@media (max-width: 1280px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) .st--clock { display: none; }
-}
-@media (max-width: 1200px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__brand-word { display: none; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .st__long { display: none; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .st__short { display: inline; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .st--health .st__wide { display: none; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .st--health .st__narrow { display: inline; }
-}
-@media (max-width: 1000px) {
-  .shell__top:has(.shell__ws > :nth-child(9)) { gap: 12px; }
-  .shell__top:has(.shell__ws > :nth-child(9)) .shell__status { gap: 11px; }
 }
 
 /* A phone: the workspaces move to the bottom bar, the top bar keeps what the
    phone's own clock cannot tell you (markets, health, incidents, the kill
    switch), and the tab strip scrolls. */
 @media (max-width: 760px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .shell__side { display: none; }
+  .shell__brand--bar { display: inline-flex; padding: 0; }
+  .shell__brand--bar .shell__brand-mark { width: 24px; height: 24px; }
+  .tick { display: none; }
   .shell__top { gap: 9px; padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
-  .shell__ws { display: none; }
+  .shell__top .shell__search { margin-left: auto; }
   /* overflow: visible, or the hit frame below is clipped (the words it hid are gone at this width). */
-  .shell__search { width: 28px; height: 28px; justify-content: center; padding: 0; overflow: visible; }
+  .shell__search { width: 32px; height: 32px; justify-content: center; padding: 0; overflow: visible; }
   .shell__search kbd { display: none; }
   .shell__status { gap: 9px; }
   .st--market .st__label { display: none; }
 
-  .shell__avatar { width: 28px; height: 28px; }
+  .shell__avatar { width: 32px; height: 32px; }
   /* A finger's width between the kill switch and the account menu. */
   .shell__user { margin-left: 3px; }
 
@@ -623,7 +710,7 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   .shell__tab { align-self: stretch; height: auto; position: relative; z-index: 0; }
   .shell__tab[aria-current='page'] { background: none; }
   .shell__tab::before { content: ''; position: absolute; inset: 6px 0; z-index: -1; border-radius: var(--radius-sm); }
-  .shell__tab[aria-current='page']::before { background: var(--surface2); }
+  .shell__tab[aria-current='page']::before { background: var(--brand-soft); }
 
   .shell__main {
     padding: 12px max(12px, env(safe-area-inset-right)) calc(var(--bottombar-h) + 24px + env(safe-area-inset-bottom))
@@ -641,10 +728,14 @@ button.pop__row:focus-visible { outline-offset: -2px; }
     grid-auto-columns: minmax(0, 1fr);
     height: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
     padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    background: var(--bg0);
+    background: var(--surface);
     border-top: 1px solid var(--line);
   }
   .shell__bottom .shell__ws-link {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    text-decoration: none;
     flex-direction: column;
     justify-content: center;
     gap: 3px;
@@ -656,7 +747,8 @@ button.pop__row:focus-visible { outline-offset: -2px; }
   }
   .shell__bottom .shell__ws-link svg { width: 18px; height: 18px; }
   .shell__bottom .shell__ws-link[aria-current] { color: var(--text); font-weight: 600; }
-  .shell__bottom .shell__ws-link[aria-current] svg { color: var(--brand-hi); }
+  .shell__bottom .shell__ws-link[aria-current] { color: var(--brand); }
+  .shell__bottom .shell__ws-link[aria-current] svg { color: var(--brand); }
   /* Nine workspaces (an admin's) leave each about 42px on a 375px phone, less
      than "Research" or "Portfolio" needs: the words step down half a size, and
      a column is never narrower than its word (with 2px a side), taking the

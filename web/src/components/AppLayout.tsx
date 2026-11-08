@@ -1,12 +1,16 @@
 /**
- * The signed-in shell, v3: one console for admins and traders.
+ * The signed-in shell, sprout v1 (8 Nov 2026): one console for admins and traders.
  *
- * A 44px top bar holds the brand, the workspaces (Today for an admin, then
- * Desk, Markets, Trade, Portfolio, Research, AI, Data, System), the ⌘K search, the live status items and the account
- * menu. Under it, a 38px strip of the current workspace's tabs; on a phone
- * the workspaces move to a bottom bar. Which workspaces and tabs exist comes
- * from lib/modules.ts and the user's role and grants, and the current one from
- * the URL, so the shell has no navigation state of its own.
+ * A sidebar holds the brand, the workspaces (Today for an admin, then Desk,
+ * Markets, Trade, Portfolio, Research, AI, Data, System) with the current one
+ * opened to its pages, and the market session at its foot. Beside it, a top
+ * bar with the market ticker, the ⌘K search, the live status items and the
+ * account menu, then a strip naming where you are (the Desk puts its own
+ * switches there). On a phone the sidebar gives way to a bottom bar of
+ * workspaces and a scrolling strip of the current workspace's pages. Which
+ * workspaces and pages exist comes from lib/modules.ts and the user's role
+ * and grants, and the current one from the URL, so the shell has no
+ * navigation state of its own.
  *
  * Signed-in only: RequireAuth wraps this route in App.tsx, and RequireRole
  * guards the admin pages beneath it.
@@ -16,7 +20,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useLiveFeed } from '../lib/live'
-import { ACCOUNT_PAGE, accessFor, locate, nameRoute, navFor, routeTitle, tabGroups } from '../lib/modules'
+import { ACCOUNT_PAGE, accessFor, allows, locate, nameRoute, navFor, routeTitle, tabGroups } from '../lib/modules'
 import type { NavPage, NavWorkspace } from '../lib/modules'
 import { isPaletteShortcut } from '../lib/palette'
 import { installScrollCues } from '../lib/scrollCues'
@@ -24,6 +28,8 @@ import { IconLogo, IconSearch } from './icons'
 import { StatusItems } from './shell/StatusItems'
 import { useIstDate } from './shell/useIstDate'
 import { CommandPalette } from './shell/CommandPalette'
+import { Sidebar } from './shell/Sidebar'
+import { Ticker } from './shell/Ticker'
 import { UserMenu } from './shell/UserMenu'
 import type { ShellOutlet } from './shell/stripSlot'
 import './shell/shell.css'
@@ -124,19 +130,6 @@ export function AppLayout() {
   // Back and forward close it too, not only a pick from the list.
   useEffect(() => setPaletteOpen(false), [pathname])
 
-  // Where the workspaces do not all fit the bar, its row scrolls: keep the
-  // current one in view, scrolling the row sideways only, never the page.
-  const wsRef = useRef<HTMLElement>(null)
-  const currentWs = here?.workspace.key
-  useEffect(() => {
-    const row = wsRef.current
-    const link = row?.querySelector<HTMLElement>('[aria-current]')
-    if (!row || !link || row.scrollWidth <= row.clientWidth) return
-    const left = link.offsetLeft - row.offsetLeft
-    if (left >= row.scrollLeft && left + link.offsetWidth <= row.scrollLeft + row.clientWidth) return
-    row.scrollLeft = Math.max(0, Math.min(left - (row.clientWidth - link.offsetWidth) / 2, row.scrollWidth - row.clientWidth))
-  }, [currentWs])
-
   // Sideways-scrolling tables and strips fade the edge that hides more.
   useEffect(() => installScrollCues(document), [])
 
@@ -175,51 +168,59 @@ export function AppLayout() {
       )
     })
 
+  const canPulse = allows(access, 'market-data')
+
   return (
     <div className="shell">
-      <header className="shell__top">
-        <Link to={home?.to ?? '/'} className="shell__brand" aria-label={`OpenFNO: ${home?.label ?? 'home'}`}>
-          <span className="shell__brand-mark" aria-hidden="true">
-            <IconLogo />
-          </span>
-          <span className="shell__brand-word">
-            open<b>fno</b>
-          </span>
-        </Link>
-        <nav className="shell__ws scroll-x" aria-label="Workspaces" ref={wsRef}>
-          {workspaceLinks(false)}
-        </nav>
-        <div className="shell__grow" />
-        <button
-          type="button"
-          className="shell__search"
-          onClick={() => setPaletteOpen(true)}
-          aria-label="Search symbols, runs and pages"
-          aria-keyshortcuts="Meta+K Control+K"
-        >
-          <IconSearch aria-hidden="true" />
-          <span>Search symbols, runs, pages</span>
-          <kbd>{IS_MAC ? '⌘K' : 'Ctrl K'}</kbd>
-        </button>
-        <StatusItems />
-        <UserMenu user={user} isAdmin={isAdmin} onSignOut={handleSignOut} />
-      </header>
+      <Sidebar nav={nav} current={here?.workspace.key} page={here?.page} />
 
-      {/* A workspace with one page has nothing to switch between: its strip
-          is the page's name, as it is for a page outside the workspaces. */}
-      <div className={`shell__tabs${onDesk ? ' shell__tabs--desk' : ''}`}>
-        {onDesk ? (
-          <DeskTitle slotRef={setStripSlot} />
-        ) : here && here.workspace.pages.length > 1 ? (
-          <TabStrip workspace={here.workspace} current={here.page} />
-        ) : (
-          <span className="shell__tabs-title">{name.page}</span>
-        )}
+      <div className="shell__body">
+        <header className="shell__top">
+          <Link to={home?.to ?? '/'} className="shell__brand shell__brand--bar" aria-label={`OpenFNO: ${home?.label ?? 'home'}`}>
+            <IconLogo className="shell__brand-mark" />
+          </Link>
+          {canPulse ? <Ticker /> : <div className="shell__grow" />}
+          <button
+            type="button"
+            className="shell__search"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Search symbols, runs and pages"
+            aria-keyshortcuts="Meta+K Control+K"
+          >
+            <IconSearch aria-hidden="true" />
+            <span>Search</span>
+            <kbd>{IS_MAC ? '⌘K' : 'Ctrl K'}</kbd>
+          </button>
+          <StatusItems />
+          <UserMenu user={user} isAdmin={isAdmin} onSignOut={handleSignOut} />
+        </header>
+
+        {/* Where you are. On a computer the sidebar lists the pages, so the
+            strip is a breadcrumb; on a phone it is the workspace's pages,
+            scrolling. The Desk's strip carries its own switches. */}
+        <div className={`shell__tabs${onDesk ? ' shell__tabs--desk' : ''}`}>
+          {onDesk ? (
+            <DeskTitle slotRef={setStripSlot} />
+          ) : (
+            <>
+              <p className={`shell__crumb${here && here.workspace.pages.length > 1 ? '' : ' shell__crumb--solo'}`}>
+                {here && here.workspace.pages.length > 1 && (
+                  <>
+                    <Link to={here.workspace.to}>{here.workspace.label}</Link>
+                    <span aria-hidden="true">›</span>
+                  </>
+                )}
+                <b>{here && here.workspace.pages.length > 1 ? here.page.label : name.page}</b>
+              </p>
+              {here && here.workspace.pages.length > 1 && <TabStrip workspace={here.workspace} current={here.page} />}
+            </>
+          )}
+        </div>
+
+        <main className="shell__main">
+          <Outlet context={{ stripSlot } satisfies ShellOutlet} />
+        </main>
       </div>
-
-      <main className="shell__main">
-        <Outlet context={{ stripSlot } satisfies ShellOutlet} />
-      </main>
 
       <nav className="shell__bottom" aria-label="Workspaces">
         {workspaceLinks(true)}
