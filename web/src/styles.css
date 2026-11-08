@@ -62,6 +62,7 @@
   /* Text on a --pos fill (the buy button): dark on the bright green, white on the deep one. */
   --on-pos: #04120c;
   --on-brand: #11131a;
+  --on-neg: #1a0b0e;
   --neg: #ff6b7a;
   --neg-soft: rgba(255, 107, 122, 0.12);
   --warn: #e3ad4f;
@@ -172,6 +173,7 @@
   --pos-soft: rgba(18, 122, 82, 0.09);
   --on-pos: #ffffff;
   --on-brand: #ffffff;
+  --on-neg: #ffffff;
   --neg: #bf3446;
   --neg-soft: rgba(191, 52, 70, 0.08);
   --warn: #916100;
@@ -335,7 +337,7 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 .btn--primary {
   background: var(--brand);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-brand);
 }
 .btn--primary:hover:not(:disabled) {
   background: var(--brand-hi);
@@ -359,7 +361,7 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 .btn--danger:hover:not(:disabled) {
   background: var(--neg);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-neg);
   filter: none;
 }
 
@@ -546,6 +548,9 @@ select.field__input { appearance: auto; }
   margin: 0;
   color: var(--text-2);
   font-size: 13px;
+  /* A reading measure: on a desk screen a one-line description used to run
+     the full width of the page. */
+  max-width: 78ch;
 }
 
 .page--centered {
@@ -950,6 +955,21 @@ select.field__input { appearance: auto; }
   margin: 0;
   font-size: 13px;
 }
+/* Still reading (components/ui.tsx Loading sets role="status"): a dot that
+   breathes before the text, so a loading line is told from an empty one. */
+.empty[role='status']::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  margin: 0 8px 1px 0;
+  animation: empty-breathe 1.4s ease-in-out infinite;
+}
+@keyframes empty-breathe {
+  50% { opacity: 0.25; }
+}
 /* The side padding is for an empty state inside a table well; as a panel's
    own line it sat 4px right of the title above it. */
 .panel > .empty { padding-left: 0; padding-right: 0; }
@@ -1331,10 +1351,12 @@ a.checklist__item:hover { background: var(--brand-soft); }
     -webkit-overflow-scrolling: touch;
   }
 
-  /* One card per row reads better than two cramped ones; tiles that are one
-     figure and a label (a price ticker) pair up. */
-  .stat-grid { grid-template-columns: 1fr !important; }
-  .stat-grid--pair { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  /* Two tiles a row: one figure, a label and a line under it fit 170px, and
+     four tiles no longer fill the first screen on their own. */
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
+  .stat { padding: 11px 12px; }
+  .stat__value { font-size: 18px; }
+  .stat__sub { font-size: 11.5px; }
 
   /* Buttons and inputs are touch targets first on a phone. */
   .btn { min-height: 40px; }
@@ -1348,6 +1370,7 @@ a.checklist__item:hover { background: var(--brand-soft); }
 
 @media (prefers-reduced-motion: reduce) {
   .splash__spinner,
+  .empty[role='status']::before,
   .pill--pos .pill__dot,
   .pill--live .pill__dot { animation: none; }
   .flash-up, .flash-down { animation: none; }
@@ -1903,10 +1926,13 @@ a.pill:hover { border-color: var(--line-strong); }
   padding-top: 6px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
-.strategy-card__hint { color: var(--text-3); font-size: 12px; }
+/* The hint takes its own line; two buttons beside it overflowed a 280px card. */
+.strategy-card__hint { color: var(--text-3); font-size: 12px; flex: 1 1 100%; }
+/* Side by side when they fit, else each the card's full width, never ragged. */
+.strategy-card__foot > .btn { flex: 1 1 auto; }
 
 /* Launch dialog. */
 .modal {
