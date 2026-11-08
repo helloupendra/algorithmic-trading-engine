@@ -341,11 +341,14 @@ export function AiOverviewPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
-          Which models answer, where they come from, what each agent does, and what the AI did today. Admin-only; nothing
-          here places or changes an order.
-        </p>
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">AI</h1>
+          <p className="page__subtitle">
+            Which models answer, where they come from, what each agent does, and what the AI did today. Admin-only;
+            nothing here places or changes an order.
+          </p>
+        </div>
         <span className="sys-asof">
           {o && (
             <span className="faint" title={formatDateTime(new Date(overview.dataUpdatedAt).toISOString())}>
@@ -354,7 +357,7 @@ export function AiOverviewPage() {
           )}
           {overview.isError && o && <span className="warn">Refresh failed: showing the last reading ({formatAge(new Date(overview.dataUpdatedAt).toISOString())}).</span>}
         </span>
-      </div>
+      </header>
 
       {overview.isPending ? (
         <Loading label="Reading the AI overview…" />
