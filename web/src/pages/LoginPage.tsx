@@ -1,45 +1,65 @@
 /**
- * Sign-in ("/login").
+ * Sign-in ("/login"), sprout v1 (8 Nov 2026).
  *
- * The same engine as the homepage (components/MachineScene), standing on the
- * left of one continuous room, half asleep in its glass: the desk before the
- * open. The form is a sheet of glass on the right of the same room. On a narrow
- * screen the form takes the centre and the engine stands behind it.
- *
- * The page tells the world where the engine should stand by measuring an empty
- * box in its own layout, so the two never drift apart: beside the form on a
- * computer, tablet or a phone on its side; under the form on a phone held
- * upright, where the headline, the form and then the engine stack in one
- * column; behind the form in between.
- *
- * The engine answers the form. It wakes as the fields are filled in; on submit
- * the lid lifts and the candle loader plays in place of the form; a failed
- * sign-in flashes the case red, drops the lid, brings the form back with the
- * server's message and returns focus to the first field.
+ * One composition, like the homepage it comes from: on the left the desk
+ * before the open (a headline and a small, synthetic session of candles), on
+ * the right the form. No WebGL: the candles are inline SVG, and they answer
+ * the form the way the old engine did. They wake as the fields are filled in
+ * (a little for focus, the rest for what has been typed), brighten fully on
+ * submit while a candle loader replaces the form, and jolt on a failed
+ * sign-in, which brings the form back with the server's message and returns
+ * focus to the first field.
  *
  * The clock top-right is the visitor's own, read in IST, with the NSE cash
  * timings ("holidays aside", because this page does not load the calendar).
  * Username and password only: accounts are issued by an administrator.
  */
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { useForcedTheme } from '../lib/theme'
 import { ApiError } from '../lib/api'
 import { useMarketClock } from '../lib/marketClock'
 import { homeFor, returnTarget } from '../lib/modules'
-import { liveSceneWanted } from '../lib/sceneMode'
 import { IconLogo } from '../components/icons'
-import { MachineScene } from '../components/MachineScene'
-import { Still } from '../components/Still'
 import { CandleBars } from '../components/CandleLoader'
-import type { MachineHandle } from '../scene/machine'
-import type { Rect } from '../scene/story'
-import './landing.css'
+import './login/signin.css'
+
+/** A synthetic session for the left side: [x, wick top, wick bottom, body top, body height, up]. */
+const CANDLES: readonly [number, number, number, number, number, boolean][] = [
+  [8, 65, 98, 75, 15, true], [24, 68, 100, 77, 13, true], [40, 72, 102, 79, 13, false], [56, 56, 90, 66, 14, true],
+  [72, 45, 75, 54, 15, true], [88, 49, 81, 57, 13, false], [104, 48, 84, 58, 15, true], [120, 61, 92, 68, 15, false],
+  [136, 45, 76, 55, 13, true], [152, 31, 65, 40, 16, true], [168, 32, 65, 39, 18, false], [184, 31, 56, 37, 11, true],
+  [200, 18, 48, 25, 16, true], [216, 21, 54, 28, 18, false], [232, 18, 49, 25, 15, true], [248, 29, 58, 36, 14, true],
+  [264, 32, 67, 40, 17, false], [280, 38, 68, 45, 15, true], [296, 42, 76, 49, 18, false], [312, 36, 67, 44, 13, true],
+  [328, 27, 56, 35, 13, true], [344, 31, 65, 39, 16, false], [360, 40, 70, 47, 15, true], [376, 47, 75, 54, 13, false],
+  [392, 38, 64, 45, 11, true], [408, 34, 62, 41, 13, true], [424, 37, 70, 44, 17, false], [440, 43, 70, 50, 12, true],
+  [456, 47, 77, 55, 13, false], [472, 39, 71, 47, 15, true], [488, 30, 62, 38, 15, true], [504, 36, 66, 43, 15, false],
+]
+
+function SessionCandles() {
+  return (
+    <svg className="signin__candles" viewBox="0 0 520 132" role="img" aria-labelledby="signin-candles-title">
+      <title id="signin-candles-title">Synthetic NIFTY session, 09:15 to 13:45 IST. Not a quote.</title>
+      <path className="signin__grid" d="M0 25H520M0 64H520M0 103H520" />
+      {CANDLES.map(([x, top, bottom, bodyTop, bodyH, up], i) => (
+        <g key={x} className={up ? 'signin__up' : 'signin__down'} style={{ ['--i' as string]: i }}>
+          <path d={`M${x} ${top}V${bottom}`} />
+          <rect x={x - 4} y={bodyTop} width="8" height={bodyH} rx="1" />
+        </g>
+      ))}
+      <path className="signin__last" d="M0 62H520" />
+      <g className="signin__times">
+        <text x="0" y="128">09:15</text>
+        <text x="150" y="128">10:45</text>
+        <text x="305" y="128">12:15</text>
+        <text x="520" y="128" textAnchor="end">13:45 IST</text>
+      </g>
+    </svg>
+  )
+}
 
 export function LoginPage() {
-  useForcedTheme('dark')
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -47,36 +67,13 @@ export function LoginPage() {
 
   const [userNameOrEmail, setUserNameOrEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [focused, setFocused] = useState(false)
-  const [live, setLive] = useState(() => liveSceneWanted())
-  const machineRef = useRef<MachineHandle | null>(null)
+  // Bumped on each failure so the jolt replays even for the same message twice.
+  const [jolts, setJolts] = useState(0)
   const userRef = useRef<HTMLInputElement | null>(null)
-  const boxRef = useRef<HTMLDivElement | null>(null)
-
-  /** Stand the engine in the box the layout leaves for it; the world fits it inside. */
-  const placeEngine = useCallback(() => {
-    const box = boxRef.current
-    const m = machineRef.current
-    if (!box || !m) return
-    const { width, height } = m.size()
-    if (!width || !height) return
-    const r = box.getBoundingClientRect()
-    const rect: Rect = { x: r.left / width, y: r.top / height, w: r.width / width, h: r.height / height }
-    m.setStage(r.width > 120 && r.height > 120 ? { closed: rect, open: rect } : null)
-  }, [])
-
-  useEffect(() => {
-    const box = boxRef.current
-    const ro = new ResizeObserver(placeEngine)
-    if (box) ro.observe(box)
-    window.addEventListener('resize', placeEngine)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', placeEngine)
-    }
-  }, [placeEngine])
 
   useEffect(() => {
     const previous = document.title
@@ -86,22 +83,12 @@ export function LoginPage() {
     }
   }, [])
 
-  // The engine wakes as the form is filled in: a little for focus, the rest for what has been typed.
-  const energy = Math.min(1, (focused ? 0.22 : 0.08) + (userNameOrEmail.length + password.length) / 18)
-  useEffect(() => {
-    machineRef.current?.setEnergy(energy)
-  }, [energy])
-
-  const onReady = useCallback((m: MachineHandle) => {
-    machineRef.current = m
-    m.setEnergy(0.08)
-    placeEngine()
-  }, [placeEngine])
+  // The candles wake as the form is filled in: a little for focus, the rest for what has been typed.
+  const wake = Math.min(1, (focused ? 0.22 : 0.08) + (userNameOrEmail.length + password.length) / 18)
 
   async function signIn(name: string, pass: string) {
     setError(null)
     setIsSubmitting(true)
-    machineRef.current?.fire('open')
     try {
       const me = await login(name, pass)
       // RequireAuth (and the Ira app's gate) store the full Location; keep search
@@ -123,7 +110,7 @@ export function LoginPage() {
             : "Couldn't reach the server. Check your connection and try again.",
       )
       setIsSubmitting(false)
-      machineRef.current?.fire('error')
+      setJolts((n) => n + 1)
       // The submit button was disabled while focused, which drops focus to the
       // body; put it back where the correction starts.
       window.setTimeout(() => userRef.current?.focus(), 0)
@@ -139,80 +126,137 @@ export function LoginPage() {
   const opening = isSubmitting && !error
 
   return (
-    <div className="login">
-      {live
-        ? <MachineScene mode="login" onReady={onReady} onUnavailable={() => setLive(false)} />
-        : <Still pose="login" className="login__still" />}
-
-      <header className="login__top">
-        <Link className="brand" to="/" aria-label="OpenFNO home">
-          <span className="brand__mark"><IconLogo /></span>
-          <span className="brand__word">openfno</span>
-        </Link>
-        <span className={`market${clock.open ? ' is-open' : ''}`}>
-          <i aria-hidden="true" />NSE {clock.open ? 'open' : 'closed'} · {clock.time} IST
+    <div className="signin">
+      <header className="signin__top">
+        {/* A full load: "/" is the static homepage, not a route of this app. */}
+        <a className="signin__brand" href="/" aria-label="OpenFNO homepage">
+          <IconLogo className="signin__mark" />
+          <span>OpenFNO</span>
+        </a>
+        <p className="signin__clock" title="NSE cash timings, holidays aside">
+          <span>
+            <i className={clock.open ? 'is-open' : ''} aria-hidden="true" />
+            NSE {clock.open ? 'open' : 'closed'} · {clock.time} IST
+          </span>
           <small>cash timings, holidays aside</small>
-        </span>
+        </p>
       </header>
 
-      <main className="login__main">
-        <div className="login__side">
-          <p className="eyebrow"><i aria-hidden="true" />The desk, before the open</p>
-          <h1 className="login__lead">Sign in.{' '}<br /><em>The engine wakes.</em></h1>
-          {/* Where the engine stands: laid out by CSS, measured by placeEngine(), never drawn. */}
-          <div className="login__box" ref={boxRef} aria-hidden="true" />
-        </div>
+      <main className="signin__main">
+        <section
+          className={`signin__intro${opening ? ' is-opening' : ''}`}
+          aria-labelledby="signin-title"
+          style={{ ['--wake' as string]: opening ? 1 : wake }}
+        >
+          <p className="signin__eyebrow">The desk, before the open</p>
+          <h1 id="signin-title">
+            Sign in.
+            <br />
+            <em>The engine wakes.</em>
+          </h1>
+          <figure key={jolts} className={`signin__market${jolts ? ' is-jolted' : ''}`}>
+            <div className="signin__market-head">
+              <span>
+                <b>NIFTY 50</b>
+                <small>NSE · session record</small>
+              </span>
+              <span className="signin__price num">25,031.40</span>
+            </div>
+            <SessionCandles />
+            <figcaption>
+              <i aria-hidden="true" /> Synthetic · not a quote
+            </figcaption>
+          </figure>
+          <p className="signin__principle">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6" />
+            </svg>
+            Paper trades. Real records. Every P&amp;L after charges.
+          </p>
+        </section>
 
-        <div className="login__form">
-        <div className={`card${opening ? ' is-opening' : ''}${error ? ' is-error' : ''}`}>
-          <div className="card__form" inert={opening}>
-            <h2 className="card__title">Sign in</h2>
+        <section className="signin__card" aria-labelledby="signin-form-title">
+          <div className="signin__card-top">
+            <span>Your workspace</span>
+            <span className="signin__paper">
+              <i aria-hidden="true" /> Paper only
+            </span>
+          </div>
+          <h2 id="signin-form-title">Sign in</h2>
 
-            {error && <div className="card__alert" role="alert">{error}</div>}
-
-            <form onSubmit={handleSubmit} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
-              <label className="field">
-                <span className="field__label">Username or email</span>
+          {opening ? (
+            <div className="signin__opening" role="status">
+              <CandleBars />
+              <p>Opening the console…</p>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} noValidate={false}>
+              {error && (
+                <p className="signin__error" role="alert">
+                  {error}
+                </p>
+              )}
+              <div className="signin__field">
+                <label htmlFor="signin-user">Username or email</label>
                 <input
+                  id="signin-user"
                   ref={userRef}
-                  className="field__input"
                   value={userNameOrEmail}
                   onChange={(e) => setUserNameOrEmail(e.target.value)}
                   autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   placeholder="you@example.com"
                   required
                   autoFocus
                 />
-              </label>
-              <label className="field">
-                <span className="field__label">Password</span>
-                <input
-                  className="field__input"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                />
-              </label>
-              <button type="submit" className="cta cta--solid cta--block" disabled={isSubmitting}>
-                {isSubmitting ? 'Opening…' : <>Sign in <span className="arrow" aria-hidden="true">→</span></>}
+              </div>
+              <div className="signin__field">
+                <label htmlFor="signin-password">Password</label>
+                <div className="signin__password">
+                  <input
+                    id="signin-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="signin__reveal"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    onClick={() => setShowPassword((v) => !v)}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" />
+                      <circle cx="12" cy="12" r="3" />
+                      {showPassword && <path d="M4 4l16 16" />}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <button type="submit" className="signin__submit" disabled={isSubmitting}>
+                Sign in <span aria-hidden="true">→</span>
               </button>
+              <p className="signin__hint">
+                Accounts are issued by an administrator — there is no public <span className="nowrap">sign-up.</span>
+              </p>
             </form>
-
-            <p className="card__hint">Accounts are issued by an administrator — there is no public sign-up.</p>
-          </div>
-
-          {opening && (
-            <div className="card__opening" role="status">
-              <CandleBars />
-              <p>Opening the console<span className="loader__dots" aria-hidden="true">…</span></p>
-            </div>
           )}
-        </div>
-        <p className="login__risk">Trading involves financial risk. Validate every strategy on paper first.</p>
-        </div>
+        </section>
       </main>
+
+      <footer className="signin__foot">
+        <p>Paper trading only. Nothing places a real order.</p>
+        <p>
+          <a href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer">
+            Source-available
+          </a>{' '}
+          · PolyForm Noncommercial 1.0.0
+        </p>
+      </footer>
     </div>
   )
 }

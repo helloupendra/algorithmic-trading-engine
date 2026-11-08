@@ -58,6 +58,24 @@ public static class ConsoleSite
 
     public const string IraShell = "ira.html";
 
+    /// <summary>The public homepage: plain HTML, built from web/home.html, that "/" serves before any app loads.</summary>
+    public const string HomePage = "home.html";
+
+    /// <summary>
+    /// The default document of a folder: home.html where there is one (only the site's root has it), then index.html
+    /// (the docs pages). So "/" is the homepage as static HTML, with no React and no WebGL to wait for (8 Nov 2026,
+    /// the sprout redesign), and a wwwroot built before home.html existed still answers "/" with the app, whose own
+    /// route for "/" shows the old landing page.
+    /// </summary>
+    public static IApplicationBuilder UseConsoleDefaultFiles(this IApplicationBuilder app)
+    {
+        var options = new DefaultFilesOptions();
+        options.DefaultFileNames.Clear();
+        options.DefaultFileNames.Add(HomePage);
+        options.DefaultFileNames.Add("index.html");
+        return app.UseDefaultFiles(options);
+    }
+
     /// <summary>Maps the two fallbacks; both are open to anyone, as a page's HTML is (the data behind it is not).</summary>
     public static void MapConsoleFallbacks(this WebApplication app)
     {

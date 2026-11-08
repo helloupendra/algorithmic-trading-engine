@@ -11,12 +11,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { useForcedTheme } from '../lib/theme'
 import { IconLogo } from '../components/icons'
+import './login/signin.css'
 import type { InvitePreview } from '../lib/types'
 
 export function AcceptInvitePage() {
-  useForcedTheme('dark')
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const { login } = useAuth()
@@ -86,95 +85,98 @@ export function AcceptInvitePage() {
   }
 
   return (
-    <div className="login">
-      <div>
-        <div className="login__card">
-          <div className="login__brand">
-            <span className="shell__brand-mark" aria-hidden="true">
-              <IconLogo />
+    <div className="signin">
+      <header className="signin__top">
+        {/* A full load: "/" is the static homepage, not a route of this app. */}
+        <a className="signin__brand" href="/" aria-label="OpenFNO homepage">
+          <IconLogo className="signin__mark" />
+          <span>OpenFNO</span>
+        </a>
+      </header>
+
+      <main className="signin__main signin__main--one">
+        <section className="signin__card" aria-labelledby="invite-title">
+          <div className="signin__card-top">
+            <span>An invitation</span>
+            <span className="signin__paper">
+              <i aria-hidden="true" /> Paper only
             </span>
-            OpenFNO Console
           </div>
+          <h1 id="invite-title" className="signin__title">Join the console</h1>
 
-          <h1 className="login__title">Join the console</h1>
-
-        {loadError ? (
-          <div className="alert alert--error" role="alert">
-            {loadError}
-          </div>
-        ) : !preview ? (
-          <p className="muted">Checking the invitation…</p>
-        ) : (
-          <>
-            <p className="muted">
-              Invited as <b>{preview.email}</b>. Choose a username and a password — nobody else sees
-              it, not even the admin who invited you.
+          {loadError ? (
+            <p className="signin__error" role="alert">
+              {loadError}
             </p>
+          ) : !preview ? (
+            <p className="signin__note">Checking the invitation…</p>
+          ) : (
+            <>
+              <p className="signin__note">
+                Invited as <b>{preview.email}</b>. Choose a username and a password — nobody else sees it, not even the admin
+                who invited you.
+              </p>
 
-            {submitError && (
-              <div className="alert alert--error" role="alert">
-                {submitError}
-              </div>
-            )}
+              {submitError && (
+                <p className="signin__error" role="alert">
+                  {submitError}
+                </p>
+              )}
 
-            <form onSubmit={submit} className="login__form">
-              <div className="field">
-                <label className="field__label" htmlFor="inv-user">
-                  Username
-                </label>
-                <input
-                  id="inv-user"
-                  className="field__input"
-                  required
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  autoComplete="username"
-                />
-              </div>
-              <div className="field">
-                <label className="field__label" htmlFor="inv-pw">
-                  Password
-                </label>
-                <input
-                  id="inv-pw"
-                  className="field__input"
-                  type="password"
-                  minLength={8}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-                <span className="small-note muted">At least 8 characters.</span>
-              </div>
-              <div className="field">
-                <label className="field__label" htmlFor="inv-pw2">
-                  Confirm password
-                </label>
-                <input
-                  id="inv-pw2"
-                  className="field__input"
-                  type="password"
-                  minLength={8}
-                  required
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-              <button className="btn btn--primary" disabled={busy} style={{ width: '100%' }}>
-                {busy ? 'Creating your account…' : 'Create my account'}
-              </button>
-            </form>
+              <form onSubmit={submit}>
+                <div className="signin__field">
+                  <label htmlFor="inv-user">Username</label>
+                  <input id="inv-user" required value={userName} onChange={(e) => setUserName(e.target.value)} autoComplete="username" />
+                </div>
+                <div className="signin__field">
+                  <label htmlFor="inv-pw">Password</label>
+                  <input
+                    id="inv-pw"
+                    type="password"
+                    minLength={8}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                    aria-describedby="inv-pw-hint"
+                  />
+                  <small id="inv-pw-hint">At least 8 characters.</small>
+                </div>
+                <div className="signin__field">
+                  <label htmlFor="inv-pw2">Confirm password</label>
+                  <input
+                    id="inv-pw2"
+                    type="password"
+                    minLength={8}
+                    required
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <button type="submit" className="signin__submit" disabled={busy}>
+                  {busy ? 'Creating your account…' : 'Create my account'}
+                </button>
+              </form>
 
-            <p className="small-note muted">
-              Your account starts with no access. An admin decides what you can see and run — until
-              then you can sign in, and that is all.
-            </p>
-          </>
-        )}
-        </div>
-      </div>
+              <p className="signin__hint">
+                Your account starts with no access. An admin decides what you can see and run — until then you can sign in,
+                and that is all.
+              </p>
+            </>
+          )}
+        </section>
+      </main>
+
+      <footer className="signin__foot">
+        <p>Paper trading only. Nothing places a real order.</p>
+        <p>
+          <a href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer">
+            Source-available
+          </a>{' '}
+          · PolyForm Noncommercial 1.0.0
+        </p>
+      </footer>
     </div>
   )
 }

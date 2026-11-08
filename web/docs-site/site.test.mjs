@@ -41,7 +41,8 @@ describe('sitemap.xml', () => {
 
 describe('the homepage’s links into the docs', () => {
   it('each goes to a page this checkout builds', () => {
-    const html = readFileSync(new URL('web/index.html', repo), 'utf8')
+    // The homepage is web/home.html, the static page the API serves at "/".
+    const html = readFileSync(new URL('web/home.html', repo), 'utf8')
     const links = [...new Set([...html.matchAll(/href="(\/docs\/[^"]*)"/g)].map((m) => m[1]))]
     expect(links).toContain('/docs/')
     const built = new Map(NAV.flatMap((g) => g.items).map((it) => [urlFor(it.slug), it]))

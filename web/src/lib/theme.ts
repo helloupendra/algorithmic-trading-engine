@@ -2,13 +2,11 @@
  * The console's theme: light (the default since the sprout redesign, 8 Nov
  * 2026) or dark, or "system" to follow the device. The choice lives in localStorage under
  * `openfno.theme` and lands on <html data-theme="…">, which styles.css reads
- * to swap the token block. index.html carries a copy of `resolveTheme` in an
- * inline script so the first paint is already the right colour; this module
- * is the same rule for everything after that.
- *
- * Public pages (the homepage, sign-in, invites) keep their own black identity
- * whatever the preference: `useForcedTheme('dark')` holds them there while
- * they are mounted and hands the preference back on the way out.
+ * to swap the token block. public/theme-boot.js (loaded by index.html's
+ * head) is the same rule before the first paint, so the page is already the
+ * right colour; this module is the rule for everything after that. The
+ * sign-in and invitation pages follow the preference like the rest; the
+ * homepage is static HTML of its own (home.html) and always light.
  *
  * Charts drawn by JavaScript read their colours from the tokens once when
  * they are created, so they subscribe to `useTheme().theme` and rebuild when
@@ -27,11 +25,9 @@ export const THEME_PREFS: readonly ThemePref[] = ['light', 'dark', 'system']
 /**
  * The colour the browser paints around the page (the iOS status bar, the
  * task switcher): the console's own ground (--bg0), so the chrome and the
- * top bar are one colour. The public pages are blacker; their forced theme
- * uses PUBLIC_COLOR.
+ * page are one colour.
  */
 export const THEME_COLOR: Record<Theme, string> = { dark: '#0e1115', light: '#f6f8f9' }
-export const PUBLIC_COLOR = '#030406'
 
 /** A stored value read back: anything but the three words is the default. */
 export function parseThemePref(raw: string | null | undefined): ThemePref {
@@ -99,8 +95,6 @@ export function applyTheme(theme: Theme, doc: Document = document, chrome: strin
 type Listener = () => void
 const listeners = new Set<Listener>()
 let prefCache: ThemePref | null = null
-/** Set while a public page holds the document dark; the preference is untouched. */
-let forced: Theme | null = null
 
 function pref(): ThemePref {
   if (prefCache == null) prefCache = readThemePref()
@@ -108,11 +102,11 @@ function pref(): ThemePref {
 }
 
 function wanted(): Theme {
-  return forced ?? resolveTheme(pref(), systemDark())
+  return resolveTheme(pref(), systemDark())
 }
 
 function notify() {
-  applyTheme(wanted(), document, forced ? PUBLIC_COLOR : undefined)
+  applyTheme(wanted(), document)
   for (const l of listeners) l()
 }
 
@@ -162,18 +156,6 @@ export function useTheme(): { pref: ThemePref; theme: Theme; setPref: (next: The
   // already, and this is what keeps it applied after client-side navigation.
   useEffect(() => applyTheme(wanted()), [])
   return { pref: current, theme, setPref: useCallback((next: ThemePref) => setThemePref(next), []) }
-}
-
-/** Hold the document on one theme while the caller is mounted (public pages stay dark). */
-export function useForcedTheme(theme: Theme): void {
-  useEffect(() => {
-    forced = theme
-    notify()
-    return () => {
-      forced = null
-      notify()
-    }
-  }, [theme])
 }
 
 /** The label a control shows for each preference. */

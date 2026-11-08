@@ -696,7 +696,8 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.UseDefaultFiles();
+// "/" is the static homepage (home.html) when the build has one; see ConsoleSite.UseConsoleDefaultFiles.
+AlgoTrading.Api.Services.ConsoleSite.UseConsoleDefaultFiles(app);
 app.UseStaticFiles();
 
 app.UseRouting();

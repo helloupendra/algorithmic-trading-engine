@@ -1,0 +1,219 @@
+/*
+ * Sign-in, sprout v1. Everything is scoped under .signin and drawn from the
+ * console's tokens, so the page follows the theme (light by default) and its
+ * rules never reach a console page once this stylesheet is loaded.
+ */
+
+.signin {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left));
+  color: var(--text);
+  font-size: 14px;
+}
+.signin .nowrap { white-space: nowrap; }
+
+/* --- top ------------------------------------------------------------------ */
+.signin__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 28px 0 0;
+}
+.signin__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+.signin__mark { width: 32px; height: 32px; }
+.signin__clock { margin: 0; display: grid; justify-items: end; gap: 2px; font-size: 12.5px; color: var(--text-2); }
+.signin__clock span { display: inline-flex; align-items: center; gap: 7px; }
+.signin__clock i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.signin__clock i.is-open { background: var(--pos); box-shadow: 0 0 0 3px var(--pos-soft); }
+.signin__clock small { font-size: 11px; color: var(--text-3); }
+
+/* --- main: the desk before the open, and the form -------------------------- */
+.signin__main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  align-items: center;
+  gap: clamp(32px, 7vw, 120px);
+  padding: 48px 0;
+}
+
+.signin__intro { --wake: 0.08; max-width: 560px; }
+.signin__eyebrow {
+  margin: 0 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.signin__intro h1 {
+  margin: 0;
+  font-size: clamp(40px, 5.2vw, 64px);
+  line-height: 1.02;
+  font-weight: 750;
+  letter-spacing: -0.045em;
+}
+.signin__intro h1 em { font-style: normal; color: var(--brand); }
+
+.signin__market { margin: 40px 0 0; }
+.signin__market-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.signin__market-head b { display: block; font-size: 11.5px; font-weight: 650; letter-spacing: 0.08em; }
+.signin__market-head small { font-size: 11.5px; color: var(--text-3); }
+.signin__price { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; color: var(--text-2); }
+
+.signin__candles { display: block; width: 100%; height: auto; overflow: visible; }
+.signin__grid { fill: none; stroke: var(--line); stroke-dasharray: 2 5; }
+.signin__last { fill: none; stroke: var(--brand-line); stroke-dasharray: 3 4; }
+.signin__times { fill: var(--text-3); font-size: 9px; font-family: var(--sans); }
+/* The candles wake with the form: faint at rest, full once it is filled in. */
+.signin__up,
+.signin__down {
+  opacity: calc(0.28 + 0.72 * var(--wake));
+  transition: opacity 0.45s ease;
+  stroke-width: 1.2;
+}
+.signin__up { stroke: var(--pos); fill: color-mix(in srgb, var(--pos) 55%, transparent); }
+.signin__down { stroke: var(--neg); fill: color-mix(in srgb, var(--neg) 50%, transparent); }
+.signin__intro.is-opening .signin__up,
+.signin__intro.is-opening .signin__down { animation: signin-wave 1.4s ease-in-out infinite; animation-delay: calc(var(--i) * 40ms); }
+@keyframes signin-wave { 50% { opacity: 0.45; } }
+.signin__market.is-jolted { animation: signin-jolt 0.42s cubic-bezier(.36, .07, .19, .97); }
+@keyframes signin-jolt { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+
+.signin__market figcaption { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 11.5px; color: var(--text-3); }
+.signin__market figcaption i { width: 5px; height: 5px; border-radius: 50%; background: var(--brand); }
+.signin__principle { display: flex; align-items: center; gap: 8px; margin: 26px 0 0; font-size: 12.5px; color: var(--text-2); }
+
+/* --- the card --------------------------------------------------------------- */
+.signin__card {
+  padding: 30px 30px 26px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow-2);
+}
+.signin__card-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
+.signin__paper { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); }
+.signin__paper i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.signin__card h2 { margin: 18px 0 22px; font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
+
+.signin__error {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--neg-soft);
+  color: var(--neg);
+  font-size: 13px;
+}
+.signin__field { display: grid; gap: 8px; margin-bottom: 18px; }
+.signin__field label { font-size: 13px; font-weight: 550; }
+.signin__field input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.signin__field input::placeholder { color: var(--text-3); }
+.signin__field input:hover { border-color: var(--line-hover); }
+.signin__field input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.signin__password { position: relative; }
+.signin__password input { padding-right: 46px; }
+.signin__reveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.signin__reveal:hover { color: var(--text); }
+
+.signin__submit {
+  width: 100%;
+  height: 48px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--brand);
+  color: var(--on-brand);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 18px -8px var(--brand);
+}
+.signin__submit:hover { background: var(--brand-hi); }
+.signin__submit:disabled { opacity: 0.6; cursor: progress; }
+.signin__hint { margin: 16px 0 0; text-align: center; font-size: 12px; color: var(--text-3); line-height: 1.5; }
+
+.signin__opening { display: grid; justify-items: center; gap: 14px; padding: 36px 0 30px; color: var(--text-2); }
+.signin__opening p { margin: 0; font-size: 13px; }
+
+/* The invitation: the card alone, centred. */
+.signin__main--one { grid-template-columns: minmax(0, 440px); justify-content: center; }
+.signin__title { margin: 18px 0 14px; font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
+.signin__note { margin: 0 0 18px; font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
+.signin__field small { font-size: 12px; color: var(--text-3); }
+
+/* --- foot ------------------------------------------------------------------- */
+.signin__foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 20px 0 max(26px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-3);
+}
+.signin__foot p { margin: 0; }
+.signin__foot a { color: var(--text-2); }
+
+/* --- narrow ----------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .signin__main { grid-template-columns: minmax(0, 1fr); gap: 36px; padding: 36px 0 40px; }
+  .signin__intro { max-width: none; }
+  .signin__market { display: none; }
+  .signin__principle { margin-top: 18px; }
+}
+@media (max-width: 520px) {
+  .signin { padding: 0 max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); }
+  .signin__top { padding-top: 20px; }
+  .signin__clock small { display: none; }
+  .signin__card { padding: 24px 20px 22px; border-radius: 16px; }
+  /* 16px, or iOS zooms the page when a field takes focus. */
+  .signin__field input { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signin__up,
+  .signin__down { transition: none; }
+  .signin__intro.is-opening .signin__up,
+  .signin__intro.is-opening .signin__down,
+  .signin__market.is-jolted { animation: none; }
+}

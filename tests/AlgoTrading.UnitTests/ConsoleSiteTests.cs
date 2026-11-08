@@ -21,6 +21,7 @@ public sealed class ConsoleSiteTests : IAsyncLifetime
     {
         Directory.CreateDirectory(Path.Combine(_root, "docs", "architecture"));
         await File.WriteAllTextAsync(Path.Combine(_root, "index.html"), "<!doctype html><title>console</title>");
+        await File.WriteAllTextAsync(Path.Combine(_root, "home.html"), "<!doctype html><title>home</title>");
         await File.WriteAllTextAsync(Path.Combine(_root, "ira.html"), "<!doctype html><title>Ira</title>");
         await File.WriteAllTextAsync(Path.Combine(_root, "docs", "index.html"), "<!doctype html><title>docs</title>");
         await File.WriteAllTextAsync(Path.Combine(_root, "docs", "architecture", "index.html"), "<!doctype html><title>architecture</title>");
@@ -29,7 +30,7 @@ public sealed class ConsoleSiteTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
         _app = builder.Build();
-        _app.UseDefaultFiles();
+        _app.UseConsoleDefaultFiles();
         _app.UseStaticFiles();
         _app.UseRouting();
         _app.MapConsoleFallbacks();
@@ -44,14 +45,36 @@ public sealed class ConsoleSiteTests : IAsyncLifetime
         Directory.Delete(_root, recursive: true);
     }
 
+    [Fact]
+    public async Task The_root_is_the_static_homepage_and_the_docs_keep_their_index()
+    {
+        using var root = await _client.GetAsync("/");
+        using var docs = await _client.GetAsync("/docs/");
+
+        Assert.Equal(HttpStatusCode.OK, root.StatusCode);
+        Assert.Equal("<!doctype html><title>home</title>", await root.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, docs.StatusCode);
+        Assert.Equal("<!doctype html><title>docs</title>", await docs.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task A_build_without_the_homepage_still_answers_the_root_with_the_app()
+    {
+        File.Delete(Path.Combine(_root, "home.html"));
+
+        using var root = await _client.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.OK, root.StatusCode);
+        Assert.Equal("<!doctype html><title>console</title>", await root.Content.ReadAsStringAsync());
+    }
+
     [Theory]
-    [InlineData("/")]
     [InlineData("/desk")]
     [InlineData("/portfolio")]
     [InlineData("/ai/assistant")]
     [InlineData("/today")]
     [InlineData("/admin/users")]
-    public async Task The_landing_page_and_every_console_route_are_the_app_with_a_200(string path)
+    public async Task Every_console_route_is_the_app_with_a_200(string path)
     {
         using var response = await _client.GetAsync(path);
 

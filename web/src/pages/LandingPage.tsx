@@ -1,20 +1,32 @@
 /**
- * Public homepage ("/").
- *
- * Two views of one story, chosen by the screen it is opened on (lib/sceneMode):
- * a phone gets landing/Mobile — composed for a tall touch screen, the engine on
- * top and the copy in a sheet under the thumb — and a tablet or a computer gets
- * landing/Desktop. They share their words, figures and screens
- * (landing/content), so they cannot disagree; turning a phone or resizing a
- * window swaps the view rather than stretching the wrong one.
+ * "/" inside the app. The homepage is static HTML that the API serves at "/"
+ * (home.html; see ConsoleSite.UseConsoleDefaultFiles), so a route of this app
+ * reaches "/" only by a client-side navigation (signing out, a link home) and
+ * hands over to the real page with a full load. If this document was itself
+ * served for "/" (a wwwroot built without home.html), loading "/" again would
+ * only serve it again: it offers the way in instead of looping.
  */
 
-import { usePhone } from '../lib/sceneMode'
-import { useForcedTheme } from '../lib/theme'
-import { LandingDesktop } from './landing/Desktop'
-import { LandingMobile } from './landing/Mobile'
+import { useEffect } from 'react'
+
+/** Read once, as the app boots: whether the server answered "/" with the app itself. */
+const BOOTED_AT_ROOT = typeof window !== 'undefined' && window.location.pathname === '/'
 
 export function LandingPage() {
-  useForcedTheme('dark')
-  return usePhone() ? <LandingMobile /> : <LandingDesktop />
+  const stuck = BOOTED_AT_ROOT && !import.meta.env.DEV
+  useEffect(() => {
+    // The dev server serves the app at "/", and the homepage at its own name.
+    if (!stuck) window.location.replace(import.meta.env.DEV ? '/home.html' : '/')
+  }, [stuck])
+  if (!stuck) return null
+  return (
+    <main className="page" style={{ maxWidth: 560, margin: '15vh auto', padding: 24 }}>
+      <h1>OpenFNO</h1>
+      <p>A self-hosted paper-trading desk for Indian F&amp;O.</p>
+      <p>
+        <a href="/login">Sign in</a> · <a href="/docs/">Read the docs</a> ·{' '}
+        <a href="https://github.com/helloupendra/algorithmic-trading-engine">Source on GitHub</a>
+      </p>
+    </main>
+  )
 }
