@@ -475,15 +475,18 @@ export function AiMemoryPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Memory</h1>
+          <p className="page__subtitle">
           What the agents read before every answer: your notes and corrections, and lessons you approved. Nothing an agent
           proposes is used until you approve it.
-        </p>
+          </p>
+        </div>
         <span className="sys-asof faint">
           refreshes every 30 s{memories.isError && data && <span className="warn"> · refresh failed: showing the last list</span>}
         </span>
-      </div>
+      </header>
 
       {data && !data.enabled && (
         <div className="alert alert--warn" role="status">

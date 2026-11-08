@@ -363,13 +363,16 @@ export function AiReportsPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Reports</h1>
+          <p className="page__subtitle">
           What the scheduled agents wrote. Each report is checked before it counts; one that fails its check is kept and marked
           invalid, and one no model answered is retried after 15 minutes, three times at most.
-        </p>
+          </p>
+        </div>
         <span className="sys-asof faint">refreshes every 30 s</span>
-      </div>
+      </header>
 
       <section className="ai-rstats" aria-label="The last 7 days">
         {stats.isPending ? (

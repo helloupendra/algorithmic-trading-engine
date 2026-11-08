@@ -734,12 +734,15 @@ export function AiAgentsPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Agents</h1>
+          <p className="page__subtitle">
           Every agent the desk has or plans: what it does, what it may read, what it may never do, and when it last ran.
           Only a built agent can be switched; a planned one is code still to write.
-        </p>
-      </div>
+          </p>
+        </div>
+      </header>
 
       <div className="ai-tools">
         <div className="seg" role="radiogroup" aria-label="Show">

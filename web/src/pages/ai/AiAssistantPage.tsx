@@ -647,8 +647,11 @@ export function AiAssistantPage() {
         })}
       </div>
 
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">{meta.lead}</p>
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Assistant</h1>
+          <p className="page__subtitle">{meta.lead}</p>
+        </div>
         {questions > 0 && (
           <span className="ai-assistant__conv">
             <span className="faint">
@@ -659,7 +662,7 @@ export function AiAssistantPage() {
             </button>
           </span>
         )}
-      </div>
+      </header>
 
       {keyMissing && (
         <div className="alert alert--warn" role="status">

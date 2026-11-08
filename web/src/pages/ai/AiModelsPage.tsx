@@ -287,12 +287,15 @@ export function AiModelsPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Models</h1>
+          <p className="page__subtitle">
           The models the desk can call, from the provider's catalog, the ones in use first. A test asks one tiny question and is
           logged in the Calls tab like any other call.
-        </p>
-      </div>
+          </p>
+        </div>
+      </header>
 
       <section className="ai-provider" aria-label="Provider">
         <div className="ai-provider__line">

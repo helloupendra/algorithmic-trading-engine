@@ -395,15 +395,18 @@ export function AiCallsPage() {
 
   return (
     <div className="page hp ai">
-      <div className="hp-bar">
-        <p className="hp-bar__lead muted">
+      <header className="page__header">
+        <div>
+          <h1 className="page__title">Calls</h1>
+          <p className="page__subtitle">
           Every call to a model: who asked, which model answered, how long it took and what it cost. Refusals are calls too. Open
           one for the prompt, each model tried, and the answer.
-        </p>
+          </p>
+        </div>
         <span className="sys-asof faint">
           refreshes every 10 s{calls.isError && calls.data && <span className="warn"> · refresh failed: showing the last list</span>}
         </span>
-      </div>
+      </header>
 
       {selectedId != null && (
         <Panel className="ai-call-panel">
