@@ -335,9 +335,12 @@ describe('deskLayout', () => {
   const spans = (rows: ReturnType<typeof deskLayout>) => rows.map((r) => r.reduce((a, s) => a + s.span, 0))
 
   it("leads with each phase's job for an admin", () => {
-    expect(keys(deskLayout('pre', admin))[0]).toEqual(['checkup', 'overnight', 'forecast'])
+    // The checkup leads the morning and follows the result in the evening, each on a row of its own: a
+    // long list of advice beside two short cards left a void under them (8 Nov 2026).
+    expect(keys(deskLayout('pre', admin))[0]).toEqual(['checkup'])
     expect(keys(deskLayout('live', admin))[0]).toEqual(['grid', 'pnl'])
-    expect(keys(deskLayout('post', admin))[1]).toEqual(['checkup', 'scores', 'timeline'])
+    expect(keys(deskLayout('post', admin))[1]).toEqual(['checkup'])
+    expect(keys(deskLayout('post', admin))[2]).toEqual(['scores', 'timeline', 'movers'])
   })
 
   it('keeps every row a full 12 columns', () => {
@@ -379,13 +382,13 @@ describe('deskLayout', () => {
 
   it('stacks a panel under another only when it may be shown', () => {
     const pre = deskLayout('pre', admin)
-    expect(pre[0][2]).toEqual({ key: 'forecast', span: 4, under: 'flows' })
-    expect(pre[2][1]).toEqual({ key: 'legs', span: 4, under: 'timeline' })
+    expect(pre[1][1]).toEqual({ key: 'forecast', span: 4, under: 'flows' })
+    expect(pre[2][2]).toEqual({ key: 'legs', span: 4, under: 'timeline' })
     const trader = deskLayout('pre', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'analysis'] }))
     expect(trader.flat().some((s) => s.under)).toBe(false)
     // After the close the week sits under the scoreboard for the admin, and the scoreboard under a
     // trader's open legs only with the analysis grant.
-    expect(deskLayout('post', admin)[1][1]).toEqual({ key: 'scores', span: 4, under: 'week' })
+    expect(deskLayout('post', admin)[2][0]).toEqual({ key: 'scores', span: 4, under: 'week' })
     expect(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['strategies'] }))[1][0]).toEqual({ key: 'legs', span: 12 })
     expect(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'analysis'] }))[1][0]).toEqual({ key: 'legs', span: 12, under: 'scores' })
   })
@@ -401,7 +404,7 @@ describe('deskLayout', () => {
       expect(deskLayout(phase, admin)[0]).toEqual([{ key: 'grid', span: 8, under: 'legs' }, { key: 'pnl', span: 4 }])
     }
     expect(keys(deskLayout('live', admin))).toEqual([['grid', 'pnl'], ['indices', 'timeline'], ['news', 'movers']])
-    expect(keys(deskLayout('post', admin))).toEqual([['grid', 'pnl'], ['checkup', 'scores', 'timeline'], ['indices', 'movers']])
+    expect(keys(deskLayout('post', admin))).toEqual([['grid', 'pnl'], ['checkup'], ['scores', 'timeline', 'movers'], ['indices']])
   })
 })
 
@@ -414,7 +417,7 @@ describe('midSpans', () => {
   })
 
   it('widens a half left alone before a wide panel, and one left at the end', () => {
-    // pre, admin: checkup 5 + overnight 3 + forecast 4, then news/week/plan, then indices 8 + legs 4
+    // a 5 + 3 + 4 row, then three thirds, then 8 + 4 (the pre-open admin sheet before 8 Nov 2026)
     expect(midSpans([5, 3, 4, 4, 4, 4, 8, 4])).toEqual([3, 3, 3, 3, 3, 3, 6, 6])
     // pre, trader: the third of three thirds is alone when the indices follow
     expect(midSpans([4, 4, 4, 8, 4, 4, 4, 4])).toEqual([3, 3, 6, 6, 3, 3, 3, 3])
