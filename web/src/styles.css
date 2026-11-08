@@ -1479,6 +1479,9 @@ a.pill:hover { border-color: var(--line-strong); }
    padding the Square-off button sat past the card's edge on a 1440px screen. */
 .run-card .table th,
 .run-card .table td { padding-left: 9px; padding-right: 9px; }
+/* The contract name may take two lines, as it does on Positions: a BANKNIFTY
+   leg with its expiry is the one cell that can give the row its width back. */
+.run-card .table td:first-child { white-space: normal; min-width: 132px; }
 
 /* Collapsible sub-sections (activity, runner output). */
 .disclosure__btn {
