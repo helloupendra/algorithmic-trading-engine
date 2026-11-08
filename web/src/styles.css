@@ -1362,7 +1362,8 @@ a.checklist__item:hover { background: var(--brand-soft); }
 
   /* Two tiles a row: one figure, a label and a line under it fit 170px, and
      four tiles no longer fill the first screen on their own. */
-  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
+  .stat-grid,
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
   .stat { padding: 11px 12px; }
   .stat__value { font-size: 18px; }
   .stat__sub { font-size: 11.5px; }
