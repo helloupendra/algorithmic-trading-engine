@@ -552,6 +552,15 @@ select.field__input { appearance: auto; }
      the full width of the page. */
   max-width: 78ch;
 }
+/* Pages that put the description straight in the header (Watchlist,
+   Connectors): it takes the line under the title, never the space beside it.
+   A flex item's max-width also caps its basis, so the measure is kept with
+   padding instead of max-width, or the paragraph would fit beside the title. */
+.page__header > .page__subtitle {
+  flex: 1 1 100%;
+  max-width: none;
+  padding-right: max(0px, calc(100% - 78ch));
+}
 
 .page--centered {
   min-height: 70vh;
