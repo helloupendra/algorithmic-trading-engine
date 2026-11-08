@@ -1,9 +1,9 @@
 /* Previews keep the six supplied capture ratios. */
 .sc-section h2 em{color:var(--violet);font-style:normal;font-weight:inherit}
-.sc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:27px 20px;align-items:start}
-.sc-card{min-width:0;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden}
-.sc-card>a{display:block}.sc-card:has(a:hover){border-color:#bfb6de}.sc-card:has(a:focus-visible){outline:3px solid #8f7df0;outline-offset:5px}.sc-card a:focus-visible{outline:none}
-.sc-slot{container-type:inline-size;display:flex;flex-direction:column;width:100%;overflow:hidden;background:#fafbfe;border-bottom:1px solid var(--line)}
+.sc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:27px 20px;align-items:stretch}
+.sc-card{min-width:0;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden;display:flex;flex-direction:column}
+.sc-card>a{display:flex;flex-direction:column;flex:1}.sc-card:has(a:hover){border-color:#bfb6de}.sc-card:has(a:focus-visible){outline:3px solid #8f7df0;outline-offset:5px}.sc-card a:focus-visible{outline:none}
+.sc-slot{container-type:inline-size;display:flex;flex-direction:column;flex:1;width:100%;overflow:hidden;background:#fafbfe;border-bottom:1px solid var(--line)}
 .sc-bar,.sc-synthetic{flex-shrink:0;font-size:8px;color:#6b7180;padding:7px 12px}
 .sc-bar{display:flex;align-items:center;justify-content:space-between;gap:6px;border-bottom:1px solid #e7e8f0}
 .sc-label{white-space:nowrap;color:#71618f;background:#eeebf7;border:1px solid #e3ddef;border-radius:3px;padding:2px 4px}

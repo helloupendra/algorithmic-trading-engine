@@ -10,8 +10,9 @@
  * sign-in, which brings the form back with the server's message and returns
  * focus to the first field.
  *
- * The clock top-right is the visitor's own, read in IST, with the NSE cash
- * timings ("holidays aside", because this page does not load the calendar).
+ * Top right, the market's state from the API's exchange calendar (open to
+ * anyone): open until when, or closed (for which holiday) until when. Until
+ * it answers, the NSE cash hours, which are true at any time.
  * Username and password only: accounts are issued by an administrator.
  */
 
@@ -19,7 +20,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
-import { useMarketClock } from '../lib/marketClock'
+import { useMarketSession } from '../lib/queries'
+import { CASH_HOURS, istNow, marketLine } from '../lib/marketLine'
 import { homeFor, returnTarget } from '../lib/modules'
 import { IconLogo } from '../components/icons'
 import { CandleBars } from '../components/CandleLoader'
@@ -63,7 +65,8 @@ export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const clock = useMarketClock()
+  const session = useMarketSession('NSE', 'FO')
+  const market = session.data ? marketLine(session.data) : null
 
   const [userNameOrEmail, setUserNameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -133,12 +136,11 @@ export function LoginPage() {
           <IconLogo className="signin__mark" />
           <span>OpenFNO</span>
         </a>
-        <p className="signin__clock" title="NSE cash timings, holidays aside">
+        <p className="signin__clock" title={market ? `Time in India now: ${istNow()}` : 'NSE cash market hours, Monday to Friday'}>
           <span>
-            <i className={clock.open ? 'is-open' : ''} aria-hidden="true" />
-            NSE {clock.open ? 'open' : 'closed'} · {clock.time} IST
+            <i className={market?.open ? 'is-open' : ''} aria-hidden="true" />
+            {market?.text ?? CASH_HOURS}
           </span>
-          <small>cash timings, holidays aside</small>
         </p>
       </header>
 

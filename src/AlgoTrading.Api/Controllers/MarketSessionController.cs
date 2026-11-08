@@ -1,5 +1,6 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Api.Controllers;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 
@@ -19,6 +20,12 @@ public class MarketSessionController : ControllerBase
         _marketSessionService = marketSessionService;
     }
 
+    /// <summary>
+    /// Whether an exchange segment is open now, why not (a weekend, a holiday) and when it next opens. Anonymous: the
+    /// public homepage and the sign-in page show the Indian market's state before anyone has signed in. The answer
+    /// is the exchange calendar, the same for every caller, with nothing about any user or account in it.
+    /// </summary>
+    [AllowAnonymous]
     [HttpGet("check")]
     public IActionResult Check(
         [FromQuery] string exchange = "NSE",

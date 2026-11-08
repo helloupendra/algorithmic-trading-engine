@@ -21,8 +21,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://openfno.com/brand/og-image.png">
   <meta name="twitter:image:alt" content="OpenFNO — Not a black box. Synthetic · not a quote.">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=sprout">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=sprout">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/src/home/home.css">
@@ -68,7 +68,7 @@
       <a href="#data">The engine</a> <a href="#screens">Screens</a> <a href="#proof">Proof</a> <a href="/docs/">Docs</a>
     </nav>
     <div class="header-actions">
-      <div class="header-clock" data-market-status="closed" title="NSE cash timings, holidays aside"> <i class="dot" aria-hidden="true"> </i> <span data-market-clock>NSE closed · 18:02 IST</span> </div>
+      <div class="header-clock" data-market-status="unknown" title="NSE cash market hours, Monday to Friday"> <i class="dot" aria-hidden="true"> </i> <span data-market-clock>NSE hours · 09:15–15:30 IST</span> </div>
       <a class="github-link" href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer" aria-label="Read the source on GitHub"> <svg class="icon" width="18" height="18" aria-hidden="true"> <use href="#i-github"/> </svg> </a>
       <a class="button button-primary" href="/login">Open console</a>
     </div>
@@ -222,7 +222,7 @@
 <div class="section-intro"> <div> <p class="eyebrow">Screens</p> <h2 id="screens-title">Six screens <em>from the console.</em> </h2> </div> </div>
 <div class="sc-grid">
 <article class="sc-card"> <a href="/markets" aria-label="Open Market pulse in the console">
-<div class="sc-slot sc-market" style="aspect-ratio:2200/924" data-capture-size="2200x924">
+<div class="sc-slot sc-market" data-capture-size="2200x924">
 <div class="sc-bar"> <span>Markets · Dhan · 13:45 IST</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <table class="sc-table"> <thead> <tr> <th>Instrument</th> <th>Last price</th> <th>Change</th> <th>Day range</th> <th>Age</th> </tr> </thead> <tbody>
@@ -230,13 +230,18 @@
 <tr> <td>BANK NIFTY</td> <td>56,388.90</td> <td class="sc-down">−0.22%</td> <td> <i class="sc-range" style="--point:37%"> </i> </td> <td>1 s</td> </tr>
 <tr> <td>CRUDE OIL</td> <td>7,942.00</td> <td class="sc-down">−0.86%</td> <td> <i class="sc-range" style="--point:22%"> </i> </td> <td>1 s</td> </tr>
 <tr> <td>GOLD</td> <td>1,26,410.00</td> <td class="sc-up">+0.34%</td> <td> <i class="sc-range" style="--point:73%"> </i> </td> <td>1 s</td> </tr>
+<tr> <td>SENSEX</td> <td>81,904.19</td> <td class="sc-up">+0.23%</td> <td> <i class="sc-range" style="--point:58%"> </i> </td> <td>1 s</td> </tr>
+<tr> <td>INDIA VIX</td> <td>13.42</td> <td class="sc-down">−4.49%</td> <td> <i class="sc-range" style="--point:12%"> </i> </td> <td>2 s</td> </tr>
+<tr> <td>SILVER</td> <td>1,52,870.00</td> <td class="sc-up">+0.41%</td> <td> <i class="sc-range" style="--point:69%"> </i> </td> <td>1 s</td> </tr>
+<tr> <td>RELIANCE</td> <td>1,486.30</td> <td class="sc-up">+0.62%</td> <td> <i class="sc-range" style="--point:81%"> </i> </td> <td>1 s</td> </tr>
+<tr> <td>HDFC BANK</td> <td>1,002.15</td> <td class="sc-down">−0.18%</td> <td> <i class="sc-range" style="--point:41%"> </i> </td> <td>3 s</td> </tr>
 </tbody> </table>
 </div> <div class="sc-synthetic">Synthetic · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>Market pulse <span aria-hidden="true">↗</span> </h3> <p>Indices, the nearest MCX contracts and the large caps, each with its day range and how old its last price is. A stale price says so.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/markets/chain" aria-label="Open Option chain in the console">
-<div class="sc-slot sc-chain" style="aspect-ratio:2200/1291" data-capture-size="2200x1291">
+<div class="sc-slot sc-chain" data-capture-size="2200x1291">
 <div class="sc-bar"> <span>Markets / Option chain</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <div class="sc-head"> <strong>NIFTY · 09 Nov 2026</strong> <span>Dhan · 13:45 IST</span> </div>
@@ -253,7 +258,7 @@
 <div class="sc-copy"> <h3>Option chain <span aria-hidden="true">↗</span> </h3> <p>Calls left, puts right, strike in the middle; open interest and its change, IV, and what the pair of them means. Stamped with when it was captured and by which vendor.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/data" aria-label="Open History on hand in the console">
-<div class="sc-slot sc-history sc-expanded" style="aspect-ratio:2100/1112" data-capture-size="2100x1112">
+<div class="sc-slot sc-history sc-expanded" data-capture-size="2100x1112">
 <div class="sc-bar"> <span>Data / Inventory</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <div class="sc-coverage"> <span>Index candles</span> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <span>Option premiums</span> <i> </i> <i> </i> <i class="sc-sparse"> </i> <i> </i> <i> </i> <i class="sc-sparse"> </i> <i> </i> <i class="sc-missing"> </i> </div>
@@ -271,7 +276,7 @@
 <div class="sc-copy"> <h3>History on hand <span aria-hidden="true">↗</span> </h3> <p>What is actually on disk — index, resolution, first and last session, bars, and whether they came from a backfill or the live feed — before you are asked to pick a range.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/research/backtests/new" aria-label="Open Setup editor in the console">
-<div class="sc-slot sc-setup sc-expanded" style="aspect-ratio:2000/924" data-capture-size="2000x924">
+<div class="sc-slot sc-setup sc-expanded" data-capture-size="2000x924">
 <div class="sc-bar"> <span>Research / New experiment · paper</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <div class="sc-setup-range"> <span>NIFTY · 1-minute premiums</span> <span>01 Jan 2025 → 05 Nov 2026</span> </div>
@@ -285,7 +290,7 @@
 <div class="sc-copy"> <h3>Setup editor <span aria-hidden="true">↗</span> </h3> <p>A long setup and a short setup written as conditions, under the history the replay will read: each resolution's stored sessions, the range, the lots and the square-off time.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/markets/factors" aria-label="Open Market factors in the console">
-<div class="sc-slot sc-factors sc-expanded" style="aspect-ratio:2200/1222" data-capture-size="2200x1222">
+<div class="sc-slot sc-factors sc-expanded" data-capture-size="2200x1222">
 <div class="sc-bar"> <span>Flows &amp; events · 05 Nov close</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <div class="sc-metrics"> <div> <span>FII cash</span> <strong class="sc-down">−₹1,842Cr</strong> </div> <div> <span>DII cash</span> <strong class="sc-up">+₹2,116Cr</strong> </div> <div> <span>Today's flows</span> <strong class="sc-unknown">Not known yet</strong> </div> </div>
@@ -307,7 +312,7 @@
 <div class="sc-copy"> <h3>Market factors <span aria-hidden="true">↗</span> </h3> <p>Walls, max pain, PCR, ATM IV, participant open interest and flows — each stamped with how fresh it is and with what our own testing found, including "not tested yet".</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/research/backtests/runs" aria-label="Open A finished run in the console">
-<div class="sc-slot sc-run" style="aspect-ratio:2100/1351" data-capture-size="2100x1351">
+<div class="sc-slot sc-run" data-capture-size="2100x1351">
 <div class="sc-bar"> <span>Research / Backtest result</span> <span class="sc-label">Illustration</span> </div>
 <div class="sc-mini" aria-hidden="true">
 <div class="sc-head"> <strong>Strategy name hidden</strong> <span>NIFTY · BT-024</span> </div>
@@ -360,6 +365,6 @@ $ ./scripts/load-data.sh</code></pre> </figure> </div>
       <div class="home-cta source-cta"> <div> <h2>Read <span>every line.</span> </h2> <p>A .NET 10 API, a Python engine, a React console, TimescaleDB and Redis — on hardware you control. No data leaves, no strategy is uploaded, and the whole engine is on GitHub.</p> <p class="source-licence">Source-available under PolyForm Noncommercial 1.0.0.</p> </div> <div class="source-cta-actions"> <a class="button button-secondary" href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer"> <svg class="icon" aria-hidden="true"> <use href="#i-github"/> </svg>Read the source</a> <a class="button button-primary" href="/login">Open the console →</a> </div> </div>
     </section>
   </main>
-  <footer class="public-footer public-container"> <div> <a class="brand" href="/" aria-label="OpenFNO home"> <svg class="brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="var(--leaf)" d="M16 11.4C11.2 11.4 8.4 8.6 8.4 4.6C12.8 4.6 16 7.2 16 11.4Z"/><path fill="var(--leaf)" d="M16 9.4C16 5.4 18.8 2.4 23.6 2.4C23.6 6.6 20.6 9.4 16 9.4Z"/><rect fill="var(--leaf)" x="14.7" y="9" width="2.6" height="7" rx="1.3"/><rect fill="var(--candle)" x="10.8" y="15" width="10.4" height="11" rx="2.3"/><rect fill="var(--candle)" x="14.7" y="25" width="2.6" height="5" rx="1.3"/></svg> <span class="brand-name">OpenFNO</span> </a> <p class="footer-note">Built by Upendra Singh Chauhan</p> </div> <div class="footer-right"> <nav class="footer-links" aria-label="Footer"> <a href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer">GitHub</a> <a href="https://www.linkedin.com/in/upendrasingh12/" target="_blank" rel="noopener noreferrer">LinkedIn</a> <a href="/docs/">Docs</a> <a href="https://github.com/helloupendra/algorithmic-trading-engine/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence</a> <a href="/login">Console</a> </nav> <p class="footer-risk">Trading involves financial risk. OpenFNO executes on paper against live ticks; validate every strategy before you trust it with money.</p> </div> </footer>
+  <footer class="public-footer public-container"> <div> <a class="brand" href="/" aria-label="OpenFNO home"> <svg class="brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="var(--leaf)" d="M16 11.4C11.2 11.4 8.4 8.6 8.4 4.6C12.8 4.6 16 7.2 16 11.4Z"/><path fill="var(--leaf)" d="M16 9.4C16 5.4 18.8 2.4 23.6 2.4C23.6 6.6 20.6 9.4 16 9.4Z"/><rect fill="var(--leaf)" x="14.7" y="9" width="2.6" height="7" rx="1.3"/><rect fill="var(--candle)" x="10.8" y="15" width="10.4" height="11" rx="2.3"/><rect fill="var(--candle)" x="14.7" y="25" width="2.6" height="5" rx="1.3"/></svg> <span class="brand-name">OpenFNO</span> </a> <p class="footer-note">Built by <a href="https://www.linkedin.com/in/upendrasingh12/" target="_blank" rel="noopener noreferrer">Upendra Singh Chauhan</a></p> </div> <div class="footer-right"> <nav class="footer-links" aria-label="Footer"> <a href="https://github.com/helloupendra/algorithmic-trading-engine" target="_blank" rel="noopener noreferrer">GitHub</a> <a href="https://www.linkedin.com/in/upendrasingh12/" target="_blank" rel="noopener noreferrer">LinkedIn</a> <a href="/docs/">Docs</a> <a href="https://github.com/helloupendra/algorithmic-trading-engine/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence</a> <a href="/login">Console</a> </nav> <p class="footer-risk">Trading involves financial risk. OpenFNO executes on paper against live ticks; validate every strategy before you trust it with money.</p> </div> </footer>
 </body>
 </html>
