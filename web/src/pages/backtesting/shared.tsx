@@ -13,7 +13,7 @@ import { compareHref, MAX_COMPARE, MIN_COMPARE } from '../../lib/backtestCompare
 import { formatLots } from '../../lib/format'
 import { resolutionLabel } from '../../lib/symbols'
 import type { BacktestStatus } from '../../lib/types'
-import { formatDay } from '../strategies/shared'
+import { formatDayWithYear } from './readings'
 
 /* ------------------------------------------------------------- IST dates */
 
@@ -49,9 +49,9 @@ export function countWeekdays(from: string, to: string): number {
   return n
 }
 
-/** "19 Aug → 3 Sep" for yyyy-MM-dd or ISO bounds. */
+/** "19 Aug 2025 → 03 Sept 2026": full years, with ISO instants resolved to IST days. */
 export function formatDayRange(from: string | null | undefined, to: string | null | undefined): string {
-  return `${formatDay(from)} → ${formatDay(to)}`
+  return `${formatDayWithYear(from)} → ${formatDayWithYear(to)}`
 }
 
 /* -------------------------------------------------------- compare picking */
@@ -146,7 +146,7 @@ export function BacktestStatusBadge({
   }
 }
 
-/** "BANKNIFTY · 5m · 19 Aug → 3 Sep · 2 lots × 30 = 60". */
+/** "BANKNIFTY · 5m · 19 Aug 2025 → 03 Sept 2026 · 2 lots × 30 = 60". */
 export function runSpecLabel(run: {
   underlying: string
   resolution: string
