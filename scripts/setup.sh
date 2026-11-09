@@ -96,7 +96,7 @@ fi
 step "2/7  Preparing .env"
 # ---------------------------------------------------------------------------
 if [ -f .env ]; then
-  ok ".env already exists (leaving it untouched)"
+  ok "using the existing .env"
 else
   cp .env.example .env
   ok "created .env from .env.example"
@@ -126,6 +126,9 @@ fi
 # ---------------------------------------------------------------------------
 step "3/7  Starting infrastructure (PostgreSQL/TimescaleDB, Redis, Prometheus, Grafana)"
 # ---------------------------------------------------------------------------
+# Prometheus and the API must receive the same generated scrape credential
+# before the container is created. The later settings step is idempotent.
+"$PY" scripts/_gen_local_settings.py --quiet
 $COMPOSE up -d
 ok "containers requested"
 

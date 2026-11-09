@@ -449,6 +449,14 @@ builder.Services
             // accepted for an ordinary API call.
             OnMessageReceived = context =>
             {
+                // Metrics use their own scrape credential; never try to parse
+                // it as a console JWT or let a console session open metrics.
+                if (context.Request.Path.StartsWithSegments(MetricsAuthentication.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    context.NoResult();
+                    return Task.CompletedTask;
+                }
+
                 // A phone token (Bearer ira_…) is not a JWT and opens only POST api/Ira/ask, through its own scheme:
                 // left alone here, it is no credential on any other endpoint, and is never validated or logged as a JWT.
                 if (IraPhoneAuthentication.CarriesPhoneToken(context.Request))
@@ -500,12 +508,13 @@ builder.Services
         };
     })
     // The phone token's scheme, consulted only by the IraPhone policy on POST api/Ira/ask.
-    .AddIraPhoneTokens();
+    .AddIraPhoneTokens()
+    .AddMetricsScraping(builder.Configuration);
 
 // Deny by default. Any endpoint without explicit authorization metadata requires a
 // valid token, so a newly added controller is protected the moment it is written
 // rather than the moment someone remembers to add [Authorize]. Public endpoints
-// (login, register, broker OAuth callback, metrics) opt out with [AllowAnonymous].
+// (login, register, broker OAuth callback) opt out with [AllowAnonymous].
 // Behind the Cloudflare tunnel every request arrives from localhost; the real
 // client is in X-Forwarded-For, which cloudflared sets. Without this a per-IP
 // limit below would count the whole internet as one caller, and the audit log
@@ -716,9 +725,9 @@ app.UseMiddleware<AlgoTrading.Api.Services.ActivityLogMiddleware>();
 
 app.MapControllers();
 
-// Prometheus scrapes this without a bearer token, so it opts out of the fallback
-// policy. Keep the port off the public internet.
-app.MapMetrics().AllowAnonymous();
+// Only the dedicated scraper credential opens metrics, even through the public
+// tunnel or from localhost. It grants no access to the rest of the API.
+app.MapScrapeEndpoint();
 
 // SPA fallback: any non-API route serves the React app's index.html so
 // client-side routing works on hard refresh / deep links; /ira serves the

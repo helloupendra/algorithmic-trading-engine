@@ -65,10 +65,15 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: algotrading_prometheus
+    environment:
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
+    entrypoint: ["/bin/sh", "/etc/prometheus/start-prometheus.sh"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/start-prometheus.sh:/etc/prometheus/start-prometheus.sh:ro
       - prometheus_data:/prometheus
     extra_hosts:
       # Lets Prometheus scrape the .NET API/workers running natively on the host.

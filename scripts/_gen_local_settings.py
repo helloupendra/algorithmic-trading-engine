@@ -2,6 +2,9 @@
 """
 Generate the git-ignored `appsettings.Local.json` files from the repo-root `.env`.
 
+An empty/missing metrics scrape token is generated once and persisted in .env,
+so the API and Prometheus use the same credential on later starts and deploys.
+
 Shared by scripts/setup.sh and scripts/setup.ps1 so the mapping from .env keys
 to .NET configuration keys is defined exactly once, and so JSON/connection-string
 escaping is handled correctly on every platform.
@@ -12,7 +15,10 @@ Usage:  python3 scripts/_gen_local_settings.py [--quiet]
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +70,40 @@ def npgsql_value(value: str) -> str:
     if not needs_quoting:
         return value
     return '"' + value.replace('"', '""') + '"'
+
+
+def ensure_metrics_token(path: Path, env: dict[str, str]) -> None:
+    """Provision one stable scrape credential without changing other .env keys."""
+    token = env.get("METRICS_SCRAPE_TOKEN", "")
+    if token.strip():
+        if len(token) < 32 or any(c.isspace() for c in token):
+            raise ValueError("METRICS_SCRAPE_TOKEN must contain at least 32 characters and no whitespace.")
+        return
+
+    token = "metrics_" + secrets.token_urlsafe(32)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    replacement = f"METRICS_SCRAPE_TOKEN={token}\n"
+    found = False
+    for i, line in enumerate(lines):
+        if line.partition("=")[0].strip() == "METRICS_SCRAPE_TOKEN":
+            lines[i] = replacement
+            found = True
+    if not found:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(replacement)
+
+    # Create with owner-only permissions before writing any existing secrets.
+    # Replacement is atomic, so an interrupted generator cannot truncate .env.
+    fd, temporary = tempfile.mkstemp(prefix=".env.metrics-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as output:
+            output.write("".join(lines))
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    env["METRICS_SCRAPE_TOKEN"] = token
 
 
 def build_connection_string(env: dict[str, str]) -> str:
@@ -169,6 +209,7 @@ def build_api_settings(env: dict[str, str]) -> dict:
     return {
         "//": BANNER,
         "ConnectionStrings": {"TradingDb": connection_string},
+        "Metrics": only_set({"ScrapeToken": env.get("METRICS_SCRAPE_TOKEN", "")}),
         "Jwt": {
             "Issuer": env.get("JWT_ISSUER", "AlgoTrading.Api"),
             "Audience": env.get("JWT_AUDIENCE", "AlgoTrading.App"),
@@ -320,6 +361,7 @@ def main() -> int:
         return 1
 
     env = read_env(ENV_FILE)
+    ensure_metrics_token(ENV_FILE, env)
     connection_string = build_connection_string(env)
     api_settings = build_api_settings(env)
 

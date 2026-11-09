@@ -21,6 +21,9 @@ public static class AuthorizationPolicies
     /// </summary>
     public const string IraPhone = "IraPhone";
 
+    /// <summary>The monitoring scraper's credential; never a console JWT or a local-address exemption.</summary>
+    public const string MetricsScrape = "MetricsScrape";
+
     /// <summary>
     /// The platform's rules: every endpoint needs a signed-in caller unless it
     /// opts out with [AllowAnonymous], and <see cref="AdminOnly"/> needs the
@@ -37,7 +40,11 @@ public static class AuthorizationPolicies
             .AddPolicy(IraPhone, policy => policy
                 .AddAuthenticationSchemes(IraPhoneAuthentication.Scheme)
                 .RequireAuthenticatedUser()
-                .RequireClaim(IraPhoneAuthentication.TokenIdClaim));
+                .RequireClaim(IraPhoneAuthentication.TokenIdClaim))
+            .AddPolicy(MetricsScrape, policy => policy
+                .AddAuthenticationSchemes(MetricsAuthentication.Scheme)
+                .RequireAuthenticatedUser()
+                .RequireClaim(MetricsAuthentication.ScrapeClaim, "true"));
 }
 
 /// <summary>

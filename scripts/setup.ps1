@@ -107,7 +107,7 @@ if ($missing.Count -gt 0) {
 Write-Step '2/7  Preparing .env'
 # ---------------------------------------------------------------------------
 if (Test-Path .env) {
-    Write-Ok '.env already exists (leaving it untouched)'
+    Write-Ok 'using the existing .env'
 } else {
     Copy-Item .env.example .env
     Write-Ok 'created .env from .env.example'
@@ -135,6 +135,9 @@ if (Test-Path .env) {
 # ---------------------------------------------------------------------------
 Write-Step '3/7  Starting infrastructure (PostgreSQL/TimescaleDB, Redis, Prometheus, Grafana)'
 # ---------------------------------------------------------------------------
+# Generate the shared scrape credential before creating Prometheus.
+& $python scripts/_gen_local_settings.py --quiet
+if ($LASTEXITCODE -ne 0) { Stop-WithError 'Failed to generate appsettings.Local.json' }
 & $compose[0] @($compose[1..($compose.Count - 1)] + @('up', '-d'))
 if ($LASTEXITCODE -ne 0) { Stop-WithError 'docker compose up failed.' }
 Write-Ok 'containers requested'

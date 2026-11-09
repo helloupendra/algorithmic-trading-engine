@@ -191,11 +191,49 @@ Prometheus wired up as a datasource and the AlgoTrading dashboard preloaded.
 
 - Grafana: <http://localhost:3000> — credentials from `.env`
 - Prometheus: <http://localhost:9090>
-- Raw API metrics: <http://localhost:5025/metrics>
+- Raw API metrics: <http://localhost:5025/metrics> — requires the dedicated scrape credential
 
 Prometheus scrapes `host.docker.internal:5025` (the .NET API) and
 `host.docker.internal:8000` (the Python engine), so the natively-run processes
 are visible from inside the container network.
+
+The API's `/metrics` endpoint requires `Authorization: Bearer <scrape token>`.
+Anonymous requests return 401, including through the public tunnel and from
+localhost. Console JWTs do not open metrics, and the scrape credential cannot
+open trading or account APIs. An unconfigured token leaves metrics inaccessible.
+
+`scripts/_gen_local_settings.py` creates `METRICS_SCRAPE_TOKEN` in the private
+repo-root `.env` when it is missing/empty, preserving the token on subsequent
+runs. It writes the same value to the API's `Metrics:ScrapeToken` setting. Both
+setup scripts run this before starting containers. The Prometheus entrypoint
+writes the credential to an owner-readable file inside the container; the
+scrape configuration reads that file. No real token belongs in a tracked file.
+
+**Upgrading an existing installation:** coordinate the API deployment with the
+Prometheus configuration change. From the updated checkout, run:
+
+```sh
+python3 scripts/_gen_local_settings.py --quiet
+docker compose up -d --no-deps prometheus
+```
+
+Then deploy/restart the API through the normal desk deployment procedure. Only
+the monitoring container needs recreation; these commands do not restart the
+database, Redis, or trading runners. The desk regenerates API settings during
+deploy, but normally defers container changes, so do not omit the explicit
+Prometheus step for this upgrade. Until both sides are updated, scraping may
+report 401 or a missing credential file; access remains denied.
+
+For a separately managed scraper, configure its bearer credentials file with
+the same private token. Keep scrapes on the internal network, or use verified
+HTTPS when they cross a network boundary. Never put tokens in query strings.
+To rotate the token, set a new random value of at least 32 non-whitespace
+characters in `.env`, regenerate settings, and recreate Prometheus. The API
+reloads the generated setting; the previous credential stops working.
+
+Verify that the `algotrading_csharp_api` target is **UP** in Prometheus, and that
+an anonymous request to the public `/metrics` URL returns 401 without metric
+content. An ordinary browser visit to the local metrics URL also returns 401.
 
 ---
 

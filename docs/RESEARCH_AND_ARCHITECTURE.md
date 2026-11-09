@@ -496,6 +496,11 @@ Both runtimes export Prometheus metrics; Grafana consumes them through provision
 
 **.NET services** expose the standard `prometheus-net` surface — request rates, durations, GC and thread-pool behaviour — from the API host.
 
+The API metrics endpoint requires a dedicated bearer scrape credential, separate
+from console JWTs. Setup provisions `METRICS_SCRAPE_TOKEN` for both the API and
+the Prometheus container. Anonymous/local/proxied requests cannot bypass it;
+see [the monitoring setup and upgrade steps](02_LOCAL_DEPLOYMENT_GUIDE.md#phase-3--observability).
+
 `algotrading_redis_lag_seconds` is the metric that matters most. In an event-driven pipeline, rising consumer lag is the earliest observable symptom of nearly every failure mode: a stalled consumer, a slow database, a network partition, or a volatility spike exceeding processing capacity. It is the first panel on the dashboard for that reason.
 
 ---
