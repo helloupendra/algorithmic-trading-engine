@@ -337,7 +337,8 @@ public sealed class IraPhoneTests
     {
         Seed();
         var ai = Build(Settings(), NewDb(_db));
-        var slow = Assert.IsType<SseScript>(Answer("Done thinking.")) with { Delay = TimeSpan.FromMilliseconds(400) };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slow = Assert.IsType<SseScript>(Answer("Done thinking.")) with { Ready = release.Task };
         ai.Provider.On(Judge1, slow);
         await using var host = await PhoneHost.StartAsync(ai, _db, _time);
         string secret = await host.TokenAsync();
@@ -346,15 +347,23 @@ public sealed class IraPhoneTests
         IraPhoneResponse.KeepAliveEvery = TimeSpan.FromMilliseconds(40);
         try
         {
-            var answered = await host.SendAsync(HttpMethod.Post, "/api/Ira/ask", secret, new { text = "Think hard." });
-
-            Assert.Equal(HttpStatusCode.OK, answered.Status);
-            Assert.Equal("application/json", answered.ContentType);
-            Assert.StartsWith("  ", answered.Body);
-            Assert.Equal("Done thinking.", JsonNode.Parse(answered.Body)!["spoken"]!.GetValue<string>());
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var answered = await host.OpenAsync("/api/Ira/ask", secret, new { text = "Think hard." }, deadline.Token);
+            Assert.Equal(HttpStatusCode.OK, answered.StatusCode);
+            Assert.Equal("application/json", answered.Content.Headers.ContentType?.MediaType);
+            await using var stream = await answered.Content.ReadAsStreamAsync(deadline.Token);
+            var spaces = new byte[2];
+            await stream.ReadExactlyAsync(spaces, deadline.Token);
+            Assert.Equal("  ", Encoding.UTF8.GetString(spaces));
+            // The provider cannot finish until the client has received the keep-alives.
+            release.TrySetResult();
+            using var reader = new StreamReader(stream);
+            var body = await reader.ReadToEndAsync(deadline.Token);
+            Assert.Equal("Done thinking.", JsonNode.Parse(body)!["spoken"]!.GetValue<string>());
         }
         finally
         {
+            release.TrySetResult();
             IraPhoneResponse.KeepAliveEvery = before;
         }
     }
@@ -512,6 +521,14 @@ public sealed class IraPhoneTests
             var made = await SendAsync(HttpMethod.Post, "/api/Ira/phones", Jwt(Admin, "upendra", UserRoles.Admin), new { label = "iPhone" });
             Assert.Equal(HttpStatusCode.OK, made.Status);
             return JsonNode.Parse(made.Body)!["token"]!.GetValue<string>();
+        }
+
+        public async Task<HttpResponseMessage> OpenAsync(string path, string bearer, object body, CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+            request.Content = JsonContent.Create(body);
+            return await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
 
         public async Task<(HttpStatusCode Status, string Body, HttpResponseHeaders Headers, string? ContentType)> SendAsync(

@@ -28,15 +28,23 @@ public sealed class MigrationHistoryTests
             await db.Database.MigrateAsync();
             Assert.Empty(await db.Database.GetPendingMigrationsAsync());
             db.AppUsers.Add(new() { Id = 7, UserName = "rollback-sentinel", Email = "sentinel@example.invalid" });
-            await db.SaveChangesAsync();
-            var migrations = db.Database.GetMigrations().ToArray();
-            Assert.EndsWith("ManualOrderReceipts", migrations[^1]);
-            // Only an empty receipt table is rolled back. Production receipts must be retained on rollback.
-            await db.GetService<IMigrator>().MigrateAsync(migrations[^2]);
-            Assert.Equal("rollback-sentinel", (await db.AppUsers.SingleAsync()).UserName);
-            await db.Database.MigrateAsync();
+            db.MarketSpecialSessions.Add(new() { Exchange = "NSE", Date = new(2026, 11, 8), Name = "Muhurat", OpenIst = new(14, 20), CloseIst = new(15, 40), CashCloseIst = new(15, 30) });
             db.ManualOrderReceipts.Add(new ManualOrderReceipt { UserId = 7, ClientOrderId = Guid.NewGuid(), RequestHash = "migration-probe", FillJson = "{}", CreatedUtc = DateTime.UtcNow });
             await db.SaveChangesAsync();
+            var migrations = db.Database.GetMigrations().ToArray();
+            Assert.EndsWith("SpecialSessionCashClose", migrations[^1]);
+            await db.GetService<IMigrator>().MigrateAsync(migrations[^2]);
+            db.ChangeTracker.Clear();
+            Assert.Equal("rollback-sentinel", (await db.AppUsers.SingleAsync()).UserName);
+            Assert.Single(await db.ManualOrderReceipts.ToListAsync());
+            Assert.Equal(1, await db.Database.SqlQueryRaw<int>("""SELECT count(*)::int AS "Value" FROM market_special_sessions WHERE "Exchange" = 'NSE' AND "OpenIst" = '14:20' AND "CloseIst" = '15:40'""").SingleAsync());
+            await db.Database.MigrateAsync();
+            var session = await db.MarketSpecialSessions.SingleAsync();
+            Assert.Null(session.CashCloseIst);
+            session.CashCloseIst = new(15, 30);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+            Assert.Equal(new TimeOnly(15, 30), (await db.MarketSpecialSessions.SingleAsync()).CashCloseIst);
             Assert.Single(await db.ManualOrderReceipts.ToListAsync());
         }
         finally { await Execute($"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"); }

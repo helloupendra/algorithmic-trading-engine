@@ -26,7 +26,9 @@
  */
 
 import { useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
+import { accessFor, allows } from '../../lib/modules'
 import { ApiError } from '../../lib/api'
 import { beginOrder, finishOrder, pendingOrder, type ManualOrderIntent } from '../../lib/manualOrderIntent'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
@@ -138,6 +140,12 @@ function InstrumentRules({ instrument }: { instrument: ManualInstrument }) {
 }
 
 export function ManualOrderPage() {
+  const { user } = useAuth()
+  if (!allows(accessFor(user), 'strategies')) return <Navigate to="/forbidden" replace />
+  return <ManualOrderTicket />
+}
+
+function ManualOrderTicket() {
   const { user } = useAuth()
   const [savedIntent] = useState(() => {
     try { return { pending: user ? pendingOrder(sessionStorage, user.id) : null, error: null as unknown } }

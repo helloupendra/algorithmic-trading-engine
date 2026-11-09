@@ -543,7 +543,10 @@ internal static class AiTestKit
         public static Script Unreachable() => new ThrowScript();
     }
 
-    public sealed record SseScript(string[] Data, bool Hang, TimeSpan Delay) : Script;
+    public sealed record SseScript(string[] Data, bool Hang, TimeSpan Delay) : Script
+    {
+        public Task? Ready { get; init; }
+    }
 
     public sealed record StatusScript(int Code, string Body) : Script;
 
@@ -620,6 +623,7 @@ internal static class AiTestKit
                 case ThrowScript:
                     throw new HttpRequestException("connection refused", null, null);
                 case SseScript s:
+                    if (s.Ready is { } ready) await ready.WaitAsync(cancellationToken);
                     if (s.Delay > TimeSpan.Zero) await Task.Delay(s.Delay, cancellationToken);
                     string text = string.Concat(s.Data.Select(d => $"data: {d}\n\n"));
                     var stream = new ScriptedStream(Encoding.UTF8.GetBytes(text), s.Hang);
