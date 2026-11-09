@@ -92,4 +92,18 @@ public class SimulationSignalLegRequest
     /// </summary>
     [JsonIgnore]
     public decimal? LimitPrice { get; set; }
+
+    /// <summary>
+    /// Initial position protection supplied by the manual ticket inside the API.
+    /// Validated against the actual fill and saved in the booking transaction.
+    /// Strategy request bodies cannot set these fields.
+    /// </summary>
+    [JsonIgnore]
+    public decimal? StopLossPrice { get; set; }
+
+    [JsonIgnore]
+    public decimal? TargetPrice { get; set; }
+
+    [JsonIgnore]
+    public bool CarryForward { get; set; }
 }

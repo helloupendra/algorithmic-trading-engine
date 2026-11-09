@@ -29,4 +29,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../../src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
+  </ItemGroup>
+
 </Project>

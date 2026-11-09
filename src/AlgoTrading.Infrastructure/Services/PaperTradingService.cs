@@ -203,6 +203,11 @@ public class PaperTradingService : IPaperTradingService
         var fills = await PriceLegsAsync(legs, signal, reduceOnly,
             pricesAreFinal: replay || request.LegPricesAreFinal, ReplayPriced(run), cancellationToken);
 
+        // The book may have moved since the ticket's preview. Check every
+        // level against the price actually being booked, before any leg writes.
+        for (int i = 0; i < legs.Count; i++)
+            ValidatePositionProtection(legs[i], fills[i].Price, reduceOnly);
+
         // The signal and all its legs commit together or none of them do.
         //
         // Each leg used to SaveChanges on its own, so a group that failed half
@@ -1656,10 +1661,50 @@ public class PaperTradingService : IPaperTradingService
         }
         else
         {
+            if (leg.StopLossPrice is not null || leg.TargetPrice is not null || leg.CarryForward)
+            {
+                var position = await FindOpenPositionAsync(signal.SimulationRunId, signal.GroupId, leg.Symbol, cancellationToken)
+                    ?? throw new InvalidOperationException($"No open position for {leg.Symbol} to protect.");
+
+                if (leg.StopLossPrice is not null || leg.TargetPrice is not null)
+                {
+                    position.StopLossPrice = leg.StopLossPrice;
+                    position.TargetPrice = leg.TargetPrice;
+                }
+
+                // An unticked add must not turn a carried position intraday.
+                position.CarryForward |= leg.CarryForward;
+                position.UpdatedUtc = clock;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             booked?.Add(new BookedLeg(order.Symbol, order.Side, order.Quantity, fillPrice, closedPosition));
         }
 
         return applied;
+    }
+
+    private static void ValidatePositionProtection(SimulationSignalLegRequest leg, decimal fillPrice, bool reduceOnly)
+    {
+        if (leg.StopLossPrice is null && leg.TargetPrice is null && !leg.CarryForward) return;
+        if (reduceOnly)
+            throw new InvalidOperationException("Initial position protection cannot be set on a closing signal.");
+
+        string side = ValidateLeg(leg);
+        bool isBuy = side == "BUY";
+        foreach (var (level, name, mustBeBelow) in new[]
+                 {
+                     (leg.StopLossPrice, "stopLossPrice", isBuy),
+                     (leg.TargetPrice, "targetPrice", !isBuy)
+                 })
+        {
+            if (level is not { } value) continue;
+            if (value <= 0) throw new InvalidOperationException($"{name} must be greater than zero.");
+            if (mustBeBelow && value >= fillPrice)
+                throw new InvalidOperationException($"{name} {value} must be BELOW the {Price(fillPrice)} fill for a {side}.");
+            if (!mustBeBelow && value <= fillPrice)
+                throw new InvalidOperationException($"{name} {value} must be ABOVE the {Price(fillPrice)} fill for a {side}.");
+        }
     }
 
     private Task<PaperPosition?> FindOpenPositionAsync(long runId, string groupId, string symbol, CancellationToken cancellationToken)

@@ -243,7 +243,12 @@ public sealed class ManualOrderService(
             // refused there rather than filled beyond it.
             Legs = new List<SimulationSignalLegRequest>
             {
-                new() { Symbol = symbol, Side = side, Quantity = command.Quantity, Price = price, LimitPrice = command.LimitPrice }
+                new()
+                {
+                    Symbol = symbol, Side = side, Quantity = command.Quantity, Price = price,
+                    LimitPrice = command.LimitPrice, StopLossPrice = command.StopLossPrice,
+                    TargetPrice = command.TargetPrice, CarryForward = command.CarryForward
+                }
             },
         };
 
@@ -261,38 +266,11 @@ public sealed class ManualOrderService(
             return ManualOrderOutcome.Refused($"Not filled: {ex.Message}");
         }
 
-        // Written after the fill, because the position does not exist until the
-        // signal is booked. The guard reads the levels off the position on its
-        // next sweep, ahead of any rule the run carries; the close's intraday
-        // square-off reads the carry tick.
+        // The fill, its levels and the carry tick have committed together.
+        // These events describe that completed booking; no follow-up write is
+        // needed before the guard or a page can read the protected position.
         if (command.StopLossPrice is not null || command.TargetPrice is not null || command.CarryForward)
         {
-            var booked = await db.PaperPositions
-                .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
-                .ToListAsync(cancellationToken);
-
-            foreach (var position in booked)
-            {
-                if (command.StopLossPrice is not null || command.TargetPrice is not null)
-                {
-                    position.StopLossPrice = command.StopLossPrice;
-                    position.TargetPrice = command.TargetPrice;
-                    position.UpdatedUtc = DateTime.UtcNow;
-                }
-
-                // Either one asking to carry is enough. Each ticket order opens a
-                // group of its own today, so this only ever meets the position it
-                // just opened; should an order ever add to a held position, an
-                // unticked add must not quietly turn a carried position intraday.
-                position.CarryForward = position.CarryForward || command.CarryForward;
-            }
-
-            await db.SaveChangesAsync(cancellationToken);
-
-            // The fill's own events went out when the signal was booked, a
-            // moment before these levels and the tick were written; a page that
-            // fetched on those could show the position without them. This one
-            // says the position is now complete.
             var now = DateTime.UtcNow;
             if (command.StopLossPrice is not null || command.TargetPrice is not null)
             {

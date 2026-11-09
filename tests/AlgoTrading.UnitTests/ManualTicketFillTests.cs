@@ -244,16 +244,63 @@ public class ManualTicketFillTests
 
     // ===================================================== the engine's rule
 
+    [Theory]
+    [InlineData("BUY", 90, null, 80)]
+    [InlineData("BUY", 90, null, 90)]
+    [InlineData("BUY", null, 120, 130)]
+    [InlineData("BUY", null, 120, 120)]
+    [InlineData("SELL", 110, null, 120)]
+    [InlineData("SELL", 110, null, 110)]
+    [InlineData("SELL", null, 80, 70)]
+    [InlineData("SELL", null, 80, 80)]
+    public async Task Protection_is_rechecked_when_the_fill_moves_after_the_preview(
+        string side, int? stopLoss, int? target, decimal fill)
+    {
+        using var desk = new Desk(Morning);
+        desk.Quote(ltp: 100m, bid: 99.5m, ask: 100.5m);
+        desk.BeforeBooking = () => desk.Quote(fill,
+            bid: side == "SELL" ? fill : fill - 0.5m,
+            ask: side == "BUY" ? fill : fill + 0.5m);
+
+        var outcome = await desk.Place(side, limit: null, stopLoss: stopLoss, target: target, carry: true);
+
+        Assert.Null(outcome.Fill);
+        Assert.StartsWith($"Not filled: {(stopLoss is not null ? "stopLossPrice" : "targetPrice")}", outcome.RefusalMessage);
+        Assert.Empty(desk.Orders());
+        Assert.Empty(desk.Positions());
+        Assert.Empty(desk.Signals());
+    }
+
+    [Theory]
+    [InlineData("BUY", 90, 120)]
+    [InlineData("SELL", 110, 80)]
+    public async Task A_valid_fill_keeps_its_stop_target_and_carry(string side, decimal stopLoss, decimal target)
+    {
+        using var desk = new Desk(Morning);
+        desk.Quote(ltp: 100m, bid: 99.5m, ask: 100.5m);
+
+        var outcome = await desk.Place(side, limit: null, stopLoss: stopLoss, target: target, carry: true);
+
+        Assert.NotNull(outcome.Fill);
+        var position = Assert.Single(desk.Positions());
+        Assert.Equal(stopLoss, position.StopLossPrice);
+        Assert.Equal(target, position.TargetPrice);
+        Assert.True(position.CarryForward);
+    }
+
     [Fact]
-    public void A_strategy_leg_cannot_carry_a_limit_in_its_body()
+    public void A_strategy_leg_cannot_carry_ticket_settings_in_its_body()
     {
         // LimitPrice is the ticket's, set inside the API: a runner's post that
         // names one is read without it, so a strategy's legs price as before.
         var request = JsonSerializer.Deserialize<CreateSimulationSignalRequest>(
-            """{"simulationRunId":1,"signalType":"OPEN_GROUP","legs":[{"symbol":"NSE:X","side":"BUY","quantity":1,"price":100,"limitPrice":0.05}],"legPricesAreFinal":true}""",
+            """{"simulationRunId":1,"signalType":"OPEN_GROUP","legs":[{"symbol":"NSE:X","side":"BUY","quantity":1,"price":100,"limitPrice":0.05,"stopLossPrice":90,"targetPrice":120,"carryForward":true}],"legPricesAreFinal":true}""",
             new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
 
         Assert.Null(request.Legs![0].LimitPrice);
+        Assert.Null(request.Legs[0].StopLossPrice);
+        Assert.Null(request.Legs[0].TargetPrice);
+        Assert.False(request.Legs[0].CarryForward);
         Assert.False(request.LegPricesAreFinal);
     }
 
@@ -359,11 +406,11 @@ public class ManualTicketFillTests
             _db.SaveChanges();
         }
 
-        public Task<ManualOrderOutcome> Place(string side, decimal? limit, decimal? stopLoss = null)
+        public Task<ManualOrderOutcome> Place(string side, decimal? limit, decimal? stopLoss = null, decimal? target = null, bool carry = false)
         {
             var paper = BookingHook.Wrap(Paper, () => BeforeBooking?.Invoke());
             var service = new ManualOrderService(_db, paper, new PositionGreeksTests.FixedLots(65), NullLogger.Instance);
-            return service.PlaceAsync(new ManualOrderCommand(Trader, "trader", Call, side, 1, limit, stopLoss), CancellationToken.None);
+            return service.PlaceAsync(new ManualOrderCommand(Trader, "trader", Call, side, 1, limit, stopLoss, target, carry), CancellationToken.None);
         }
 
         /// <summary>GET /api/ManualOrders/instrument, as JSON.</summary>
@@ -378,6 +425,8 @@ public class ManualTicketFillTests
         public List<PaperOrder> Orders() => _db.PaperOrders.AsNoTracking().ToList();
 
         public List<PaperPosition> Positions() => _db.PaperPositions.AsNoTracking().ToList();
+
+        public List<SimulationSignal> Signals() => _db.SimulationSignals.AsNoTracking().ToList();
 
         public void Dispose() => _db.Dispose();
     }
