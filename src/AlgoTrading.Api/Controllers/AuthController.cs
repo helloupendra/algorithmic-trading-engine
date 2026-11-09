@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
-using AlgoTrading.Application.UseCases.Auth;
 using AlgoTrading.Domain.Constants;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
@@ -19,18 +18,18 @@ namespace AlgoTrading.Api.Controllers;
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
-    private readonly GenerateAccessTokenUseCase _generateAccessTokenUseCase;
+    private readonly BrokerOAuthFlow _oauth;
     private readonly IBrokerSessionStore _brokerSessionStore;
     private readonly IProviderRouter _providerRouter;
     private readonly string? _frontendBaseUrl;
 
     public AuthController(
-        GenerateAccessTokenUseCase generateAccessTokenUseCase,
+        BrokerOAuthFlow oauth,
         IBrokerSessionStore brokerSessionStore,
         IProviderRouter providerRouter,
         IConfiguration configuration)
     {
-        _generateAccessTokenUseCase = generateAccessTokenUseCase;
+        _oauth = oauth;
         _brokerSessionStore = brokerSessionStore;
         _providerRouter = providerRouter;
         // An explicit override only. Unset, the redirect goes back to the
@@ -57,7 +56,7 @@ namespace AlgoTrading.Api.Controllers;
         try
         {
             var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
-            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken: cancellationToken) });
+            return Ok(new { authUrl = await _oauth.BeginAsync(HttpContext, broker, cancellationToken) });
         }
         catch (InvalidOperationException ex)
         {
@@ -241,7 +240,7 @@ namespace AlgoTrading.Api.Controllers;
         try
         {
             var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
-            string authUrl = await broker.GetAuthUrlAsync("start", cancellationToken: cancellationToken);
+            string authUrl = await _oauth.BeginAsync(HttpContext, broker, cancellationToken);
 
             return IsBrowserNavigation()
                 ? Redirect(authUrl)
@@ -285,7 +284,7 @@ namespace AlgoTrading.Api.Controllers;
         IBrokerProvider broker;
         try
         {
-            broker = await _providerRouter.ResolveBrokerAsync(accountId, cancellationToken);
+            broker = await _oauth.CompleteAsync(HttpContext, state, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -305,7 +304,7 @@ namespace AlgoTrading.Api.Controllers;
         BrokerTokenResult tokenResult;
         try
         {
-            tokenResult = await _generateAccessTokenUseCase.ExecuteAsync(authCode, accountId, cancellationToken);
+            tokenResult = await broker.ExchangeAuthCodeAsync(authCode, accountId, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -330,11 +329,6 @@ namespace AlgoTrading.Api.Controllers;
         };
 
         await _brokerSessionStore.SaveAsync(session, cancellationToken);
-
-        // Never print the token itself — a masked confirmation is enough.
-        Console.WriteLine(
-            $"{brokerName} token saved for {(accountId is null ? "the platform" : $"broker account {accountId}")} " +
-            $"({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
 
         if (IsBrowserNavigation())
             return FrontendRedirect(connected: true, null, broker.Descriptor.Key);

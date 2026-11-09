@@ -153,6 +153,29 @@ A connector is **code, not a configuration row**. A new vendor needs an adapter 
 declares its capabilities, and maps its symbols to the platform's canonical symbol. What this module makes
 self-service is everything after that adapter exists: credentials, connecting, testing, routing.
 
+## Shared broker sign-in
+
+Start FYERS sign-in from the authenticated Connectors page. All three entry points
+(`Providers/{key}/auth-url`, `Auth/url`, and `Auth/start`) issue a random, single-use
+state and an independent HttpOnly browser cookie. The callback must return to the
+same API host in that browser. It validates both values before exchanging a code,
+uses the provider selected at the start, and rechecks that the initiating admin is
+active and that their token has not been invalidated.
+
+A flow expires after ten minutes or the initiating console token's expiry,
+whichever comes first. Console login/logout invalidates that browser's pending
+flow. Missing cookies, expired states, duplicate callbacks and a restarted API
+require pressing **Connect** again; they never replace the saved broker session.
+Pending flows live in one API process, like portfolio link states. Multiple API
+instances require affinity for the entire flow or a shared store with atomic
+consumption before enabling load balancing. No database migration is required.
+
+Deploy the API and console together, reload open console tabs, and begin a fresh
+broker sign-in after the restart. In development, credentialed CORS must allow the
+console origin, and the configured broker callback must use the API host that set
+the cookie. HTTPS cookies are Secure; local HTTP development uses a non-Secure
+cookie. Portfolio linking and Dhan's separate login flow retain their own paths.
+
 ## API
 
 All admin-only, under `api/Providers`:

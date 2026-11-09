@@ -77,6 +77,25 @@ The answer is cached for 30 seconds and the entry is dropped the moment this pro
 so a single API sees the change at once. The TTL only bounds staleness if the platform is ever run as
 more than one instance.
 
+## Browser session boundaries
+
+Each console login has a fresh browser session identity. The initial token pair and
+identity are stored in one localStorage record. Rotations store an atomic token
+pair under that identity without overwriting the active-login record. Logout or another login aborts the old session's pending requests,
+rejects late responses, clears the query cache and stops its live connection.
+Storage events synchronize login/logout across tabs, and requests also check the
+current identity before retrying or returning data. An old action cannot retry
+with the next account's credentials, including when both logins use the same user.
+
+This browser boundary does not revoke an already issued server JWT or undo a
+request the server has already accepted. Backend logout revocation and concurrent
+refresh-token consumption have their own server-side contracts.
+
+Existing token pairs migrate on the first load of the updated console. Reload all
+open tabs after deployment so every tab uses the same storage format; older
+bundles do not understand the new record. A rollback to an older bundle requires
+signing in again.
+
 ## Invitations
 
 Signing up is not open. An admin creates an invitation; the person sets **their own password**, so it

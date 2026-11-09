@@ -246,7 +246,10 @@ public class DeskWriteAccessTests
     {
         s.AddFake<IBrokerSessionStore>();
         s.AddFake<IProviderRouter>();
-        s.AddTransient<GenerateAccessTokenUseCase>();
+        s.AddDbContext<TradingDbContext>(o => o.UseInMemoryDatabase($"oauth-{Guid.NewGuid():N}"));
+        s.AddFake<IProviderRegistry>();
+        s.AddSingleton<BrokerOAuthStates>();
+        s.AddScoped<BrokerOAuthFlow>();
     }
 
     /// <summary>
@@ -348,6 +351,8 @@ public class DeskWriteAccessTests
                 new(ClaimTypes.NameIdentifier, userId.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 new(ClaimTypes.Name, $"user{userId}"),
                 new(ClaimTypes.Role, role),
+                new("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
+                new("exp", DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds().ToString()),
             };
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));
@@ -380,6 +385,7 @@ public class RecordingFake<T> : DispatchProxy where T : class
 
     internal static object? Answer(Type type, ConcurrentQueue<string> calls)
     {
+        if (type == typeof(ProviderDescriptor)) return AlgoTrading.Infrastructure.Providers.Fyers.FyersProvider.Descriptor;
         if (type == typeof(void)) return null;
         if (type == typeof(Task)) return Task.CompletedTask;
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>))

@@ -47,6 +47,7 @@ import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import type { ILogger } from '@microsoft/signalr'
 import { API_BASE_URL, freshAccessToken, tokenStore } from './api'
 import { foldTicks } from './liveMarks'
+import { assertCurrentSession, captureSession, isCurrentSession, subscribeSessionChanges } from './sessionStore'
 import type { LiveQuote } from './types'
 
 // ---------------------------------------------------------------- shapes
@@ -857,13 +858,19 @@ export function hubLogger(sink: Pick<Console, 'error' | 'warn'> = console): ILog
 }
 
 function connectHub(): HubLike {
+  const scope = captureSession()
   return new HubConnectionBuilder()
     // The hub is authorized: it carries market data the platform pays a
     // vendor for. The factory is read on every (re)connect, so a token the
     // API layer refreshed in the meantime is the one sent, and it refreshes
     // one that has expired itself: the API closes a connection when its token
     // expires, and the reconnect that follows must not send that same token.
-    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: async () => (await freshAccessToken()) ?? '' })
+    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: async () => {
+      assertCurrentSession(scope)
+      const token = await freshAccessToken()
+      assertCurrentSession(scope)
+      return token ?? ''
+    } })
     .configureLogging(hubLogger())
     .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (ctx) => retryDelay(ctx.previousRetryCount) })
     .build()
@@ -889,15 +896,22 @@ export function useLiveFeed(): void {
   const qc = useQueryClient()
   useEffect(() => {
     if (!tokenStore.access) return
+    const scope = captureSession()
     const batch = invalidationBatcher(qc)
+    const offSession = subscribeSessionChanges(() => {
+      batch.cancel()
+      liveFeed.stop()
+    })
     const offTicks = liveFeed.onTicks((ticks) => {
+      if (!isCurrentSession(scope)) return
       if (!foldsIntoQuotes(liveFeed.connection, liveFeed.all)) return
       qc.setQueryData<LiveQuote[]>(['quotes', 'all'], (old) => (old ? foldTicks(old, ticks) : old))
     })
-    const offEvents = liveFeed.onDeskEvent((event) => batch.push(deskEventKeys(event)))
-    const offReconnect = liveFeed.onReconnected(() => batch.push(allEventedKeys()))
+    const offEvents = liveFeed.onDeskEvent((event) => { if (isCurrentSession(scope)) batch.push(deskEventKeys(event)) })
+    const offReconnect = liveFeed.onReconnected(() => { if (isCurrentSession(scope)) batch.push(allEventedKeys()) })
     liveFeed.start()
     return () => {
+      offSession()
       offTicks()
       offEvents()
       offReconnect()

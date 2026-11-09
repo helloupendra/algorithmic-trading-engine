@@ -1,3 +1,6 @@
+import { assertCurrentSession, captureSession, tokenStore, type SessionScope } from './sessionStore'
+export { tokenStore } from './sessionStore'
+
 /**
  * Typed access to AlgoTrading.Api.
  *
@@ -39,8 +42,6 @@
 export const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:5025' : '')
 
-const ACCESS_TOKEN_KEY = 'algotrading.accessToken'
-const REFRESH_TOKEN_KEY = 'algotrading.refreshToken'
 
 export type UserRole = 'Admin' | 'Trader'
 
@@ -99,23 +100,6 @@ export class ApiError extends Error {
   }
 }
 
-export const tokenStore = {
-  get access() {
-    return localStorage.getItem(ACCESS_TOKEN_KEY)
-  },
-  get refresh() {
-    return localStorage.getItem(REFRESH_TOKEN_KEY)
-  },
-  set(accessToken: string, refreshToken: string) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-  },
-  clear() {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-  },
-}
-
 /** Notified when the session ends, so the app can route back to /login. */
 type SessionExpiredHandler = () => void
 let onSessionExpired: SessionExpiredHandler = () => {}
@@ -123,48 +107,43 @@ export function setSessionExpiredHandler(handler: SessionExpiredHandler) {
   onSessionExpired = handler
 }
 
-/** In-flight refresh, shared by every request that hits a 401 at once. */
-let refreshInFlight: Promise<string | null> | null = null
+/** Refreshes are shared only within the login that started them. */
+let refreshInFlight: { scope: SessionScope; promise: Promise<string | null> } | null = null
 
-async function refreshAccessToken(): Promise<string | null> {
-  if (refreshInFlight) return refreshInFlight
+async function refreshAccessToken(scope = captureSession()): Promise<string | null> {
+  assertCurrentSession(scope)
+  if (refreshInFlight?.scope === scope) return refreshInFlight.promise
 
-  refreshInFlight = (async () => {
+  const refreshToken = tokenStore.refresh
+  if (!refreshToken) return null
+  const operation = { scope, promise: Promise.resolve<string | null>(null) }
+  operation.promise = Promise.resolve().then(async () => {
     try {
-      // Inside the try, because only the finally clears refreshInFlight. Above it
-      // (until 2 Nov), one 401 with no refresh token stored left a resolved null
-      // here for the life of the tab: polls still out when a session ended did
-      // that, and after the next sign-in the first expired token signed the user
-      // out without asking /refresh, and the live hub reconnected with it.
-      const refreshToken = tokenStore.refresh
-      if (!refreshToken) return null
-
       const response = await fetch(`${API_BASE_URL}/api/UserAuth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
+        signal: scope.controller.signal,
       })
-
-      if (!response.ok) return null
-
-      const data = (await response.json()) as AuthResponse
-      // Signed out, or signed in as someone else, while this was on its way: its
-      // tokens belong to a session that is over. Stored, they would sign the
-      // previous user back in, in the next user's tab.
+      assertCurrentSession(scope)
+      // Another tab may have rotated this same login while we waited.
       if (tokenStore.refresh !== refreshToken) return tokenStore.access
-      tokenStore.set(data.accessToken, data.refreshToken)
+      if (!response.ok) return null
+      const data = (await response.json()) as AuthResponse
+      assertCurrentSession(scope)
+      if (tokenStore.refresh !== refreshToken) return tokenStore.access
+      tokenStore.rotate(scope, data.accessToken, data.refreshToken)
       return data.accessToken
-    } catch {
+    } catch (error) {
+      assertCurrentSession(scope)
+      if (scope.controller.signal.aborted) throw error
       return null
     } finally {
-      // Cleared in a microtask so callers awaiting this promise still see it.
-      queueMicrotask(() => {
-        refreshInFlight = null
-      })
+      if (refreshInFlight === operation) refreshInFlight = null
     }
-  })()
-
-  return refreshInFlight
+  })
+  refreshInFlight = operation
+  return operation.promise
 }
 
 /** When a JWT's `exp` says it stops working, in ms since the epoch; null when it cannot be read. */
@@ -202,11 +181,14 @@ export async function freshAccessToken(
   refresh: () => Promise<string | null> = refreshAccessToken,
   now: () => number = Date.now,
 ): Promise<string | null> {
+  const scope = store === tokenStore ? captureSession() : null
   const token = store.access
   if (!token) return null
   const expiresAt = tokenExpiresAtMs(token)
   if (expiresAt == null || expiresAt - TOKEN_REFRESH_SKEW_MS > now()) return token
-  return (await refresh()) ?? token
+  const fresh = await refresh()
+  if (scope) assertCurrentSession(scope)
+  return fresh ?? token
 }
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
@@ -239,15 +221,21 @@ function errorMessage(status: number, body: unknown): string {
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const scope = captureSession()
   const { body, anonymous, headers, ...rest } = options
+  const signal = rest.signal ? AbortSignal.any([rest.signal, scope.controller.signal]) : scope.controller.signal
 
   const send = async (token: string | null): Promise<Response> => {
+    assertCurrentSession(scope)
+    signal.throwIfAborted()
     const finalHeaders = new Headers(headers)
     if (body !== undefined) finalHeaders.set('Content-Type', 'application/json')
     if (token) finalHeaders.set('Authorization', `Bearer ${token}`)
 
     return fetch(`${API_BASE_URL}${path}`, {
       ...rest,
+      signal,
+      credentials: 'include',
       headers: finalHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
       // Never let the browser answer an API call from its heuristic cache: an
@@ -259,11 +247,14 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   let response = await send(anonymous ? null : tokenStore.access)
+  assertCurrentSession(scope)
 
   if (response.status === 401 && !anonymous) {
-    const fresh = await refreshAccessToken()
+    const fresh = await refreshAccessToken(scope)
+    assertCurrentSession(scope)
     if (fresh) {
       response = await send(fresh)
+      assertCurrentSession(scope)
     }
     // Still unauthorized after a refresh: the session is genuinely over.
     if (response.status === 401) {
@@ -274,6 +265,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   const parsed = await parseBody(response)
+  assertCurrentSession(scope)
 
   if (!response.ok) {
     throw new ApiError(response.status, errorMessage(response.status, parsed), parsed)
@@ -304,16 +296,23 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
  * body must be one that can be sent twice (a string, not a stream).
  */
 export async function fetchWithSession(path: string, init: RequestInit = {}): Promise<Response> {
+  const scope = captureSession()
+  const signal = init.signal ? AbortSignal.any([init.signal, scope.controller.signal]) : scope.controller.signal
   const send = (token: string | null) => {
+    assertCurrentSession(scope)
+    signal.throwIfAborted()
     const headers = new Headers(init.headers)
     if (token) headers.set('Authorization', `Bearer ${token}`)
-    return fetch(`${API_BASE_URL}${path}`, { ...init, headers, cache: 'no-store' })
+    return fetch(`${API_BASE_URL}${path}`, { ...init, signal, headers, credentials: 'include', cache: 'no-store' })
   }
 
   let response = await send(await freshAccessToken())
+  assertCurrentSession(scope)
   if (response.status === 401) {
-    const fresh = await refreshAccessToken()
+    const fresh = await refreshAccessToken(scope)
+    assertCurrentSession(scope)
     if (fresh) response = await send(fresh)
+    assertCurrentSession(scope)
     if (response.status === 401) {
       tokenStore.clear()
       onSessionExpired()
@@ -348,15 +347,20 @@ export const authApi = {
   me: () => apiFetch<MeResponse>('/api/UserAuth/me'),
 
   logout: async () => {
+    const accessToken = tokenStore.access
     const refreshToken = tokenStore.refresh
-    if (refreshToken) {
-      // Best effort: a failure here must not block signing out locally.
-      try {
-        await apiFetch('/api/UserAuth/logout', { method: 'POST', body: { refreshToken } })
-      } catch {
-        /* ignore */
-      }
-    }
+    // End the local session immediately; the best-effort revocation keeps only
+    // the original credentials and can never refresh/retry as the next user.
     tokenStore.clear()
+    if (refreshToken) {
+      try {
+        await fetch(`${API_BASE_URL}/api/UserAuth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          body: JSON.stringify({ refreshToken }),
+        })
+      } catch { /* Local sign-out already completed. */ }
+    }
   },
 }

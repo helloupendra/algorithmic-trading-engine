@@ -18,6 +18,7 @@
 
 import type { QueryClient } from '@tanstack/react-query'
 import { authApi, tokenStore, type MeResponse } from './api'
+import { assertCurrentSession, captureSession, isCurrentSession, subscribeSessionChanges } from './sessionStore'
 
 export interface SessionActions {
   login: (userNameOrEmail: string, password: string) => Promise<MeResponse>
@@ -29,12 +30,18 @@ export interface SessionActions {
 export function sessionActions(queryClient: QueryClient, setUser: (user: MeResponse | null) => void): SessionActions {
   return {
     async login(userNameOrEmail, password) {
+      const starting = captureSession()
       const result = await authApi.login(userNameOrEmail, password)
+      assertCurrentSession(starting)
       tokenStore.set(result.accessToken, result.refreshToken)
+      const scope = captureSession()
+      queryClient.clear()
+      setUser(null)
 
       // Prefer /me over the login payload: it is the same shape the rest of the
       // app consumes, including capital and status.
       const me = await authApi.me()
+      assertCurrentSession(scope)
       // Before the first page of this session can read anything. Nothing worth
       // keeping is in it, whoever this is: no console page is mounted at a sign-in.
       queryClient.clear()
@@ -43,9 +50,9 @@ export function sessionActions(queryClient: QueryClient, setUser: (user: MeRespo
     },
 
     async logout() {
-      await authApi.logout()
       queryClient.clear()
       setUser(null)
+      await authApi.logout()
     },
 
     expired() {
@@ -53,4 +60,32 @@ export function sessionActions(queryClient: QueryClient, setUser: (user: MeRespo
       setUser(null)
     },
   }
+}
+
+/** Restores the current login and synchronously discards caches on local or cross-tab changes. */
+export function watchSession(
+  queryClient: QueryClient,
+  setUser: (user: MeResponse | null) => void,
+  setLoading: (loading: boolean) => void,
+): () => void {
+  let disposed = false
+  async function restore() {
+    const scope = captureSession()
+    queryClient.clear()
+    setUser(null)
+    const signedIn = !!tokenStore.access
+    setLoading(signedIn)
+    if (!signedIn) return
+    try {
+      const me = await authApi.me()
+      if (!disposed && isCurrentSession(scope)) setUser(me)
+    } catch {
+      if (!disposed && isCurrentSession(scope)) tokenStore.clear()
+    } finally {
+      if (!disposed && isCurrentSession(scope)) setLoading(false)
+    }
+  }
+  const unsubscribe = subscribeSessionChanges(() => { void restore() })
+  void restore()
+  return () => { disposed = true; unsubscribe() }
 }

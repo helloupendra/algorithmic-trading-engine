@@ -390,6 +390,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.NotifierStartupServic
 // The Portfolio page (docs/modules/portfolio.md): a user's own broker accounts, read only, and a factual report on
 // them. The broker clients are registered by the infrastructure (PortfolioRegistration); the link states and the sync
 // gate live in memory, one per process; old snapshots are deleted after 90 days.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.BrokerOAuthStates>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.BrokerOAuthFlow>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioLinkStates>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioSyncGate>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Portfolio.PortfolioSessions>();

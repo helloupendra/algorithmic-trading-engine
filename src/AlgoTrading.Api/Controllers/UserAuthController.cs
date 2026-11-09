@@ -18,10 +18,12 @@ namespace AlgoTrading.Api.Controllers
     {
 
         private readonly IAuthService _authService;
+        private readonly BrokerOAuthStates _brokerStates;
 
-        public UserAuthController(IAuthService authService)
+        public UserAuthController(IAuthService authService, BrokerOAuthStates brokerStates)
         {
             _authService = authService;
+            _brokerStates = brokerStates;
         }
 
         [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
@@ -70,6 +72,7 @@ namespace AlgoTrading.Api.Controllers
             try
             {
                 var result = await _authService.LoginAsync(request, cancellationToken);
+                _brokerStates.EndBrowserSession(HttpContext);
 
                 HttpContext.AttributeTo(result.User.Id, result.User.UserName, result.User.Role);
                 HttpContext.Describe(
@@ -127,6 +130,7 @@ namespace AlgoTrading.Api.Controllers
         {
             try
             {
+                _brokerStates.EndBrowserSession(HttpContext);
                 await _authService.LogoutAsync(request, cancellationToken);
                 return Ok(new { message = "Logged out successfully." });
             }

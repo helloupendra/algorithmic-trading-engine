@@ -27,6 +27,7 @@ namespace AlgoTrading.Api.Controllers;
 [Route("api/Providers")]
 public class ProvidersController : ControllerBase
 {
+    private readonly AlgoTrading.Api.Services.BrokerOAuthFlow _oauth;
     private readonly IProviderCatalog _catalog;
     private readonly IProviderRegistry _registry;
     private readonly IProviderRouter _router;
@@ -44,8 +45,10 @@ public class ProvidersController : ControllerBase
         IBrokerSessionStore sessions,
         TradingDbContext dbContext,
         ILogger<ProvidersController> logger,
-        IEnumerable<IProviderLoginFlow> loginFlows)
+        IEnumerable<IProviderLoginFlow> loginFlows,
+        AlgoTrading.Api.Services.BrokerOAuthFlow oauth)
     {
+        _oauth = oauth;
         _catalog = catalog;
         _registry = registry;
         _router = router;
@@ -211,7 +214,7 @@ public class ProvidersController : ControllerBase
             }
 
             var broker = _registry.GetBrokerProvider(descriptor.Key);
-            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken: cancellationToken) });
+            return Ok(new { authUrl = await _oauth.BeginAsync(HttpContext, broker, cancellationToken) });
         }
         catch (InvalidOperationException ex)
         {

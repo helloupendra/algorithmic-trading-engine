@@ -13,15 +13,16 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import {
-  authApi,
   setSessionExpiredHandler,
   tokenStore,
   type MeResponse,
 } from './api'
-import { sessionActions } from './session'
+import { sessionActions, watchSession } from './session'
+import { captureSession, subscribeSessionChanges } from './sessionStore'
 
 interface AuthContextValue {
   user: MeResponse | null
@@ -37,38 +38,16 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
-  const [user, setUser] = useState<MeResponse | null>(null)
-  const actions = useMemo(() => sessionActions(queryClient, setUser), [queryClient])
+  const scope = useSyncExternalStore(subscribeSessionChanges, captureSession, captureSession)
+  const [held, setHeld] = useState<{ user: MeResponse | null; scope: typeof scope }>({ user: null, scope })
+  const setUser = useMemo(() => (user: MeResponse | null) => setHeld({ user, scope: captureSession() }), [])
+  const user = held.scope === scope ? held.user : null
+  const actions = useMemo(() => sessionActions(queryClient, setUser), [queryClient, setUser])
   // Only a stored token needs verifying; with none there is nothing to probe,
   // so anonymous visitors never render a loading state.
   const [isLoading, setIsLoading] = useState(() => !!tokenStore.access)
 
-  // Restore the session on first load: a stored token may still be valid, and
-  // /me is the authority on the current role (it may have changed server-side).
-  useEffect(() => {
-    let cancelled = false
-
-    async function restore() {
-      if (!tokenStore.access) {
-        setIsLoading(false)
-        return
-      }
-      try {
-        const me = await authApi.me()
-        if (!cancelled) setUser(me)
-      } catch {
-        tokenStore.clear()
-        if (!cancelled) setUser(null)
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    void restore()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  useEffect(() => watchSession(queryClient, setUser, setIsLoading), [queryClient, setUser])
 
   // The API client signals an unrecoverable 401; drop the user so guards redirect.
   useEffect(() => {
@@ -88,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, isLoading, actions],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider key={scope.id ?? 'anonymous'} value={value}>{children}</AuthContext.Provider>
 }
 
 export function useAuth(): AuthContextValue {
