@@ -589,12 +589,20 @@ deploy_now_requested() {
 # how many runs are live: in the session the answer is no whatever the count.
 deploy_clock_allows() {
   local dow="$1" hhmm="$2" closed="$3"
+  if [ -n "${DESK_SESSION_STATE:-}" ]; then
+    [ "$DESK_SESSION_STATE" = closed ] || [ "$((10#$hhmm))" -lt "$((10#${DESK_DEPLOY_UNTIL:-0840}))" ] || [ "$closed" = 1 ]
+    return
+  fi
   [ "$dow" -ge 6 ] || [ "$((10#$hhmm))" -lt "$((10#$DEPLOY_MORNING_END))" ] || [ "$closed" = "1" ]
 }
 
 deploy_allowed() {
   local dow="$1" hhmm="$2" closed="$3" live="$4"
   deploy_now_requested && return 0
+  if [ -n "${DESK_SESSION_STATE:-}" ]; then
+    [ "$live" = 0 ] && deploy_clock_allows "$dow" "$hhmm" "$closed"
+    return
+  fi
   [ "$dow" -ge 6 ] && return 0
   [ "$live" = "0" ] || return 1
   if [ "$((10#$hhmm))" -lt "$((10#$DEPLOY_MORNING_END))" ] || [ "$closed" = "1" ]; then

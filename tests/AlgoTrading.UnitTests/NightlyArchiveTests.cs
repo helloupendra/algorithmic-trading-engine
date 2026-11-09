@@ -182,6 +182,33 @@ public class NightlyArchiveTests
     }
 
     [Fact]
+    public async Task Special_session_archive_uses_its_own_hours_and_bucket_origin()
+    {
+        var day = new DateOnly(2026,11,8);
+        using var db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        const string option = "NSE:NIFTY26NOV25000CE";
+        SeedBars(db, Nifty, Ist(day,14,0), Ist(day,16,0));
+        SeedBars(db, option, Ist(day,14,0), Ist(day,16,0));
+        var sessions = new MarketSessionService(new SpecialCalendar(day));
+        var archive = new DailyCandleArchiveService(db, null!, new ConfigurationBuilder().Build(), NullLogger<DailyCandleArchiveService>.Instance, sessions);
+        await archive.ArchiveDayAsync(day, includeBrokerBackfill:false);
+        Assert.Equal(70, Candles(db,Nifty,"1").Count);
+        Assert.Equal(80, Candles(db,option,"1").Count);
+        Assert.Equal(new[] { Ist(day,14,20), Ist(day,14,35), Ist(day,14,50), Ist(day,15,5), Ist(day,15,20) }, Candles(db,Nifty,"15").OrderBy(x => x));
+        Assert.Equal(Ist(day,15,39), Candles(db,option,"1").Max());
+    }
+
+    private sealed class SpecialCalendar(DateOnly day) : IMarketCalendar
+    {
+        public bool IsLoaded => true;
+        public bool HasYear(string exchange,int year) => true;
+        public MarketHoliday? HolidayOn(string exchange, DateOnly date) => null;
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) => date == day ? new()
+        { Exchange=exchange, Date=day, Name="Muhurat", OpenIst=new(14,20), CloseIst=new(15,40), CashCloseIst=new(15,30) } : null;
+        public Task RefreshAsync(CancellationToken cancellationToken=default) => Task.CompletedTask;
+    }
+
+    [Fact]
     public async Task Each_symbol_s_candles_leave_the_change_tracker_once_saved()
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"archive-{Guid.NewGuid():N}").Options;

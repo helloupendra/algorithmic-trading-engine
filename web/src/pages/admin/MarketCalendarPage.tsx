@@ -39,6 +39,7 @@ interface SpecialSession {
   name: string
   openIst: string
   closeIst: string
+  cashCloseIst?: string | null
   source: string | null
 }
 
@@ -265,6 +266,7 @@ export function MarketCalendarPage() {
                         <td>{s.name}</td>
                         <td className="mono">
                           {s.openIst}–{s.closeIst}
+                          {s.cashCloseIst && <div className="muted">Cash closes {s.cashCloseIst}</div>}
                         </td>
                         <td className="faint" style={{ fontSize: 12 }}>
                           {s.source ?? '—'}

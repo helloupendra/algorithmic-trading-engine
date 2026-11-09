@@ -16,6 +16,9 @@ namespace AlgoTrading.Infrastructure.Services;
 /// both divide by 5 and by 15. So a 5-minute candle stamped 09:15 covers
 /// 09:15–09:19, the same bucket the broker's own candles use.
 ///
+/// Special sessions pass their own opening instant: a 14:20 open starts its
+/// 15-minute bars at 14:20, matching broker history rather than a 14:15 bucket.
+///
 /// Open is the first bar's open, close the last bar's close, high and low the
 /// extremes, and volume the sum of the bars' volume deltas. A bucket with a
 /// gap in its 1-minute bars is still emitted from the bars that exist — a
@@ -23,14 +26,16 @@ namespace AlgoTrading.Infrastructure.Services;
 /// </remarks>
 public static class LiveBarRollup
 {
-    public static IReadOnlyList<ProviderHistoryBar> Roll(IEnumerable<LiveBar> oneMinuteBars, int minutes)
+    public static IReadOnlyList<ProviderHistoryBar> Roll(IEnumerable<LiveBar> oneMinuteBars, int minutes, DateTime? sessionOpenUtc = null)
     {
         if (minutes < 1) throw new ArgumentOutOfRangeException(nameof(minutes));
 
         var span = TimeSpan.FromMinutes(minutes);
         return oneMinuteBars
             .OrderBy(b => b.BarStartUtc)
-            .GroupBy(b => BucketStart(b.BarStartUtc, span))
+            .GroupBy(b => sessionOpenUtc is { } start
+                ? start.AddTicks((b.BarStartUtc - start).Ticks / span.Ticks * span.Ticks)
+                : BucketStart(b.BarStartUtc, span))
             .Select(g => new ProviderHistoryBar
             {
                 TimestampUtc = g.Key,

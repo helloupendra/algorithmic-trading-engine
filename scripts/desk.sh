@@ -502,6 +502,14 @@ while true; do
   # 1. health
   health_step
 
+  # The calendar, including Sunday special sessions, owns the day's times.
+  # Cache for two minutes so the 30-second health loop stays lightweight.
+  if [ "${session_plan_day:-}" != "$today" ] || [ $((now - ${session_plan_at:-0})) -ge 120 ]; then
+    python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --api "$API" --output "$DESK_STATE_DIR/session-schedule.json" ${MARKET_OPEN_AT:+--open-at "$MARKET_OPEN_AT"} ${MARKET_CLOSE_AT:+--close-at "$MARKET_CLOSE_AT"}
+    read -r DESK_SESSION_STATE day_open day_open_until day_close DESK_DEPLOY_UNTIL _ _ _ _ day_close_due < <(python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --read "$DESK_STATE_DIR/session-schedule.json")
+    session_plan_day="$today"; session_plan_at=$now
+  fi
+
   # 2. deploy — held while a background morning job runs: it restarts the API
   #    and the feeds itself, and a deploy in the middle would do it again.
   if [ $((now - last_deploy_check)) -ge "$DEPLOY_EVERY" ]; then
@@ -515,29 +523,34 @@ while true; do
     last_deploy_check=$now
   fi
 
-  # 3. market open, once per weekday — once per DAY, even across desk
+  # 3. market open, once per trading day — once per DAY, even across desk
   #    restarts: the day's marker file decides, not opened_on (daily_job in
   #    lib/desk-common.sh). opened_on only spares re-reading it every loop.
   #    With DESK_BACKGROUND_OPEN=1 the job runs beside the loop, which keeps
   #    checking the API and writing its status, and asks after the job each
   #    loop until it has finished.
-  if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$OPEN_AT" ] && [ "$hhmm" -lt 1500 ] && [ "$opened_on" != "$today" ]; then
+  if { [ "$DESK_SESSION_STATE" = trading ] || { [ "$DESK_SESSION_STATE" = unknown ] && [ "$dow" -le 5 ]; }; } \
+      && [ "$hhmm" -ge "$day_open" ] && [ "$hhmm" -lt "$day_open_until" ] && [ "$opened_on" != "$today" ]; then
     open_mode="fg"
     [ "$DESK_BG_OPEN" = 1 ] && open_mode="bg"
-    if daily_job market-open "$today" "$open_mode" "=== $OPEN_AT — running market-open.sh ===" ./scripts/market-open.sh; then
+    if daily_job market-open "$today" "$open_mode" "=== $day_open — running market-open.sh ===" ./scripts/market-open.sh; then
       opened_on="$today"
     fi
   fi
 
-  # 4. market close, once per weekday, after the MCX session — or, when that
+  # 4. market close, once per trading day, after the MCX session — or, when that
   #    was missed, after midnight for the day before (market_close_due). Once
   #    per day across restarts too, by the same kind of marker.
   yesterday="$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F)"
-  if close_day="$(market_close_due "$dow" "$hhmm" "$today" "$yesterday" "$closed_on" "$CLOSE_AT")"; then
+  close_day="$day_close_due"
+  if [ "$DESK_SESSION_STATE" = unknown ]; then
+    close_day="$(market_close_due "$dow" "$hhmm" "$today" "$yesterday" "$closed_on" "$CLOSE_AT")" || close_day="-"
+  fi
+  if [ "$close_day" != "-" ] && [ "$closed_on" != "$close_day" ]; then
     if [ "$close_day" = "$today" ]; then
-      close_banner="=== $CLOSE_AT — running market-close.sh ==="
+      close_banner="=== $day_close — running market-close.sh ==="
     else
-      close_banner="=== market-close.sh for $close_day did not run at $CLOSE_AT — running it now ==="
+      close_banner="=== market-close.sh for $close_day did not run at $day_close — running it now ==="
     fi
     if daily_job market-close "$close_day" fg "$close_banner" ./scripts/market-close.sh; then
       closed_on="$close_day"

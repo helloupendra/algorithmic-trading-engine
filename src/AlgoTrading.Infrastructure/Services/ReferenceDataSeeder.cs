@@ -149,6 +149,14 @@ public class ReferenceDataSeeder
 
             if (!sessionDays.Add((exchange, date))) continue;
 
+            TimeOnly? cashClose = null;
+            if (!string.IsNullOrWhiteSpace(item.CashCloseIst))
+            {
+                if (exchange == "MCX" || !TimeOnly.TryParseExact(item.CashCloseIst, "HH:mm", out var parsedCash) || parsedCash <= open || parsedCash > close)
+                    throw new InvalidOperationException($"Invalid cash close in special session {exchange} {date}.");
+                cashClose = parsedCash;
+            }
+
             _dbContext.MarketSpecialSessions.Add(new MarketSpecialSession
             {
                 Exchange = exchange,
@@ -156,6 +164,7 @@ public class ReferenceDataSeeder
                 Name = item.Name.Trim(),
                 OpenIst = open,
                 CloseIst = close,
+                CashCloseIst = cashClose,
                 Source = item.Source,
                 UpdatedBy = "seed",
                 CreatedUtc = now,
@@ -288,6 +297,7 @@ public class ReferenceDataSeeder
         public string Name { get; set; } = string.Empty;
         public string OpenIst { get; set; } = string.Empty;
         public string CloseIst { get; set; } = string.Empty;
+        public string? CashCloseIst { get; set; }
         public string? Source { get; set; }
     }
 

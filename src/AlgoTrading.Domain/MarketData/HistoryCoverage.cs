@@ -156,13 +156,14 @@ public static class HistoryCoverage
     public static IEnumerable<DateOnly> ExpectedTradingDays(
         DateOnly from,
         DateOnly to,
-        DateOnly? lastCompletedSession = null)
+        DateOnly? lastCompletedSession = null,
+        Func<DateOnly, bool>? isTradingDay = null)
     {
         if (lastCompletedSession is { } last && to > last) to = last;
 
         for (var day = from; day <= to; day = day.AddDays(1))
         {
-            if (day.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
+            if (!(isTradingDay?.Invoke(day) ?? (day.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)))) continue;
             yield return day;
         }
     }
@@ -184,24 +185,29 @@ public static class HistoryCoverage
         IReadOnlyDictionary<DateOnly, int> barsByDate,
         ISet<DateOnly>? knownEmptyDates = null,
         CoveragePolicy policy = CoveragePolicy.Continuous,
-        DateOnly? lastCompletedSession = null)
+        DateOnly? lastCompletedSession = null,
+        Func<DateOnly, bool>? isTradingDay = null,
+        Func<DateOnly, int?>? expectedBarsForDay = null)
     {
         var gaps = new List<CoverageGap>();
         if (to < from) return gaps;
 
         int? expected = ExpectedBarsPerDay(resolution);
 
-        foreach (var day in ExpectedTradingDays(from, to, lastCompletedSession))
+        DateOnly? previousDay = null;
+        foreach (var day in ExpectedTradingDays(from, to, lastCompletedSession, isTradingDay))
         {
+            var preceding = previousDay;
+            previousDay = day;
             if (knownEmptyDates is not null && knownEmptyDates.Contains(day)) continue;
 
             barsByDate.TryGetValue(day, out int bars);
-            var kind = ClassifyDay(bars, expected, policy);
+            var kind = ClassifyDay(bars, expectedBarsForDay?.Invoke(day) ?? expected, policy);
             if (kind == DayCoverage.Complete) continue;
 
             // Consecutive across a weekend still counts as consecutive: there
             // is nothing to fetch in between.
-            if (gaps.Count > 0 && NextTradingDay(gaps[^1].To) == day)
+            if (gaps.Count > 0 && gaps[^1].To == preceding)
             {
                 var last = gaps[^1];
                 gaps[^1] = last with
@@ -229,10 +235,4 @@ public static class HistoryCoverage
         DateOnly? lastCompletedSession = null)
         => FindGaps(from, to, resolution, barsByDate, knownEmptyDates, policy, lastCompletedSession).Count == 0;
 
-    private static DateOnly NextTradingDay(DateOnly day)
-    {
-        var next = day.AddDays(1);
-        while (next.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) next = next.AddDays(1);
-        return next;
-    }
 }

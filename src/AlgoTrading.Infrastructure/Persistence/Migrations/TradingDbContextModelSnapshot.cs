@@ -3418,6 +3418,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<TimeOnly?>("CashCloseIst")
+                        .HasColumnType("time without time zone");
+
                     b.Property<TimeOnly>("CloseIst")
                         .HasColumnType("time without time zone");
 

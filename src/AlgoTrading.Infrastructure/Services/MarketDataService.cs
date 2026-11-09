@@ -51,8 +51,8 @@ public class MarketDataService : IMarketDataService
         // The request speaks in dates; providers speak in instants. The to-date is
         // taken as the whole day so a same-day sync still gets that session — the
         // inclusive behaviour every caller already relies on.
-        DateTime fromUtc = request.FromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-        DateTime toUtc = request.ToDate.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Utc);
+        DateTime fromUtc = IstTime.StartOfDayUtc(request.FromDate);
+        DateTime toUtc = IstTime.EndOfDayUtc(request.ToDate);
 
         var provider = await _router.ResolveDataAsync(
             ProviderCapability.History,
@@ -131,15 +131,13 @@ public class MarketDataService : IMarketDataService
 
         if (request.FromDate.HasValue)
         {
-            DateTime fromUtc = request.FromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            DateTime fromUtc = IstTime.StartOfDayUtc(request.FromDate.Value);
             query = query.Where(x => x.TimeStampUtc >= fromUtc);
         }
 
         if (request.ToDate.HasValue)
         {
-            DateTime toUtcExclusive = request.ToDate.Value
-                .AddDays(1)
-                .ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            DateTime toUtcExclusive = IstTime.StartOfDayUtc(request.ToDate.Value.AddDays(1));
 
             query = query.Where(x => x.TimeStampUtc < toUtcExclusive);
         }

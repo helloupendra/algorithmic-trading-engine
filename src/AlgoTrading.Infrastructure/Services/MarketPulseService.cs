@@ -8,6 +8,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Providers.Dhan;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -69,13 +70,15 @@ public class MarketPulseService : IMarketPulseService
     private readonly ILiveDataService _liveData;
     private readonly IRedisPublisherService _publisher;
     private readonly ILogger<MarketPulseService> _logger;
+    private readonly DhanReferencePrices? _referencePrices;
 
-    public MarketPulseService(TradingDbContext db, ILiveDataService liveData, IRedisPublisherService publisher, ILogger<MarketPulseService> logger)
+    public MarketPulseService(TradingDbContext db, ILiveDataService liveData, IRedisPublisherService publisher, ILogger<MarketPulseService> logger, DhanReferencePrices? referencePrices = null)
     {
         _db = db;
         _liveData = liveData;
         _publisher = publisher;
         _logger = logger;
+        _referencePrices = referencePrices;
     }
 
     public async Task<MarketPulseResponse> GetAsync(CancellationToken cancellationToken = default)
@@ -100,20 +103,22 @@ public class MarketPulseService : IMarketPulseService
         MarketPulseItem ToItem((string Group, string Symbol, string Name, string? Contract) r)
         {
             quotes.TryGetValue(r.Symbol, out var q);
-            decimal? change = q?.LastTradedPrice is { } ltp && q.Close is { } close ? ltp - close : null;
+            decimal? previousClose = q?.Close is > 0 ? q.Close : q?.SourceKey == DhanProvider.Key
+                ? _referencePrices?.PreviousClose(r.Symbol, q.ExchangeTimestampUtc ?? q.UpdatedUtc, DateTime.UtcNow) : null;
+            decimal? change = q?.LastTradedPrice is { } ltp && previousClose is { } close ? ltp - close : null;
             return new MarketPulseItem
             {
                 Symbol = r.Symbol,
                 Name = r.Name,
                 Contract = r.Contract,
                 LastTradedPrice = q?.LastTradedPrice,
-                PreviousClose = q?.Close,
+                PreviousClose = previousClose,
                 Open = q?.Open,
                 High = q?.High,
                 Low = q?.Low,
                 Volume = q?.Volume,
                 Change = change,
-                ChangePercent = change is { } c && q?.Close is > 0 ? Math.Round(c / q.Close.Value * 100m, 2) : null,
+                ChangePercent = change is { } c && previousClose is > 0 ? Math.Round(c / previousClose.Value * 100m, 2) : null,
                 UpdatedUtc = q?.UpdatedUtc,
                 IsSubscribed = subscribedSet.Contains(r.Symbol),
             };

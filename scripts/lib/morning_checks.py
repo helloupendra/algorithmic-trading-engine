@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from pathlib import Path
 import sys
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
@@ -143,7 +144,7 @@ def price_time(quote: dict) -> Optional[datetime]:
     return _parse(quote.get("updatedUtc"))
 
 
-def feed_verdict(quotes: object, underlyings: list[str], now: datetime) -> tuple[str, list[str]]:
+def feed_verdict(quotes: object, underlyings: list[str], now: datetime, sessions: Optional[dict] = None) -> tuple[str, list[str]]:
     if isinstance(quotes, dict):
         quotes = quotes.get("items") or quotes.get("quotes") or quotes.get("data") or []
     rows = [q for q in quotes if isinstance(q, dict)] if isinstance(quotes, list) else []
@@ -154,6 +155,15 @@ def feed_verdict(quotes: object, underlyings: list[str], now: datetime) -> tuple
     for underlying in dict.fromkeys(u.strip().upper() for u in underlyings if u.strip()):
         label, pattern, exchange = spot_for(underlying)
         opened = datetime.combine(today, OPENS.get(exchange, OPENS["NSE"]), tzinfo=IST)
+        if sessions is not None and exchange in sessions:
+            session = sessions[exchange]
+            if session is None:
+                lines.append(f"  closed:  {underlying} — exchange calendar has no session today")
+                continue
+            opened = _parse(session["open"])
+            if opened is None or opened > now:
+                lines.append(f"  waiting: {underlying} — exchange has not opened yet")
+                continue
         stamps = [t for t in (price_time(q) for q in rows if pattern.match(str(q.get("symbol") or ""))) if t]
         last = max(stamps) if stamps else None
         ok = last is not None and last >= opened
@@ -234,6 +244,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     s.add_argument("--today", default=None, help="YYYY-MM-DD, default today in IST")
     f = sub.add_parser("feed")
     f.add_argument("--underlyings", required=True)
+    f.add_argument("--sessions", help="calendar schedule from session_schedule.py")
     f.add_argument("--now", default=None, help="ISO-8601, default the clock")
     m = sub.add_parser("masters")
     m.add_argument("--since", default="", help="ISO-8601 UTC, when the refresh was asked for; empty: any")
@@ -259,7 +270,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     now = _parse(args.now) if args.now else datetime.now(timezone.utc)
     if now is None:
         parser.error("--now must be ISO-8601")
-    verdict, lines = feed_verdict(_read_json(), args.underlyings.replace(" ", ",").split(","), now)
+    sessions = None
+    if args.sessions:
+        schedule = json.loads(Path(args.sessions).read_text())
+        if schedule.get("state") == "trading":
+            sessions = schedule["sessions"]
+    verdict, lines = feed_verdict(_read_json(), args.underlyings.replace(" ", ",").split(","), now, sessions)
     print(verdict)
     print("\n".join(lines))
     return {"pass": 0, "partial": 1}.get(verdict, 2)

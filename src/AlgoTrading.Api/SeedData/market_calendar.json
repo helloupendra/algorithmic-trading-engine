@@ -56,8 +56,8 @@
   "specialSessions": [
     { "exchange": "NSE", "date": "2026-02-01", "name": "Union Budget (Sunday live session)", "openIst": "09:15", "closeIst": "15:30", "source": "NSE/CMTR/72349, NSE/FAOP/72352 (16 Jan 2026)" },
     { "exchange": "BSE", "date": "2026-02-01", "name": "Union Budget (Sunday live session)", "openIst": "09:15", "closeIst": "15:30", "source": "BSE notice 20260116-34 (16 Jan 2026)" },
-    { "exchange": "NSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "source": "NSE/FAOP/76940 (19 Oct 2026), the F&O hours" },
-    { "exchange": "BSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "source": "BSE notice of 19 Oct 2026, equity derivatives hours as reported by Angel One; the notice itself not read" },
+    { "exchange": "NSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "cashCloseIst": "15:30", "source": "NSE/FAOP/76940 and NSE/CMTR/76941 (19 Oct 2026): derivatives and cash continuous-session hours" },
+    { "exchange": "BSE", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:40", "cashCloseIst": "15:30", "source": "BSE notice of 19 Oct 2026, equity derivatives hours as reported by Angel One; the notice itself not read" },
     { "exchange": "MCX", "date": "2026-11-08", "name": "Muhurat trading", "openIst": "14:20", "closeIst": "15:30", "source": "MCX/TRD/590/2026 (19 Oct 2026), as summarised by TeamLease and AlgoTest; the circular itself not read" }
   ]
 }

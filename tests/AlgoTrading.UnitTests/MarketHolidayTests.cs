@@ -121,6 +121,21 @@ public class MarketHolidayTests
     }
 
     [Fact]
+    public void Special_cash_bars_stop_before_the_derivatives_session()
+    {
+        var day = new DateOnly(2026, 11, 8);
+        var calendar = new FakeCalendar([], [new MarketSpecialSession {
+            Exchange = "NSE", Date = day, Name = "Muhurat", OpenIst = new(14, 20), CloseIst = new(15, 40), CashCloseIst = new(15, 30) }]);
+        var service = new MarketSessionService(calendar);
+        var cash = service.GetSessionInfo(Ist(2026, 11, 8, 15, 35), "NSE", "CM");
+        var futures = service.GetSessionInfo(Ist(2026, 11, 8, 15, 35), "NSE", "FO");
+        Assert.False(cash.IsMarketOpen);
+        Assert.True(futures.IsMarketOpen);
+        Assert.Equal(70, (cash.SessionCloseUtc - cash.SessionOpenUtc).TotalMinutes);
+        Assert.Equal(80, (futures.SessionCloseUtc - futures.SessionOpenUtc).TotalMinutes);
+    }
+
+    [Fact]
     public void A_year_with_no_calendar_is_reported_not_assumed_open()
     {
         var service = Service(Holiday("NSE", GaneshChaturthi, "Ganesh Chaturthi"));

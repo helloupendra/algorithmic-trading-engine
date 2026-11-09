@@ -190,12 +190,8 @@ say "=== market-open: $(date '+%A %d %B %Y') ==="
 [ "$DRY_RUN" = 1 ] && say "(dry run — nothing will be started)"
 [ "$REDEPLOY_ONLY" = 1 ] && say "(redeploy only — the API and the feeds are left as they are; the plan and the tally follow)"
 
-# --- 0. is it even a trading day? -------------------------------------------
-DOW="$(date +%u)"   # 1=Mon .. 7=Sun
-if [ "$DOW" -ge 6 ]; then
-  say "Weekend — the market is closed. Nothing to do."
-  exit 0
-fi
+# Weekend sessions are decided by the exchange calendar below.
+DOW="$(date +%u)"
 
 # --- 1. credentials ----------------------------------------------------------
 load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
@@ -219,52 +215,29 @@ if [ "$DRY_RUN" != 1 ] && [ "$REDEPLOY_ONLY" != 1 ] && [ "$((10#$(date +%H%M)))"
 fi
 
 # --- 1c. is the exchange open today? ------------------------------------------
-# Weekends are caught above without the API; holidays need the exchanges' own
-# calendar, which the API holds (System > Market calendar). On 2026-09-14,
-# Ganesh Chaturthi, this script could not tell: it restarted everything and
-# waited for a FYERS sign-in until 14:30 on a day NSE never opened.
-#
-# So the API that is already running is asked first, before anything is
-# rebuilt or restarted. A day the calendar cannot vouch for — no answer, a
-# non-2xx answer, or a calendarWarning (its list for this year is missing) —
-# is "unknown", not "trading": the job carries on, but if nothing has priced
-# by the open it stops as "probably a holiday" instead of waiting for FYERS
-# until 14:30 (probably_holiday, steps 4 and 6). scripts/lib/morning_checks.py
-# reads the answer.
+# Ask all three exchange calendars before restarting anything. This includes
+# special weekend sessions and MCX-only days. Unknown weekdays retain the
+# existing feed-based holiday check; an unverified weekend fails closed.
 DAY_STATE=unknown        # trading | unknown; a holiday ends the job here
 DAY_WHY=""               # why it is unknown
 DAY_ASK_AGAIN=0          # 1 when the API gave no answer: asked again once it is up
-CALENDAR_WARNED=0
 ask_trading_day() {
-  local body answered=yes out verdict detail warning
-  if ! api_healthy; then
-    DAY_STATE=unknown; DAY_WHY="the API was not running to ask"; DAY_ASK_AGAIN=1
-    return 0
-  fi
-  body="$(api_get "/api/MarketSession/check?exchange=NSE&segment=CM" 2>/dev/null)" || answered=no
-  out="$(printf '%s' "$body" | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" session --answered "$answered" 2>/dev/null)" || out=""
-  verdict="$(printf '%s\n' "$out" | sed -n 1p)"
-  detail="$(printf '%s\n' "$out" | sed -n 2p)"
-  warning="$(printf '%s\n' "$out" | sed -n 3p)"
-  if [ -n "$warning" ] && [ "$CALENDAR_WARNED" = 0 ]; then
-    warn "$warning"
-    notify "AlgoTrading" "Holiday calendar: $warning Add it under System > Market calendar."
-    CALENDAR_WARNED=1
-  fi
-  case "$verdict" in
-    holiday)
-      say "Exchange holiday — NSE is closed today ($detail). Nothing to start."
-      notify "AlgoTrading" "Market holiday today: $detail. NSE is closed; the desk is not starting feeds or strategies."
-      exit 0 ;;
-    trading)
-      DAY_STATE=trading; DAY_WHY=""; DAY_ASK_AGAIN=0 ;;
+  local schedule="$DESK_STATE_DIR/morning-session-schedule.json" state
+  python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --api "$API" --output "$schedule"
+  read -r state _ _ _ _ SESSION_OPEN_AT SESSION_FEED_JUDGE_AT SESSION_MASTERS_UNTIL SESSION_LOGIN_UNTIL _ < <(python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --read "$schedule")
+  SESSION_SCHEDULE="$schedule"
+  case "$state" in
+    closed) say "Exchange calendar: NSE, BSE and MCX are closed today. Nothing to start."; exit 0 ;;
+    trading) DAY_STATE=trading; DAY_WHY=""; DAY_ASK_AGAIN=0 ;;
     *)
-      DAY_STATE=unknown; DAY_WHY="${detail:-the answer from the calendar could not be read}"
-      # No answer is worth asking for again once the API is up; a calendar
-      # warning is the same answer every time.
-      if [ "$answered" = no ] || [ -z "$verdict" ]; then DAY_ASK_AGAIN=1; else DAY_ASK_AGAIN=0; fi ;;
+      DAY_STATE=unknown; DAY_WHY="the exchange calendar could not be verified"; DAY_ASK_AGAIN=1
+      if [ "$DOW" -ge 6 ]; then
+        fail "weekend session is unverified; check the API calendar before starting feeds."
+      fi ;;
   esac
+  LOGIN_WAIT_UNTIL="${MARKET_OPEN_LOGIN_UNTIL:-$SESSION_LOGIN_UNTIL}"
 }
+
 ask_trading_day
 if [ "$DAY_STATE" = unknown ]; then
   warn "cannot tell whether today is a trading day ($DAY_WHY) — carrying on; if nothing has priced by the open, this stops as a probable holiday"
@@ -274,7 +247,7 @@ fi
 # the report, first line pass | partial | fail. Empty when it could not be taken.
 feed_report() {
   api_get /api/LiveData/latest/all 2>/dev/null \
-    | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" feed --underlyings "$PLAN_UNDERLYINGS" 2>/dev/null
+    | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" feed --underlyings "$PLAN_UNDERLYINGS" --sessions "$SESSION_SCHEDULE" 2>/dev/null
   return 0
 }
 
@@ -287,7 +260,7 @@ probably_holiday() {
   exit 0
 }
 # 09:15 and a 90 s grace for every spot's first print after the open (HHMMSS).
-FEED_JUDGE_AT="${MARKET_OPEN_FEED_JUDGE_AT:-091630}"
+FEED_JUDGE_AT="${MARKET_OPEN_FEED_JUDGE_AT:-${SESSION_FEED_JUDGE_AT:-091630}}"
 
 # --- 2. infrastructure -------------------------------------------------------
 if [ "$DRY_RUN" = 1 ]; then
@@ -331,6 +304,7 @@ auth_token >/dev/null || fail "could not sign in to the API as $ADMIN_USERNAME."
 # asked, so a holiday is still caught before any feed or strategy starts.
 if [ "$DAY_ASK_AGAIN" = 1 ]; then
   ask_trading_day
+  FEED_JUDGE_AT="${MARKET_OPEN_FEED_JUDGE_AT:-${SESSION_FEED_JUDGE_AT:-091630}}"
   if [ "$DAY_STATE" = trading ]; then say "the calendar says today is a trading day"; fi
 fi
 
@@ -345,7 +319,7 @@ fi
 # yesterday's master still trades. scripts/lib/morning_checks.py reads it.
 # >>> masters-refresh (also loaded by scripts/tests/market-open-masters.test.sh)
 MASTERS_WAIT_SECONDS="${MARKET_OPEN_MASTERS_WAIT:-300}"
-MASTERS_WAIT_UNTIL="${MARKET_OPEN_MASTERS_UNTIL:-0912}"
+MASTERS_WAIT_UNTIL="${MARKET_OPEN_MASTERS_UNTIL:-${SESSION_MASTERS_UNTIL:-0912}}"
 
 refresh_masters() {
   local since out report verdict waited=0 line
@@ -623,7 +597,7 @@ wait_for_fyers() {  # blocks until FYERS (or, late, Dhan) is signed in; fails th
     # A louder reminder at the open itself, then one every ten minutes: the
     # first notification is easy to sleep through, and every minute waited is
     # a minute of the session gone.
-    if [ "$NUDGED_OPEN" = 0 ] && [ "$NOW" -ge 0915 ]; then
+    if [ "$NUDGED_OPEN" = 0 ] && [ "$NOW" -ge "${SESSION_OPEN_AT:-0915}" ]; then
       notify "AlgoTrading" "Market is OPEN and FYERS is not signed in — nothing is trading."
       NUDGED_OPEN=1
       LAST_NUDGE=$(date +%s)
@@ -746,9 +720,9 @@ else
 fi
 
 # --- 6. wait for the open, then prove the feed is live -----------------------
-if [ "$(date +%H%M)" -lt 0916 ]; then
-  say "waiting for the 09:15 open ..."
-  while [ "$(date +%H%M)" -lt 0916 ]; do sleep 20; done
+if [ "$(date +%H%M%S)" -lt "$FEED_JUDGE_AT" ]; then
+  say "waiting for the calendar open ($SESSION_OPEN_AT IST) ..."
+  while [ "$(date +%H%M%S)" -lt "$FEED_JUDGE_AT" ]; do sleep 20; done
   say "market open — checking the feed"
 else
   # A late sign-in: the session is already under way, so there is nothing to

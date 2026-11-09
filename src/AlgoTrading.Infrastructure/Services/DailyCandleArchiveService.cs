@@ -57,17 +57,20 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
     private readonly ISymbolUniverseService _symbolUniverse;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DailyCandleArchiveService> _logger;
+    private readonly IMarketSessionService? _sessions;
 
     public DailyCandleArchiveService(
         TradingDbContext db,
         ISymbolUniverseService symbolUniverse,
         IConfiguration configuration,
-        ILogger<DailyCandleArchiveService> logger)
+        ILogger<DailyCandleArchiveService> logger,
+        IMarketSessionService? sessions = null)
     {
         _db = db;
         _symbolUniverse = symbolUniverse;
         _configuration = configuration;
         _logger = logger;
+        _sessions = sessions;
     }
 
     public async Task<CandleArchiveResult> ArchiveDayAsync(DateOnly istDay, bool includeBrokerBackfill, CancellationToken cancellationToken = default)
@@ -102,6 +105,12 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
             cancellationToken.ThrowIfCancellationRequested();
             // An option or a future trades to the derivatives close; read off the symbol once, not per bar.
             bool derivative = EquityMarketHours.IsDerivative(symbol);
+            var exchange = symbol.Split(':')[0];
+            var session = _sessions?.GetSessionInfo(IstTime.MiddayUtc(istDay), exchange, exchange == "MCX" ? "COM" : derivative ? "FO" : "CM");
+            bool calendarKnown = session is { CalendarWarning: null };
+            bool InSession(DateTime at) => calendarKnown
+                ? session!.IsTradingDay && at >= session.SessionOpenUtc && at < session.SessionCloseUtc
+                : !IsExchangePreOpen(symbol, at) && !IsExchangeAfterClose(symbol, derivative, at);
             try
             {
                 var bars = await _db.LiveBars.AsNoTracking()
@@ -118,13 +127,12 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                     // session: a few indicative prints that put a wick to
                     // nowhere on the first candle. The broker's own candles
                     // start at 09:15, and so do these. MCX has no pre-open.
-                    .Where(b => !IsExchangePreOpen(symbol, b.BarStartUtc))
+                    .Where(b => InSession(b.BarStartUtc))
                     // And nothing after the close. The vendors keep quoting the
                     // day's last price for hours — NIFTYBANK arrived at 57 ticks
                     // a minute until 20:00 IST on 2026-09-18 — and those bars
                     // rolled up into flat candles a chart reads as a market that
                     // traded without moving.
-                    .Where(b => !IsExchangeAfterClose(symbol, derivative, b.BarStartUtc))
                     .ToList();
                 result.LiveBarsRead += bars.Count;
 
@@ -137,7 +145,7 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                     .Where(c => c.Symbol == symbol && c.SourceKey == SourceKey && c.TimeStampUtc >= fromUtc && c.TimeStampUtc <= toUtc)
                     .ToListAsync(cancellationToken);
                 outsideSession = outsideSession
-                    .Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc) || IsExchangeAfterClose(symbol, derivative, c.TimeStampUtc))
+                    .Where(c => !InSession(c.TimeStampUtc))
                     .ToList();
                 if (outsideSession.Count > 0)
                 {
@@ -150,7 +158,7 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
 
                 foreach (var m in Minutes)
                 {
-                    var rolled = LiveBarRollup.Roll(bars, m);
+                    var rolled = LiveBarRollup.Roll(bars, m, calendarKnown ? session!.SessionOpenUtc : null);
                     await WriteAsync(symbol, m.ToString(), rolled, result, cancellationToken);
                 }
             }

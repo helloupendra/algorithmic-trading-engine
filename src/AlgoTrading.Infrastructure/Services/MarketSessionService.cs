@@ -144,7 +144,8 @@ public class MarketSessionService : IMarketSessionService
     {
         var special = _calendar.SpecialSessionOn(market, date);
         if (special is not null)
-            return [(date.ToDateTime(special.OpenIst), date.ToDateTime(special.CloseIst))];
+            return [(date.ToDateTime(special.OpenIst), date.ToDateTime(!derivatives && market != "MCX"
+                ? special.CashCloseIst ?? special.CloseIst : special.CloseIst))];
 
         if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
             return [];

@@ -24,6 +24,9 @@ public class MarketSpecialSession
     /// <summary>Session end, IST.</summary>
     public TimeOnly CloseIst { get; set; }
 
+    /// <summary>Optional cash-market close when equity derivatives continue later.</summary>
+    public TimeOnly? CashCloseIst { get; set; }
+
     /// <summary>The circular that announced it.</summary>
     public string? Source { get; set; }
 

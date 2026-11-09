@@ -19,13 +19,16 @@ namespace AlgoTrading.Infrastructure.Services
     {
         private readonly TradingDbContext _dbContext;
         private readonly IMarketDataService _marketDataService;
+        private readonly IMarketSessionService? _sessions;
 
         public SymbolUniverseService(
             TradingDbContext dbContext,
-            IMarketDataService marketDataService)
+            IMarketDataService marketDataService,
+            IMarketSessionService? sessions = null)
         {
             _dbContext = dbContext;
             _marketDataService = marketDataService;
+            _sessions = sessions;
         }
 
         public async Task<BackfillHistoryResponse> EnsureHistoryCoverageAsync(
@@ -73,7 +76,32 @@ namespace AlgoTrading.Infrastructure.Services
             // Today counts only once its session has closed. Asking the broker
             // for a session that has not happened is not an empty answer — FYERS
             // returns "Something went wrong", which reads like a bad symbol.
-            var lastCompleted = LastCompletedSession();
+            var now = DateTime.UtcNow;
+            var today = IstTime.DateOf(now);
+            var exchange = instrument.Exchange;
+            var segment = exchange == "MCX" ? "COM" : request.Symbol.EndsWith("-INDEX", StringComparison.OrdinalIgnoreCase) ? "CM" : instrument.Segment;
+            var infoByDay = new Dictionary<DateOnly, AlgoTrading.Domain.ValueObjects.MarketSessionInfo?>();
+            AlgoTrading.Domain.ValueObjects.MarketSessionInfo? Session(DateOnly day)
+            {
+                if (!infoByDay.TryGetValue(day, out var info))
+                {
+                    info = _sessions?.GetSessionInfo(IstTime.MiddayUtc(day), exchange, segment);
+                    if (!string.IsNullOrEmpty(info?.CalendarWarning)) info = null;
+                    infoByDay[day] = info;
+                }
+                return info;
+            }
+            bool IsTradingDay(DateOnly day) => Session(day)?.IsTradingDay
+                ?? (day.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday));
+            int? ExpectedBars(DateOnly day) => Session(day) is { IsTradingDay: true } info && int.TryParse(resolution, out var minutes) && minutes > 0
+                ? (int)Math.Ceiling((info.SessionCloseUtc - info.SessionOpenUtc).TotalMinutes / minutes)
+                : HistoryCoverage.ExpectedBarsPerDay(resolution);
+            var lastCompleted = Session(today) is { IsTradingDay: true } current
+                ? (now >= current.SessionCloseUtc ? today : today.AddDays(-1)) : LastCompletedSession();
+            // A vendor's empty answer is not proof that a confirmed session was
+            // closed. Revisit those dates when the calendar can vouch for them.
+            knownEmpty.RemoveWhere(day => day >= request.FromDate && day <= request.ToDate
+                && Session(day) is { IsTradingDay: true } && policy == CoveragePolicy.Continuous);
 
             var barsByDate = await BarsByDateAsync(request, resolution, cancellationToken);
             response.LocalCandlesAvailable = barsByDate.Values.Sum();
@@ -83,7 +111,7 @@ namespace AlgoTrading.Infrastructure.Services
             // one day out of twenty as fully covered, so it was never completed
             // and every backtest over it crossed the hole in silence.
             var gaps = HistoryCoverage.FindGaps(
-                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted);
+                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted, IsTradingDay, ExpectedBars);
 
             foreach (var gap in gaps)
             {
@@ -111,17 +139,17 @@ namespace AlgoTrading.Infrastructure.Services
                 // broker can fill — a market holiday, or a contract that had
                 // not begun trading. Recording it is what lets coverage ever
                 // reach "complete".
-                foreach (var day in HistoryCoverage.ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted))
+                foreach (var day in HistoryCoverage.ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted, IsTradingDay))
                 {
-                    if (!barsByDate.ContainsKey(day)) knownEmpty.Add(day);
+                    if (!barsByDate.ContainsKey(day) && (Session(day) is not { IsTradingDay: true } || policy == CoveragePolicy.Sparse)) knownEmpty.Add(day);
                 }
             }
 
             var remaining = HistoryCoverage.FindGaps(
-                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted);
+                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted, IsTradingDay, ExpectedBars);
 
             var expectedDays = HistoryCoverage
-                .ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted)
+                .ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted, IsTradingDay)
                 .Where(d => !knownEmpty.Contains(d))
                 .ToList();
 
@@ -129,7 +157,7 @@ namespace AlgoTrading.Infrastructure.Services
             response.TradingDaysCovered = expectedDays.Count(d =>
                 HistoryCoverage.ClassifyDay(
                     barsByDate.TryGetValue(d, out int n) ? n : 0,
-                    HistoryCoverage.ExpectedBarsPerDay(resolution), policy) == DayCoverage.Complete);
+                    ExpectedBars(d), policy) == DayCoverage.Complete);
 
             response.RemainingGaps = remaining.Select(g => g.ToString()).ToList();
             response.FullCoverageAfterBackfill = remaining.Count == 0;
@@ -181,9 +209,9 @@ namespace AlgoTrading.Infrastructure.Services
                 .Where(x =>
                     x.Symbol == request.Symbol &&
                     x.Resolution == resolution &&
-                    x.TimeStampUtc >= request.FromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) &&
-                    x.TimeStampUtc < request.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
-                .GroupBy(x => x.TimeStampUtc.Date)
+                    x.TimeStampUtc >= IstTime.StartOfDayUtc(request.FromDate) &&
+                    x.TimeStampUtc < IstTime.StartOfDayUtc(request.ToDate.AddDays(1)))
+                .GroupBy(x => x.TimeStampUtc.AddMinutes(330).Date)
                 .Select(g => new { Date = g.Key, Count = g.Count() })
                 .ToListAsync(cancellationToken);
 

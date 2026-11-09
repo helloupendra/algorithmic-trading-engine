@@ -148,6 +148,14 @@ public class MarketCalendarController : ControllerBase
             !TimeOnly.TryParseExact(request.CloseIst, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var close))
             return BadRequest(new { message = "Open and close must be HH:mm (IST)." });
         if (close <= open) return BadRequest(new { message = "The session must close after it opens." });
+        TimeOnly? cashClose = null;
+        if (!string.IsNullOrWhiteSpace(request.CashCloseIst))
+        {
+            if (exchange == "MCX" || !TimeOnly.TryParseExact(request.CashCloseIst, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedCash)
+                || parsedCash <= open || parsedCash > close)
+                return BadRequest(new { message = "Cash close must be HH:mm, after the open and no later than the derivatives close; only NSE/BSE support it." });
+            cashClose = parsedCash;
+        }
 
         var source = (request.Source ?? string.Empty).Trim();
         if (source.Length is 0 or > 200) return BadRequest(new { message = "Source is required: the circular announcing the session (at most 200 characters)." });
@@ -163,6 +171,7 @@ public class MarketCalendarController : ControllerBase
         row.Name = name;
         row.OpenIst = open;
         row.CloseIst = close;
+        row.CashCloseIst = cashClose;
         row.Source = source;
         row.UpdatedBy = User.GetUserName() ?? "admin";
         row.UpdatedUtc = now;
@@ -219,6 +228,7 @@ public class MarketCalendarController : ControllerBase
         Name = x.Name,
         OpenIst = x.OpenIst.ToString("HH:mm", CultureInfo.InvariantCulture),
         CloseIst = x.CloseIst.ToString("HH:mm", CultureInfo.InvariantCulture),
+        CashCloseIst = x.CashCloseIst?.ToString("HH:mm", CultureInfo.InvariantCulture),
         Source = x.Source,
         UpdatedBy = x.UpdatedBy,
         UpdatedUtc = x.UpdatedUtc,

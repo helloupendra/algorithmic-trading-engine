@@ -54,6 +54,8 @@ public static class DhanRegistration
         services.AddSingleton<DhanRateGate>();
 
         services.AddScoped<DhanApiClient>();
+        services.AddSingleton<DhanReferencePrices>();
+        services.AddScoped<DhanReferencePriceReader>();
         services.AddScoped<IMarketDataProvider, DhanMarketDataProvider>();
 
         // The daily browser sign-in: resolvable by name for the callback, and as

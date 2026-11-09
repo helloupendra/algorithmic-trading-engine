@@ -36,6 +36,7 @@ public class MarketSpecialSessionDto
 
     /// <summary>IST, HH:mm.</summary>
     public string CloseIst { get; set; } = string.Empty;
+    public string? CashCloseIst { get; set; }
 
     public string? Source { get; set; }
     public string? UpdatedBy { get; set; }
@@ -98,6 +99,7 @@ public class SaveMarketSpecialSessionRequest
 
     /// <summary>HH:mm, IST.</summary>
     public string CloseIst { get; set; } = string.Empty;
+    public string? CashCloseIst { get; set; }
 
     public string? Source { get; set; }
 }
