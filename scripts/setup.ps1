@@ -88,13 +88,17 @@ foreach ($candidate in @('python', 'python3', 'py')) {
     $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
     if (-not $cmd) { continue }
     # Skip the Microsoft Store stub, which exits 9009 instead of running.
-    & $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' *> $null
+    & $candidate -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,12) else 1)' *> $null
     if ($LASTEXITCODE -eq 0) { $python = $candidate; break }
+}
+if (-not $python -and (Get-Command py -ErrorAction SilentlyContinue)) {
+    $selected = & py -3.12 -c 'import sys; print(sys.executable)' 2>$null
+    if ($LASTEXITCODE -eq 0) { $python = $selected }
 }
 if ($python) {
     Write-Ok "Python $(& $python -c 'import platform;print(platform.python_version())') ($python)"
 } else {
-    $missing.Add('  - Python 3.10+         https://www.python.org/downloads/')
+    $missing.Add('  - Python 3.12         https://www.python.org/downloads/')
 }
 
 if ($missing.Count -gt 0) {
@@ -220,6 +224,8 @@ if (-not (Test-Path .venv)) {
     Write-Ok '.venv already exists'
 }
 $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+& $venvPython -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,12) else 1)'
+if ($LASTEXITCODE -ne 0) { Stop-WithError 'The existing .venv must use Python 3.12. Preserve it and create a separate replacement; see docs/python-dependencies.md.' }
 & $venvPython -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
 if ($LASTEXITCODE -ne 0) { Stop-WithError 'Python installer upgrade failed.' }
 & $venvPython -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements.txt

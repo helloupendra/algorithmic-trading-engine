@@ -73,9 +73,9 @@ else
 fi
 
 PY=""
-for candidate in python3 python; do
+for candidate in python3.12 python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,12) else 1)' 2>/dev/null; then
       PY="$candidate"; break
     fi
   fi
@@ -83,7 +83,7 @@ done
 if [ -n "$PY" ]; then
   ok "Python $($PY -c 'import platform;print(platform.python_version())') ($PY)"
 else
-  MISSING="$MISSING\n  - Python 3.10+         https://www.python.org/downloads/"
+  MISSING="$MISSING\n  - Python 3.12         https://www.python.org/downloads/"
 fi
 
 if [ -n "$MISSING" ]; then
@@ -198,6 +198,7 @@ if [ ! -d .venv ]; then
 else
   ok ".venv already exists"
 fi
+./.venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,12) else 1)' || die "The existing .venv must use Python 3.12. Preserve it and create a separate replacement; see docs/python-dependencies.md."
 ./.venv/bin/python -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
 ./.venv/bin/python -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements.txt
 ok "Python dependencies installed"

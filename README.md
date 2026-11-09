@@ -289,7 +289,7 @@ the machine.
 | `AlgoTrading.Api` | .NET 10 | REST API, auth and access control, instruments, expiry resolution, simulation, risk, and the connector registry that decides which vendor serves which job; serves the built web console from `wwwroot` |
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Optional: drains the Redis tick stream into the `market_ticks` archive, with retries and a dead-letter stream (the API stores live ticks itself) |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
-| `AlgoTrading.PythonEngine` | Python 3.10+ | Live ingestion (Dhan, with FYERS as the fallback), option-chain tracking, strategy execution, and Sentinel, the rules-based watchman |
+| `AlgoTrading.PythonEngine` | Python 3.12 | Live ingestion (Dhan, with FYERS as the fallback), option-chain tracking, strategy execution, and Sentinel, the rules-based watchman |
 | `web/` | React 19 + Vite + TypeScript | Web console: the admin modules plus the trader screens |
 
 The .NET solution follows a clean-architecture split: `Domain` → `Application`
@@ -312,7 +312,7 @@ The same four tools on every operating system:
 | Docker Desktop | any current | `docker --version` | <https://www.docker.com/products/docker-desktop/> |
 | Docker Compose | v2+ | `docker compose version` | bundled with Docker Desktop |
 | .NET SDK | **10.0+** | `dotnet --version` | <https://dotnet.microsoft.com/download/dotnet/10.0> |
-| Python | **3.10+** | `python3 --version` | <https://www.python.org/downloads/> |
+| Python | **3.12** | `python3 --version` | <https://www.python.org/downloads/> |
 
 Plus a [FYERS](https://myapi.fyers.in/dashboard) account and API app if you want
 live market data. The infrastructure and API start fine without one.
