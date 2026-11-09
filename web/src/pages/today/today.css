@@ -381,3 +381,12 @@ a.tdy-mems__id:hover { text-decoration: underline; }
   .tdy-facts > div { grid-template-columns: minmax(0, 1fr); }
   .panel .tdy-agents { grid-template-columns: minmax(0, 1fr); }
 }
+
+.tdy-pnl-parts {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.tdy-pnl-parts > span { display: block; white-space: nowrap; }

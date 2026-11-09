@@ -1,4 +1,6 @@
 using AlgoTrading.Api.Services;
+using AlgoTrading.Api.Configuration;
+using AlgoTrading.Api.Services.Today;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -6,6 +8,8 @@ using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace AlgoTrading.IntegrationTests;
@@ -59,6 +63,54 @@ public sealed class ManualOrderTransactionTests : IAsyncLifetime
     }
 
     public Task DisposeAsync() => AdminCommand($"DROP DATABASE IF EXISTS \"{_database}\" WITH (FORCE)");
+
+    [PostgresTheory]
+    [InlineData("Running")]
+    [InlineData("Stopped")]
+    public async Task A_committed_carried_fill_is_valued_in_Today_even_after_the_runner_stops(string status)
+    {
+        await using var db = OpenDb();
+        await Ticket(db, new RecordingEvents(() => OpenDb())).PlaceAsync(Command(90, 120, true), CancellationToken.None);
+        var run = await db.SimulationRuns.SingleAsync();
+        var position = await db.PaperPositions.SingleAsync();
+        var now = DateTime.UtcNow;
+        run.StartedUtc = run.CreatedUtc = now.AddDays(-2);
+        run.Status = status;
+        position.OpenedUtc = now.AddDays(-2);
+        position.UnrealizedPnl = 999m; // The latest quote must override this stale stored value.
+        (await db.LiveQuotesLatest.SingleAsync()).LastTradedPrice = 80m;
+        await db.SaveChangesAsync();
+
+        var directory = Directory.CreateTempSubdirectory("today-catalog-");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(directory.FullName, "strategies"));
+            using var provider = new ServiceCollection().BuildServiceProvider();
+            var registry = new StrategyProcessRegistry(provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<StrategyProcessRegistry>.Instance);
+            var lots = new UnitLots();
+            var charges = new RunCharges(db, lots);
+            var catalog = new StrategyCatalogService(new PythonEngineLocator(
+                Options.Create(new StrategyRunnerOptions { EngineDirectory = directory.FullName }), null!),
+                NullLogger<StrategyCatalogService>.Instance);
+            var history = new LiveRunHistoryBuilder(db, registry, catalog, lots, charges, new RunPnl(db, lots, charges));
+            // TradingAsync reads neither host files nor market sessions.
+            var builder = new TodayBuilder(db, history, null!, new AlgoTrading.Infrastructure.Ai.AiSettingsStore(db), null!);
+            var trading = await builder.TradingAsync(IstTime.DateOf(now), CancellationToken.None);
+            var row = Assert.Single(trading.Runs);
+            var account = Assert.Single(trading.Accounts);
+            Assert.Equal(run.Id, row.RunId);
+            Assert.Equal(-20.5m, row.Unrealized);
+            Assert.True(row.Charges > 0m);
+            Assert.Equal(-row.Charges, row.RealizedNet);
+            Assert.Equal(-20.5m - row.Charges, row.Net);
+            Assert.Equal(row.Net, account.Net);
+            Assert.Equal(1, account.OpenLegs);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
 
     [PostgresTheory]
     [InlineData(90, 120, true)]

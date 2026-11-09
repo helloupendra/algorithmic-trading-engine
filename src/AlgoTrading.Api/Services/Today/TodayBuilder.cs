@@ -239,28 +239,43 @@ public sealed class TodayBuilder(
     }
 
     /// <summary>
-    /// The day's live runs (recaps left out) by account, worst net first, and run by run, net after charges as the run
-    /// history states it. Ira's close briefing reads it too (<see cref="AiVoice.IraDesk"/>), so the two never differ.
+    /// Today's runs and carried books (recaps left out), worst full-run net first. Net includes open P&amp;L and
+    /// charges; it is not the change since midnight. Ira's close briefing reads the same snapshot.
     /// </summary>
     public async Task<TodayTrading> TradingAsync(DateOnly today, CancellationToken cancellationToken)
     {
-        var runs = await history.ListAsync(new LiveRunHistoryFilter(null, null, null, null, today, today, LiveRunHistoryFilter.MaxTake, 0), cancellationToken);
-        var recaps = await history.ListAsync(new LiveRunHistoryFilter(null, null, null, null, today, today, LiveRunHistoryFilter.MaxTake, 0, Recaps: true),
-            cancellationToken);
+        var runs = await history.ListTradingDayAsync(today, cancellationToken);
+        var start = IstTime.StartOfDayUtc(today);
+        var end = IstTime.StartOfDayUtc(today.AddDays(1));
+        var recaps = await db.SimulationRuns.AsNoTracking().OnlyRecaps()
+            .CountAsync(r => r.Mode == StrategyRunControl.LivePaperMode
+                && (r.StartedUtc ?? r.CreatedUtc) >= start && (r.StartedUtc ?? r.CreatedUtc) < end, cancellationToken);
 
         static bool Live(LiveRunSummaryResponse r) => r.IsActive || r.Status is "Running" or "Stopping";
+        // Round the displayed components once per run, then aggregate those same
+        // figures so rows, accounts and the headline reconcile to the cent.
+        var figures = runs.ToDictionary(r => r.RunId, r => new RunPnl.Figures(Round(r.RealizedPnl), Round(r.UnrealizedPnl), Round(r.Charges)));
         var accounts = runs
-            .GroupBy(r => r.UserName ?? $"user {r.UserId}")
-            .Select(g => new TodayAccount(g.Key, Round(g.Sum(r => r.NetPnl)), Round(g.Sum(r => r.GrossPnl)), Round(g.Sum(r => r.Charges)),
-                g.Count(Live), g.Count(r => !Live(r)), g.Sum(r => r.OpenPositions)))
+            .GroupBy(r => r.UserId)
+            .Select(g => new TodayAccount(g.First().UserName ?? $"user {g.Key}", g.Sum(r => figures[r.RunId].Net),
+                g.Sum(r => figures[r.RunId].Realized), g.Sum(r => figures[r.RunId].Charges),
+                g.Count(Live), g.Count(r => !Live(r)), g.Sum(r => r.OpenPositions))
+            {
+                Unrealized = g.Sum(r => figures[r.RunId].Unrealized),
+            })
             .OrderBy(a => a.Net)
             .ToList();
         var rows = runs
-            .OrderBy(r => r.NetPnl)
+            .OrderBy(r => figures[r.RunId].Net)
             .Select(r => new TodayRun(r.RunId, r.UserName ?? string.Empty, r.StrategyName, r.Underlying, Live(r) ? "Running" : r.Status,
-                Round(r.NetPnl), r.Trades, Utc(r.StartedUtc), Utc(r.StoppedUtc), r.StopReason))
+                figures[r.RunId].Net, r.Trades, Utc(r.StartedUtc), Utc(r.StoppedUtc), r.StopReason)
+            {
+                RealizedNet = figures[r.RunId].Realized - figures[r.RunId].Charges,
+                Unrealized = figures[r.RunId].Unrealized,
+                Charges = figures[r.RunId].Charges,
+            })
             .ToList();
-        return new TodayTrading(accounts, rows, recaps.Count);
+        return new TodayTrading(accounts, rows, recaps);
     }
 
     private async Task<List<TodayAgent>> AgentsAsync(DateTime dayStart, CancellationToken cancellationToken)
@@ -504,10 +519,20 @@ public sealed record TodayAttention(string Level, string Kind, string Title, str
 
 public sealed record TodayTrading(IReadOnlyList<TodayAccount> Accounts, IReadOnlyList<TodayRun> Runs, int RecapsToday);
 
-public sealed record TodayAccount(string UserName, decimal Net, decimal Gross, decimal Charges, int RunsLive, int RunsStopped, int OpenLegs);
+/// <summary>Gross is realized before charges; Net = RealizedNet + Unrealized, over the full selected runs.</summary>
+public sealed record TodayAccount(string UserName, decimal Net, decimal Gross, decimal Charges, int RunsLive, int RunsStopped, int OpenLegs)
+{
+    public decimal Unrealized { get; init; }
+    public decimal RealizedNet => Gross - Charges;
+}
 
 public sealed record TodayRun(long RunId, string UserName, string Strategy, string Underlying, string Status, decimal Net, int Trades,
-    DateTime? StartedUtc, DateTime? StoppedUtc, string? StopReason);
+    DateTime? StartedUtc, DateTime? StoppedUtc, string? StopReason)
+{
+    public decimal RealizedNet { get; init; }
+    public decimal Unrealized { get; init; }
+    public decimal Charges { get; init; }
+}
 
 public sealed record TodayAgent(string Key, string Name, bool On, int CallsToday, int FailedCallsToday, TodayReportCounts ReportsToday,
     DateTime? LastActivityUtc, IReadOnlyList<TodayLink> Highlights);

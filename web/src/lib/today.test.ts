@@ -69,8 +69,8 @@ const body = {
   ],
   trading: {
     accounts: [
-      { userName: 'admin', net: -109156.0, gross: -48986.0, charges: 70006.0, runsLive: 10, runsStopped: 3, openLegs: 6 },
-      { userName: 'coderforchange', net: 2551.0, gross: 4120.0, charges: 1569.0, runsLive: 4, runsStopped: 0, openLegs: 2 },
+      { userName: 'admin', net: -109156.0, gross: -48986.0, realizedNet: -118992, unrealized: 9836, charges: 70006.0, runsLive: 10, runsStopped: 3, openLegs: 6 },
+      { userName: 'coderforchange', net: 2551.0, gross: 4120.0, realizedNet: 2551, unrealized: 0, charges: 1569.0, runsLive: 4, runsStopped: 0, openLegs: 2 },
     ],
     runs: [
       {
@@ -80,6 +80,7 @@ const body = {
         underlying: 'BANKNIFTY',
         status: 'Stopped',
         net: -86804.0,
+        realizedNet: -86804, unrealized: 0, charges: 0,
         trades: 266,
         startedUtc: '2026-10-01T03:46:00Z',
         stoppedUtc: '2026-10-01T05:10:00Z',
@@ -92,6 +93,7 @@ const body = {
         underlying: 'NIFTY',
         status: 'Running',
         net: 2551.0,
+        realizedNet: 2551, unrealized: 0, charges: 1569,
         trades: 12,
         startedUtc: '2026-10-01T03:46:00Z',
         stoppedUtc: null,
@@ -358,6 +360,8 @@ describe('reading the day', () => {
       userName: 'admin',
       net: null,
       gross: null,
+      realizedNet: null,
+      unrealized: null,
       charges: null,
       runsLive: 2,
       runsStopped: 0,
@@ -588,6 +592,9 @@ describe('the overview', () => {
     underlying: 'NIFTY',
     status,
     net,
+    realizedNet: net,
+    unrealized: 0,
+    charges: 0,
     trades: 1,
     startedUtc: null,
     stoppedUtc: null,
@@ -611,8 +618,8 @@ describe('the overview', () => {
   it("totals the accounts' day and counts the failed runs among the stopped", () => {
     const t: TodayTrading = {
       accounts: [
-        { userName: 'admin', net: -8765, gross: -3844, charges: 4921, runsLive: 7, runsStopped: 3, openLegs: 8 },
-        { userName: 'coderforchange', net: 5092, gross: 8217, charges: 3125, runsLive: 7, runsStopped: 3, openLegs: 5 },
+        { userName: 'admin', net: -8765, gross: -3844, realizedNet: -8765, unrealized: 0, charges: 4921, runsLive: 7, runsStopped: 3, openLegs: 8 },
+        { userName: 'coderforchange', net: 5092, gross: 8217, realizedNet: 5092, unrealized: 0, charges: 3125, runsLive: 7, runsStopped: 3, openLegs: 5 },
       ],
       runs: [run(-10, 'Failed'), run(5, 'Stopped'), run(1), run(null, 'failed')],
       recapsToday: 0,
@@ -620,6 +627,8 @@ describe('the overview', () => {
     expect(dayTotals(t)).toEqual({
       net: -3673,
       gross: 4373,
+      realizedNet: -3673,
+      unrealized: 0,
       charges: 8046,
       partial: false,
       accounts: 2,
@@ -632,6 +641,25 @@ describe('the overview', () => {
     expect(oneUnknown.net).toBe(-8765)
     expect(oneUnknown.partial).toBe(true)
     expect(dayTotals({ accounts: [], runs: [], recapsToday: 0 }).net).toBeNull()
+  })
+
+  it('keeps realized net distinct from open losses and does not add unrealized twice', () => {
+    const trading = readToday({ ...body, trading: {
+      accounts: [
+        { userName: 'admin', gross: 0, charges: 30, realizedNet: -30, unrealized: -10000, net: -10030 },
+        { userName: 'trader', gross: 500, charges: 20, realizedNet: 480, unrealized: 100, net: 580 },
+      ],
+      runs: [{ runId: 1, net: 580, realizedNet: 480, unrealized: 100, charges: 20 },
+             { runId: 2, net: -10030, realizedNet: -30, unrealized: -10000, charges: 30 }],
+    } }).trading!
+    expect(trading.runs.map(r => r.runId)).toEqual([2, 1])
+    expect(trading.runs[0]).toMatchObject({ net: -10030, realizedNet: -30, unrealized: -10000 })
+    expect(dayTotals(trading)).toMatchObject({ net: -9450, realizedNet: 450, unrealized: -9900, gross: 500, charges: 50 })
+  })
+
+  it('leaves missing P&L breakdowns unknown instead of silently assuming zero open exposure', () => {
+    const trading = readToday({ ...body, trading: { accounts: [{ userName: 'admin', net: -30 }], runs: [] } }).trading!
+    expect(dayTotals(trading)).toMatchObject({ net: -30, realizedNet: null, unrealized: null })
   })
 
   it('counts what needs a look by level, most serious first, and takes the strongest tone', () => {

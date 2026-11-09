@@ -34,6 +34,50 @@ public class RunPnlSeriesTests
 
     private static DateTime Ist(int d, int h, int m, int s = 0) => IstTime.FromIst(new DateTime(2026, 9, d, h, m, s));
 
+    [Theory]
+    [InlineData("Running")]
+    [InlineData("Stopped")]
+    [InlineData("Failed")]
+    public async Task Today_account_and_run_net_match_the_run_detail_with_open_losses_and_charges(string status)
+    {
+        using var desk = new PnlDesk();
+        long run = desk.NewRun("Ghost", PnlDesk.Trader, status: status);
+        desk.Fill(run, Call, "BUY", 2, 100m, Ist(28, 9, 20));
+        desk.Fill(run, Call, "SELL", 2, 110m, Ist(28, 9, 40), closes: true, realized: 1500m);
+        desk.Fill(run, Put, "SELL", 2, 100m, Ist(28, 9, 45));
+        desk.Quote(Put, 180m); // Open loss of 12,000 outweighs the realized gain.
+
+        var trading = await desk.Today();
+        var row = Assert.Single(trading.Runs);
+        var account = Assert.Single(trading.Accounts);
+        var detail = await desk.RunCard(run);
+        var history = Assert.Single(await desk.History());
+
+        Assert.Equal(-12000m, row.Unrealized);
+        Assert.True(row.Charges > 0m);
+        Assert.Equal(Math.Round(detail.Pnl.Net, 2), row.Net);
+        Assert.Equal(Math.Round(detail.Pnl.Realized - detail.Pnl.Charges, 2), row.RealizedNet);
+        Assert.Equal(row.RealizedNet + row.Unrealized, row.Net);
+        Assert.Equal((row.Net, row.RealizedNet, row.Unrealized, row.Charges),
+            (account.Net, account.RealizedNet, account.Unrealized, account.Charges));
+        // The history endpoint still supplies realized net separately, so its consumers do not double count.
+        Assert.Equal(Math.Round(history.NetPnl, 2), row.RealizedNet);
+        Assert.Equal(row.Unrealized, history.UnrealizedPnl);
+    }
+
+    [Fact]
+    public async Task Today_includes_an_overnight_manual_book_and_its_current_quote()
+    {
+        using var desk = new PnlDesk();
+        long book = desk.NewBook(PnlDesk.Trader, Ist(21, 9, 0));
+        desk.Fill(book, Call, "BUY", 3, 80m, Ist(27, 9, 30));
+        desk.Quote(Call, 60m);
+        var row = Assert.Single((await desk.Today()).Runs);
+        Assert.Equal(book, row.RunId);
+        Assert.Equal(-4500m, row.Unrealized);
+        Assert.Equal(Math.Round((await desk.RunCard(book)).Pnl.Net, 2), row.Net);
+    }
+
     // ======================================================== the recorder
 
     [Fact]
@@ -561,6 +605,14 @@ public class RunPnlSeriesTests
         public Task<List<LiveRunSummaryResponse>> History() =>
             InScope(sp => sp.GetRequiredService<LiveRunHistoryBuilder>().ListAsync(
                 new LiveRunHistoryFilter(Trader, null, null, null, null, null, 50, 0), CancellationToken.None));
+
+        public Task<AlgoTrading.Api.Services.Today.TodayTrading> Today() =>
+            InScope(sp => new AlgoTrading.Api.Services.Today.TodayBuilder(
+                sp.GetRequiredService<TradingDbContext>(), sp.GetRequiredService<LiveRunHistoryBuilder>(),
+                sp.GetRequiredService<IMarketSessionService>(),
+                new AlgoTrading.Infrastructure.Ai.AiSettingsStore(sp.GetRequiredService<TradingDbContext>()),
+                RecapClockTests.Inert<IWebHostEnvironment>.Create())
+                .TradingAsync(new DateOnly(2026, 9, 28), CancellationToken.None));
 
         public Task<RunPnlSeriesResponse> Series(long callerId, bool admin, long? userId = null) =>
             InScope(async sp =>

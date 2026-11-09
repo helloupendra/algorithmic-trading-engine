@@ -116,9 +116,9 @@ export function historyListPending(q: { isPending: boolean; isPlaceholderData: b
   return q.isPlaceholderData && (shown === 0 || shown < answered)
 }
 
-/** The P&L a history row shows: realized, plus the open book while the run is live. */
+/** Realized net plus all open exposure, including residual legs after a runner stops. */
 export function runNetPnl(run: Pick<LiveRunSummary, 'netPnl' | 'unrealizedPnl' | 'isActive'>): number {
-  return run.isActive ? run.netPnl + (run.unrealizedPnl ?? 0) : run.netPnl
+  return run.netPnl + (run.unrealizedPnl ?? 0)
 }
 
 /** Human line for the detail header: "Stopped by admin · 12 Sep 14:02" etc. is composed by the page; this is the "by" part. */

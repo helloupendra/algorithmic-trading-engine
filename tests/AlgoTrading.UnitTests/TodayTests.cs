@@ -44,6 +44,89 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task Open_losses_use_stored_marks_when_quotes_are_missing_and_sort_before_closed_losses()
+    {
+        using var desk = new RunnerDesk();
+        long open = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Stopped", "Ghost", net: 0m);
+        long closed = Seed(desk, RunnerDesk.TraderId, "BANKNIFTY", "Stopped", "Ghost", net: -500m);
+        using (var db = desk.Db())
+        {
+            var position = db.PaperPositions.Single(p => p.SimulationRunId == open);
+            position.Status = "Open";
+            position.ClosedUtc = null;
+            position.Quantity = 1;
+            position.UnrealizedPnl = -10000m;
+            db.SaveChanges();
+        }
+        var trading = await Build(desk).TradingAsync(Day, CancellationToken.None);
+        Assert.Equal(new[] { open, closed }, trading.Runs.Select(r => r.RunId));
+        Assert.Equal((0m, -10000m, -10000m),
+            (trading.Runs[0].RealizedNet, trading.Runs[0].Unrealized, trading.Runs[0].Net));
+        Assert.Equal("admin", trading.Accounts[0].UserName);
+        Assert.Equal(1, trading.Accounts[0].OpenLegs);
+    }
+
+    [Fact]
+    public async Task Carried_positions_closed_today_are_included_but_finished_older_runs_and_recaps_are_not()
+    {
+        using var desk = new RunnerDesk();
+        long carried = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Stopped", "Ghost", net: 250m);
+        long old = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Stopped", "Ghost", net: 9999m);
+        long recap = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Running", "Ghost", net: 9999m, recap: true);
+        long future = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Running", "Ghost", net: 9999m);
+        using (var db = desk.Db())
+        {
+            foreach (var run in db.SimulationRuns.Where(r => r.Id == carried || r.Id == old))
+                run.StartedUtc = run.CreatedUtc = Now.AddDays(-2);
+            var closed = db.PaperPositions.Single(p => p.SimulationRunId == carried);
+            closed.OpenedUtc = Now.AddDays(-2);
+            closed.ClosedUtc = IstTime.StartOfDayUtc(Day); // Inclusive IST midnight.
+            db.PaperPositions.Single(p => p.SimulationRunId == old).ClosedUtc = IstTime.StartOfDayUtc(Day).AddTicks(-1);
+            db.SimulationRuns.Single(r => r.Id == future).StartedUtc = IstTime.StartOfDayUtc(Day.AddDays(1));
+            db.SaveChanges();
+        }
+        var trading = await Build(desk).TradingAsync(Day, CancellationToken.None);
+        Assert.Equal(carried, Assert.Single(trading.Runs).RunId);
+        Assert.Equal(250m, Assert.Single(trading.Accounts).Net);
+        Assert.Equal(1, trading.RecapsToday);
+        Assert.DoesNotContain(trading.Runs, r => r.RunId == recap);
+    }
+
+    [Fact]
+    public async Task Account_totals_and_recap_counts_are_not_truncated_at_the_history_page_limit()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            for (int i = 0; i <= AlgoTrading.Api.Services.LiveRunHistoryFilter.MaxTake; i++)
+            {
+                var run = new SimulationRun { UserId = RunnerDesk.AdminId, Mode = "LivePaper", Status = "Stopped",
+                    StrategyName = "Ghost", CreatedUtc = Now, StartedUtc = Now };
+                db.SimulationRuns.Add(run);
+                db.PaperPositions.Add(new PaperPosition { SimulationRunId = run.Id, Status = "Closed", RealizedPnl = 1m });
+                db.SimulationRuns.Add(new SimulationRun { UserId = RunnerDesk.AdminId, Mode = "LivePaper", Status = "Stopped",
+                    StrategyName = "Ghost", CreatedUtc = Now, StartedUtc = Now, ParametersJson = """{"session":"recap"}""" });
+            }
+            db.SaveChanges();
+        }
+        var trading = await Build(desk).TradingAsync(Day, CancellationToken.None);
+        Assert.Equal(501, trading.Runs.Count);
+        Assert.Equal(501m, Assert.Single(trading.Accounts).Net);
+        Assert.Equal(501, trading.RecapsToday);
+    }
+
+    [Fact]
+    public async Task Account_figures_sum_the_displayed_run_cents()
+    {
+        using var desk = new RunnerDesk();
+        Seed(desk, RunnerDesk.AdminId, "NIFTY", "Stopped", "Ghost", net: 0.015m);
+        Seed(desk, RunnerDesk.AdminId, "NIFTY", "Stopped", "Ghost", net: 0.015m);
+        var trading = await Build(desk).TradingAsync(Day, CancellationToken.None);
+        Assert.Equal(0.04m, Assert.Single(trading.Accounts).Net);
+        Assert.Equal(trading.Runs.Sum(r => r.Net), trading.Accounts.Sum(a => a.Net));
+    }
+
+    [Fact]
     public async Task What_needs_a_look_comes_first_and_carries_the_ai_explanation()
     {
         using var desk = new RunnerDesk();

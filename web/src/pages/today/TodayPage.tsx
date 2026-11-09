@@ -210,11 +210,11 @@ function Kpis({ d, now, go }: { d: Today; now: number; go: (t: TodayTab) => void
   return (
     <section className="tdy-kpis" aria-label="The day in figures">
       <Kpi
-        label="Net P&L today"
+        label="Run net P&L"
         value={totals ? formatInrSigned(totals.net) : '—'}
         tone={totals ? moneyTone(totals.net) : undefined}
         open={() => go('trading')}
-        hint="Every account's net after charges, live runs only. Opens Trading."
+        hint="Full-run realized + open P&L − charges, including carried books. This is not the change since midnight. Opens Trading."
         sub={
           !totals ? (
             <span className="warn">not known: trading did not come back</span>
@@ -222,7 +222,7 @@ function Kpis({ d, now, go }: { d: Today; now: number; go: (t: TodayTab) => void
             'no live run today'
           ) : (
             <>
-              gross <Rupees value={totals.gross} /> · charges <span className="tdy-n">{formatInrWhole(totals.charges)}</span>
+              realized net <Rupees value={totals.realizedNet} /> · open <Rupees value={totals.unrealized} /> · charges <span className="tdy-n">{formatInrWhole(totals.charges)}</span>
               {totals.partial && <span className="warn"> · some accounts not known</span>}
             </>
           )
@@ -389,18 +389,27 @@ function Attention({ items, now }: { items: AttentionItem[] | null; now: number 
 
 // ---------- trading today ----------------------------------------------------------------
 
+function PnlParts({ realizedNet, unrealized }: { realizedNet: number | null; unrealized: number | null }) {
+  return (
+    <div className="tdy-pnl-parts faint">
+      <span>Realized net <Rupees value={realizedNet} /></span>
+      <span>Open <Rupees value={unrealized} /></span>
+    </div>
+  )
+}
+
 /** Each account's day in one row, and their total under them when there is more than one. */
 function AccountsTable({ accounts }: { accounts: TodayAccount[] }) {
   const totals = dayTotals({ accounts, runs: [], recapsToday: 0 })
   return (
     <div className="tablewrap tdy-accts">
       <table className="table">
-        <caption className="tdy-sr">Each account's day, live runs only</caption>
+        <caption className="tdy-sr">Each account's full-run P&L, including carried books</caption>
         <thead>
           <tr>
             <th>Account</th>
-            <th className="num">Net</th>
-            <th className="num tdy-wide">Gross</th>
+            <th className="num">Total net</th>
+            <th className="num tdy-wide">Realized gross</th>
             <th className="num tdy-wide">Charges</th>
             <th className="num">Live</th>
             <th className="num">Stopped</th>
@@ -413,6 +422,7 @@ function AccountsTable({ accounts }: { accounts: TodayAccount[] }) {
               <td className="tdy-acct__name">{a.userName}</td>
               <td className="num tdy-strong">
                 <Rupees value={a.net} />
+                <PnlParts realizedNet={a.realizedNet} unrealized={a.unrealized} />
               </td>
               <td className="num tdy-wide">
                 <Rupees value={a.gross} />
@@ -430,6 +440,7 @@ function AccountsTable({ accounts }: { accounts: TodayAccount[] }) {
               <td>All accounts</td>
               <td className="num tdy-strong">
                 <Rupees value={totals.net} />
+                <PnlParts realizedNet={totals.realizedNet} unrealized={totals.unrealized} />
                 {totals.partial && <span className="warn" title="Some account sent no net; this is the sum of the ones that did."> *</span>}
               </td>
               <td className="num tdy-wide">
@@ -470,6 +481,7 @@ function RunRow({ r, now, reasons }: { r: TodayRun; now: number; reasons: boolea
       <td className="num">{r.trades}</td>
       <td className="num">
         <Rupees value={r.net} />
+        <PnlParts realizedNet={r.realizedNet} unrealized={r.unrealized} />
       </td>
       {reasons && (
         <td className="tdy-reason" title={r.stopReason ?? undefined}>
@@ -499,7 +511,7 @@ function RunsTable({ runs, now, caption, reasons }: { runs: TodayRun[]; now: num
             <th>Account</th>
             <th>Status</th>
             <th className="num">Trades</th>
-            <th className="num">Net</th>
+            <th className="num">Total net</th>
             {reasons && <th>Stop reason</th>}
           </tr>
         </thead>
@@ -537,6 +549,7 @@ function RunList({ runs, now, caption }: { runs: TodayRun[]; now: number; captio
                   <Rupees value={r.net} />
                 </span>
               </div>
+              <PnlParts realizedNet={r.realizedNet} unrealized={r.unrealized} />
               <div className="tdy-rl__meta">
                 <Badge tone={s.tone}>{s.label}</Badge>
                 <span>{r.userName}</span>
@@ -570,7 +583,7 @@ function Trading({ t, now, brief, go }: { t: TodayTrading | null; now: number; b
   const caption =
     t && brief && t.runs.length > RUNS_SHOWN
       ? `The worst ${RUNS_SHOWN} of ${t.runs.length} runs by net`
-      : `Today's ${plural(t?.runs.length ?? 0, 'run')}, worst net first`
+      : `${plural(t?.runs.length ?? 0, 'run')}, worst total net first`
   return (
     <Panel
       className="tdy-trading"
@@ -596,9 +609,10 @@ function Trading({ t, now, brief, go }: { t: TodayTrading | null; now: number; b
       ) : (
         <>
           {t.accounts.length === 0 && t.runs.length === 0 ? (
-            <EmptyState>No live runs today.</EmptyState>
+            <EmptyState>No runs today or carried positions.</EmptyState>
           ) : (
             <>
+              <p className="small-note">Full-run P&L for today’s runs and carried books, including positions closed today. Total net = realized net + open P&L; this is not the change since midnight.</p>
               {t.accounts.length > 0 && <AccountsTable accounts={t.accounts} />}
               {runs.length > 0 && <RunsTable runs={runs} now={now} caption={caption} reasons={!brief} />}
               {runs.length > 0 && <RunList runs={runs} now={now} caption={caption} />}

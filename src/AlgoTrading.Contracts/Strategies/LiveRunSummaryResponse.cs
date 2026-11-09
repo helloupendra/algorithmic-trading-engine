@@ -89,7 +89,7 @@ public class LiveRunSummaryResponse
 
     public decimal RealizedPnl { get; set; }
 
-    /// <summary>Σ unrealized of the open positions, marked to the latest live quote; 0 once the run is not active.</summary>
+    /// <summary>Σ unrealized of open positions at the latest live quote (stored P&amp;L fallback), including residual legs after a runner stops.</summary>
     public decimal UnrealizedPnl { get; set; }
 
     /// <summary>Closed positions.</summary>
@@ -103,7 +103,7 @@ public class LiveRunSummaryResponse
     /// <summary>Kept for older consoles; always 0. <see cref="Charges"/> carries the charges now.</summary>
     public decimal ChargesPerLot { get; set; }
 
-    /// <summary>Capital the open legs tie up while active; null when unknown (finished runs).</summary>
+    /// <summary>Capital the open legs tie up; null for an inactive run with no open positions.</summary>
     public decimal? CapitalUsed { get; set; }
 }
 

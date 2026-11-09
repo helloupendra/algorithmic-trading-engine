@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { historyListPending, recapBadge, runSpan } from './runHistory'
+import { historyListPending, recapBadge, runSpan, runNetPnl } from './runHistory'
 
 describe('recapBadge', () => {
   it('marks a recap run as a test of the day it replayed', () => {
@@ -62,5 +62,19 @@ describe('runSpan', () => {
   it('shows what it knows of a run with no stop time, and a dash for none', () => {
     expect(runSpan({ startedUtc: '2026-09-28T03:46:00Z', stoppedUtc: null, isActive: false })).toBe('28 Sept 09:16')
     expect(runSpan({ startedUtc: null, stoppedUtc: null, isActive: false })).toBe('—')
+  })
+})
+
+
+describe('runNetPnl', () => {
+  it('includes open exposure even when the runner is stopped', () => {
+    for (const isActive of [true, false]) {
+      expect(runNetPnl({ netPnl: -30, unrealizedPnl: -10000, isActive })).toBe(-10030)
+      expect(runNetPnl({ netPnl: 480, unrealizedPnl: 100, isActive })).toBe(580)
+    }
+  })
+
+  it('preserves realized net for a fully closed run', () => {
+    expect(runNetPnl({ netPnl: 480, unrealizedPnl: 0, isActive: false })).toBe(480)
   })
 })

@@ -59,6 +59,8 @@ export interface TodayAccount {
   userName: string
   net: number | null
   gross: number | null
+  realizedNet: number | null
+  unrealized: number | null
   charges: number | null
   runsLive: number
   runsStopped: number
@@ -74,6 +76,9 @@ export interface TodayRun {
   underlying: string
   status: RunStatus | string
   net: number | null
+  realizedNet: number | null
+  unrealized: number | null
+  charges: number | null
   trades: number
   startedUtc: string | null
   stoppedUtc: string | null
@@ -83,7 +88,7 @@ export interface TodayRun {
 export interface TodayTrading {
   /** Live trading only; a recap is never in these. */
   accounts: TodayAccount[]
-  /** Today's runs, worst net first. */
+  /** Today's runs and carried books, worst full-run net first. */
   runs: TodayRun[]
   /** Recap runs started today: tests, in no total. */
   recapsToday: number
@@ -305,6 +310,8 @@ function readAccount(a: Record<string, unknown>): TodayAccount | null {
     userName,
     net: num(a.net),
     gross: num(a.gross),
+    realizedNet: num(a.realizedNet),
+    unrealized: num(a.unrealized),
     charges: num(a.charges),
     runsLive: count(a.runsLive),
     runsStopped: count(a.runsStopped),
@@ -322,6 +329,9 @@ function readRun(r: Record<string, unknown>): TodayRun | null {
     underlying: words(r.underlying),
     status: words(r.status),
     net: num(r.net),
+    realizedNet: num(r.realizedNet),
+    unrealized: num(r.unrealized),
+    charges: num(r.charges),
     trades: count(r.trades),
     startedUtc: instant(r.startedUtc),
     stoppedUtc: instant(r.stoppedUtc),
@@ -727,6 +737,8 @@ export function sumKnown(values: readonly (number | null)[]): { sum: number | nu
 export interface DayTotals {
   net: number | null
   gross: number | null
+  realizedNet: number | null
+  unrealized: number | null
   charges: number | null
   /** Some account sent no net: the net is of the accounts that did. */
   partial: boolean
@@ -743,6 +755,8 @@ export function dayTotals(t: TodayTrading): DayTotals {
   return {
     net: net.sum,
     gross: sumKnown(t.accounts.map((a) => a.gross)).sum,
+    realizedNet: sumKnown(t.accounts.map((a) => a.realizedNet)).sum,
+    unrealized: sumKnown(t.accounts.map((a) => a.unrealized)).sum,
     charges: sumKnown(t.accounts.map((a) => a.charges)).sum,
     partial: net.partial,
     accounts: t.accounts.length,

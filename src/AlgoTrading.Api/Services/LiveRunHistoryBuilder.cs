@@ -37,7 +37,7 @@ public sealed record LiveRunHistoryFilter(
 /// query over paper positions per page of runs, one query for the RUN_STOPPED
 /// reasons, user names from AppUsers) and the per-user rollup. Active runs
 /// take isActive from the registry (an open manual book from its own status)
-/// and their unrealized P&amp;L from <see cref="RunPnl"/>, the mark-to-market
+/// and open positions take their unrealized P&amp;L from <see cref="RunPnl"/>, the mark-to-market
 /// the live view and the minute recorder use (latest live quote, stored mark
 /// as the fallback). Nothing here writes: the history is read-only by design.
 /// </summary>
@@ -99,7 +99,18 @@ public sealed class LiveRunHistoryBuilder
     // List
     // ------------------------------------------------------------------
 
-    public async Task<List<LiveRunSummaryResponse>> ListAsync(LiveRunHistoryFilter filter, CancellationToken cancellationToken)
+    public Task<List<LiveRunSummaryResponse>> ListAsync(LiveRunHistoryFilter filter, CancellationToken cancellationToken)
+        => ListCoreAsync(filter, null, cancellationToken);
+
+    /// <summary>
+    /// Today's runs and carried books: older runs still running, with open positions, or with a position closed
+    /// today. Returns full-run figures, not the change since midnight. No page limit may truncate account totals.
+    /// </summary>
+    public Task<List<LiveRunSummaryResponse>> ListTradingDayAsync(DateOnly day, CancellationToken cancellationToken)
+        => ListCoreAsync(new(null, null, null, null, null, null, LiveRunHistoryFilter.MaxTake, 0), day, cancellationToken);
+
+    private async Task<List<LiveRunSummaryResponse>> ListCoreAsync(
+        LiveRunHistoryFilter filter, DateOnly? tradingDay, CancellationToken cancellationToken)
     {
         var catalog = await _catalog.GetAllAsync(cancellationToken);
         var catalogByName = catalog
@@ -110,6 +121,17 @@ public sealed class LiveRunHistoryBuilder
         var query = _dbContext.SimulationRuns.AsNoTracking()
             .Where(x => x.Mode == LivePaperMode);
         query = filter.Recaps ? query.OnlyRecaps() : query.WithoutRecaps();
+
+        if (tradingDay is DateOnly day)
+        {
+            var start = IstTime.StartOfDayUtc(day);
+            var end = IstTime.StartOfDayUtc(day.AddDays(1));
+            query = query.Where(r => (r.StartedUtc ?? r.CreatedUtc) < end
+                && ((r.StartedUtc ?? r.CreatedUtc) >= start
+                    || r.Status == StrategyRunControl.RunStatusRunning || r.Status == StrategyRunControl.RunStatusStopping
+                    || _dbContext.PaperPositions.Any(p => p.SimulationRunId == r.Id
+                        && (p.Status == OpenStatus || (p.ClosedUtc >= start && p.ClosedUtc < end)))));
+        }
 
         if (filter.UserId.HasValue)
         {
@@ -165,10 +187,9 @@ public sealed class LiveRunHistoryBuilder
         List<SimulationRun> runs;
         if (underlyingFilter is null)
         {
-            runs = await ordered
-                .Skip(skip)
-                .Take(take)
-                .ToListAsync(cancellationToken);
+            runs = tradingDay.HasValue
+                ? await ordered.ToListAsync(cancellationToken)
+                : await ordered.Skip(skip).Take(take).ToListAsync(cancellationToken);
         }
         else
         {
@@ -238,12 +259,10 @@ public sealed class LiveRunHistoryBuilder
             .Select(u => new { u.Id, u.UserName })
             .ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
 
-        // The open book of every active run is marked at the latest quote: a
-        // runner's, and an open manual book's, which has no runner by design
-        // (see isActive below). The book used to be left at its stored mark
-        // here while its own page marked it live, so the two read differently.
-        var activeRunIds = runs.Where(r => _registry.Contains(r.Id) || IsOpenManualBook(r)).Select(r => r.Id).ToList();
-        var liveMarks = await _pnl.MarkOpenLegsAsync(activeRunIds, cancellationToken);
+        // A stopped runner can leave residual open legs. Position status, not
+        // process status, determines exposure, as on the run detail page.
+        var openRunIds = stats.Values.Where(s => s.Open > 0).Select(s => s.RunId).ToList();
+        var liveMarks = await _pnl.MarkOpenLegsAsync(openRunIds, cancellationToken);
 
         var lotSizeByUnderlying = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var chargesByRun = await _charges.ForRunsAsync(runIds, cancellationToken);
@@ -291,7 +310,7 @@ public sealed class LiveRunHistoryBuilder
             decimal realized = s?.Realized ?? 0m;
             decimal unrealized = 0m;
             decimal? capitalUsed = null;
-            if (isActive)
+            if (isActive || s?.Open > 0)
             {
                 if (liveMarks.TryGetValue(run.Id, out var mark))
                 {
