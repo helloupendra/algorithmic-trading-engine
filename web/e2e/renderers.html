@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Renderer integration fixture</title></head><body>
+<script type="module">
+import { render } from './renderers.js'
+const result = document.createElement('pre')
+result.dataset.testid = 'renderer-result'
+try { result.textContent = JSON.stringify(await render()) }
+catch (error) { result.textContent = JSON.stringify({ error: String(error) }) }
+document.body.append(result)
+</script></body></html>

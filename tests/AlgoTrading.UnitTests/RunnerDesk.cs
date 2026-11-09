@@ -247,6 +247,7 @@ internal sealed class RunnerDesk : IDisposable
 
         var process = Process.Start(info)!;
         _processes.Add(process);
+        TestSleeper.WaitForCommandLine(process, ProcessProbe.StrategyRunnerMarker);
         return process;
     }
 

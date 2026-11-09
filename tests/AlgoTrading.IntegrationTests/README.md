@@ -25,3 +25,28 @@ The tests use `EnsureCreated` to exercise current entity mappings and transactio
 behavior. The session migration also runs its actual Up/Down commands against a
 minimal predecessor auth schema and verifies credential invalidation. These tests
 do not validate the complete migration history or TimescaleDB extensions.
+
+## Expanded CI
+
+`OPENFNO_TEST_TIMESCALE` runs the complete migration history on a fresh TimescaleDB
+server (the production PostgreSQL major version is 15), then rehearses the latest
+empty-table downgrade/re-upgrade while preserving a pre-existing account. Each
+run creates and drops a uniquely named database. This does not claim that every
+historical destructive migration can be reversed with production data.
+
+`OPENFNO_TEST_REDIS` runs the actual Redis consumer-group implementation against a
+disposable Redis 7 server: failed delivery, replacement-consumer reclaim, successful
+acknowledgement and malformed-message dead-letter handling. It owns only random
+`test:<guid>` stream keys and removes them afterward.
+
+The Playwright job (`cd web && npx playwright test`) starts the production login and
+manual-ticket UI with a test-only HTTP host and fresh PostgreSQL database. Real
+auth/session/module policies, manual-order controllers and booking transactions are
+used. Prices and risk acceptance are fixture inputs; no broker or live runner is
+registered. It exercises lost-response/reload recovery, protected fills, denied
+accounts, cross-tab logout and renderer compatibility. Browser traces/screenshots
+are retained on failure. This targeted host is never deployed with the API.
+
+The backtest project now books a deterministic replay round trip through the paper
+service, including retry deduplication, future/live price isolation and realized
+P&L. The Python suite independently exercises full strategy/replay/ledger behavior.

@@ -1005,8 +1005,8 @@ public class CarryForwardTests
                     ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = User(Owner, "trader", false) } }
                 };
                 var request = carryForward is { } carry
-                    ? new ManualOrdersController.PlaceManualOrderRequest(symbol, side, 1, null, CarryForward: carry)
-                    : new ManualOrdersController.PlaceManualOrderRequest(symbol, side, 1, null);
+                    ? new ManualOrdersController.PlaceManualOrderRequest(symbol, side, 1, null, CarryForward: carry, ClientOrderId: Guid.NewGuid())
+                    : new ManualOrdersController.PlaceManualOrderRequest(symbol, side, 1, null, ClientOrderId: Guid.NewGuid());
                 var result = await controller.Place(request, CancellationToken.None);
                 Assert.IsType<OkObjectResult>(result);
                 return 0;

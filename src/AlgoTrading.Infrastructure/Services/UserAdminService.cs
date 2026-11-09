@@ -80,11 +80,16 @@ public class UserAdminService : IUserAdminService
         string actingUserName,
         CancellationToken cancellationToken = default)
     {
+        await using var administration = await AccountAdministration.AcquireAsync(_dbContext, cancellationToken);
         var user = await _dbContext.AppUsers
             .Include(x => x.ModuleGrants)
             .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
             ?? throw new InvalidOperationException($"No account with id {userId}.");
 
+        await _dbContext.Entry(user).ReloadAsync(cancellationToken);
+        string intendedRole = request.Role is null ? user.Role : UserRoles.Normalize(request.Role)
+            ?? throw new InvalidOperationException($"'{request.Role}' is not a role.");
+        await AccountAdministration.GuardAsync(_dbContext, user, intendedRole, request.IsActive ?? user.IsActive, cancellationToken);
         bool endSessions = false;
 
         if (request.Role is not null)
@@ -99,7 +104,6 @@ public class UserAdminService : IUserAdminService
                 throw new InvalidOperationException("You cannot remove your own admin role.");
             }
 
-            await GuardLastAdminAsync(user, role, user.IsActive, cancellationToken);
 
             // AdminOnly reads the role from the token, which is good for an hour.
             // Until 2 Nov a demoted admin kept the whole admin API for that hour,
@@ -117,7 +121,6 @@ public class UserAdminService : IUserAdminService
                 throw new InvalidOperationException("You cannot disable your own account.");
             }
 
-            await GuardLastAdminAsync(user, user.Role, request.IsActive.Value, cancellationToken);
 
             user.IsActive = request.IsActive.Value;
 
@@ -160,6 +163,7 @@ public class UserAdminService : IUserAdminService
 
         user.UpdatedUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await administration.CommitAsync(cancellationToken);
 
         // After the save: it saves on the same context, so called earlier it wrote
         // half a request that a later check then refused.
@@ -171,31 +175,6 @@ public class UserAdminService : IUserAdminService
         _logger.LogInformation("Account {UserName} updated by {Actor}.", user.UserName, actingUserName);
 
         return (await GetAsync(userId, cancellationToken))!;
-    }
-
-    /// <summary>
-    /// Refuses a change that would leave the platform with no active admin. It is
-    /// recoverable only by editing the database by hand, so it must not happen.
-    /// </summary>
-    private async Task GuardLastAdminAsync(
-        AppUser user,
-        string newRole,
-        bool newIsActive,
-        CancellationToken cancellationToken)
-    {
-        bool wasActiveAdmin = user.IsActive && string.Equals(user.Role, UserRoles.Admin, StringComparison.Ordinal);
-        bool willBeActiveAdmin = newIsActive && string.Equals(newRole, UserRoles.Admin, StringComparison.Ordinal);
-
-        if (!wasActiveAdmin || willBeActiveAdmin) return;
-
-        int otherAdmins = await _dbContext.AppUsers
-            .CountAsync(x => x.Id != user.Id && x.IsActive && x.Role == UserRoles.Admin, cancellationToken);
-
-        if (otherAdmins == 0)
-        {
-            throw new InvalidOperationException(
-                "This is the only active admin. Promote someone else first, or nobody could administer the platform.");
-        }
     }
 
     public async Task<UserAdminResponse> SetGrantsAsync(

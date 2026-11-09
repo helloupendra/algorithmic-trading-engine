@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: timescale/timescaledb:latest-pg15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: integration-test # pragma: allowlist secret — disposable CI database only
@@ -55,7 +55,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      OPENFNO_TEST_REDIS: localhost:6379
+      OPENFNO_TEST_TIMESCALE: Host=localhost;Port=5432;Username=postgres;Password=integration-test;Database=postgres # pragma: allowlist secret
       OPENFNO_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=integration-test;Database=postgres # pragma: allowlist secret — disposable CI database only
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +74,7 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Test order and authentication transactions
+      - name: Test migrations, rollback, order/auth transactions and Redis recovery
         run: dotnet test tests/AlgoTrading.IntegrationTests/AlgoTrading.IntegrationTests.csproj --configuration Release --verbosity normal
 
   python:
@@ -79,8 +90,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r src/AlgoTrading.PythonEngine/requirements.txt
+          python -m pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
+          pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements.txt
+          pip check
+          python -m venv .audit-venv
+          .audit-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-tools.txt
+
+      - name: Audit installed runtime and save SBOM
+        run: |
+          .audit-venv/bin/python scripts/audit_python.py --python "$(which python)" --output python-audit.json
+          .audit-venv/bin/python scripts/audit_python.py --python "$(which python)" --format cyclonedx-json --output python-sbom.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-runtime-audit
+          path: python-*.json
 
       - name: Byte-compile the engine
         run: python -m compileall -q src/AlgoTrading.PythonEngine scripts
@@ -162,6 +187,9 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Dependency audit
+        run: npm audit
+
       - name: Type check
         run: npx tsc -b
 
@@ -173,6 +201,72 @@ jobs:
 
       - name: Build (console and docs site)
         run: npx vite build
+
+  browser:
+    name: Browser session, order recovery and renderers
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: integration-test # pragma: allowlist secret
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPENFNO_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=integration-test;Database=postgres # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npx playwright test
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+
+  research:
+    name: Python optional CPU research profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the isolated Linux research profile
+        run: |
+          python -m venv .research-venv
+          .research-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
+          .research-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-research-linux.txt
+          .research-venv/bin/python -m pip check
+          python -m venv .audit-venv
+          .audit-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-tools.txt
+      - name: Audit research packages and exercise offline CPU inference
+        run: |
+          .audit-venv/bin/python scripts/audit_python.py --python .research-venv/bin/python --output research-audit.json
+          .research-venv/bin/python scripts/smoke_research.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: research-audit
+          path: research-audit.json
 
   secrets:
     name: Secret scan

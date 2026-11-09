@@ -198,8 +198,8 @@ if [ ! -d .venv ]; then
 else
   ok ".venv already exists"
 fi
-./.venv/bin/python -m pip install --quiet --upgrade pip
-./.venv/bin/python -m pip install --quiet -r src/AlgoTrading.PythonEngine/requirements.txt
+./.venv/bin/python -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
+./.venv/bin/python -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements.txt
 ok "Python dependencies installed"
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -45,6 +46,7 @@
     "@excalidraw/mermaid-to-excalidraw": {
       "nanoid": "^5.1.16"
     },
-    "sass": "^1.79.0"
+    "sass": "^1.79.0",
+    "katex": "$katex"
   }
 }

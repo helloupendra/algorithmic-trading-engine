@@ -2943,6 +2943,32 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("live_watchlist", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ManualOrderReceipt", b =>
+                {
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ClientOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FillJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("UserId", "ClientOrderId")
+                        .HasName("pk_manual_order_receipts");
+
+                    b.ToTable("manual_order_receipts", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketBreadthDaily", b =>
                 {
                     b.Property<long>("Id")
@@ -5332,6 +5358,15 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ManualOrderReceipt", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

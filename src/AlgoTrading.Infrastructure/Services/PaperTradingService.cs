@@ -119,9 +119,21 @@ public class PaperTradingService : IPaperTradingService
     // SIGNALS
     // ---------------------------------------------------------------------
 
-    public async Task<SimulationSignalResponse> CreateSignalAsync(
+    public Task<SimulationSignalResponse> CreateSignalAsync(
         CreateSimulationSignalRequest request,
         CancellationToken cancellationToken = default)
+        => CreateSignalCoreAsync(request, null, cancellationToken);
+
+    public Task<SimulationSignalResponse> CreateSignalWithReceiptAsync(
+        CreateSimulationSignalRequest request,
+        Func<SimulationSignalResponse, CancellationToken, Task> saveReceipt,
+        CancellationToken cancellationToken = default)
+        => CreateSignalCoreAsync(request, saveReceipt, cancellationToken);
+
+    private async Task<SimulationSignalResponse> CreateSignalCoreAsync(
+        CreateSimulationSignalRequest request,
+        Func<SimulationSignalResponse, CancellationToken, Task>? saveReceipt,
+        CancellationToken cancellationToken)
     {
         string? clientSignalId = string.IsNullOrWhiteSpace(request.ClientSignalId) ? null : request.ClientSignalId.Trim();
         if (clientSignalId is { Length: > MaxClientSignalIdLength })
@@ -240,6 +252,7 @@ public class PaperTradingService : IPaperTradingService
                     bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock, booked: bookedLegs);
             }
 
+            if (saveReceipt is not null) await saveReceipt(MapSignal(signal), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         catch

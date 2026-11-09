@@ -1,0 +1,13 @@
+# CPython 3.12 engine, broker feeds and operational scripts. Compile from repo root.
+fyers-apiv3==3.2.1+openfno.1
+redis
+requests>=2.32.4,<3
+urllib3>=2.7
+python-dotenv
+prometheus-client
+psycopg2-binary
+numpy
+pandas
+pydantic
+py-vollib
+websocket-client>=1.9,<2

@@ -154,6 +154,7 @@ public class DaemonStopTests : IDisposable
 
         var process = Process.Start(info)!;
         _processes.Add(process);
+        TestSleeper.WaitForCommandLine(process, "sleep");
         return process;
     }
 

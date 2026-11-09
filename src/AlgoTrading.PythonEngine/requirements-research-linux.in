@@ -1,0 +1,4 @@
+# Optional FinBERT / research profile, CPython 3.12 on Linux x86_64.
+-r requirements-runtime.in
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.12.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=ae4bb28409f5370852bd71af221066236c38d647f780d9b0a7240c330a9c12df
+transformers

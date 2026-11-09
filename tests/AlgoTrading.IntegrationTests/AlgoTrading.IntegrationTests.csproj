@@ -33,4 +33,5 @@
     <ProjectReference Include="../../src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup><ProjectReference Include="../../src/AlgoTrading.Worker.MarketData/AlgoTrading.Worker.MarketData.csproj" /></ItemGroup>
 </Project>

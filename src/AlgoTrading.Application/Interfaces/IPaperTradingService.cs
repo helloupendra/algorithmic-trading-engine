@@ -16,6 +16,13 @@ public interface IPaperTradingService
         CreateSimulationSignalRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Persists the caller's receipt inside the fill transaction, before events are published.</summary>
+    Task<SimulationSignalResponse> CreateSignalWithReceiptAsync(
+        CreateSimulationSignalRequest request,
+        Func<SimulationSignalResponse, CancellationToken, Task> saveReceipt,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This paper service does not support atomic receipts.");
+
     /// <summary>
     /// What a live order for <paramref name="symbol"/> would fill at right now, by the rules
     /// <see cref="CreateSignalAsync"/> fills a live strategy's leg by, booking nothing: the far side of the book (the

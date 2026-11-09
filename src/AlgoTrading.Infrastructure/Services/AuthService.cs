@@ -301,6 +301,7 @@ public class AuthService : IAuthService
 
     public async Task<bool> DeleteUserByUsernameAsync(string username, CancellationToken cancellationToken = default)
     {
+        await using var administration = await AccountAdministration.AcquireAsync(_dbContext, cancellationToken);
         // The exact name only: matched in any case, with no order, deleting
         // "ADMIN" could delete "admin".
         var user = await _dbContext.AppUsers
@@ -309,8 +310,16 @@ public class AuthService : IAuthService
         if (user is null)
             return false;
 
+        await _dbContext.Entry(user).ReloadAsync(cancellationToken);
+        await AccountAdministration.GuardAsync(_dbContext, user, user.Role, false, cancellationToken);
+        if (await _dbContext.SimulationRuns.AnyAsync(x => x.UserId == user.Id, cancellationToken)
+            || await _dbContext.ManualOrderReceipts.AnyAsync(x => x.UserId == user.Id, cancellationToken)
+            || await _dbContext.PortfolioSnapshots.AnyAsync(x => x.UserId == user.Id, cancellationToken))
+            throw new InvalidOperationException("This account has trading history. Disable it from People instead of deleting it.");
         _dbContext.AppUsers.Remove(user);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await administration.CommitAsync(cancellationToken);
+        _connections?.CloseConnectionsOf(user.Id);
         
         return true;
     }

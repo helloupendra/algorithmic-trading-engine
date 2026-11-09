@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using AlgoTrading.Api.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
 
 namespace AlgoTrading.UnitTests;
 
@@ -16,6 +19,16 @@ namespace AlgoTrading.UnitTests;
 /// </remarks>
 internal static class TestSleeper
 {
+    // On Linux Process.Start can return before exec replaces the inherited test-host
+    // command line. Adoption must observe the requested child, not that transient image.
+    public static void WaitForCommandLine(Process process, string marker)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Assert.True(SpinWait.SpinUntil(() => !process.HasExited &&
+            ProcessProbe.CommandLineNames(process.Id, [marker], NullLogger.Instance), TimeSpan.FromSeconds(5)),
+            $"Child {process.Id} did not publish its expected command line ({marker}).");
+    }
+
     public static ProcessStartInfo StartInfo() => OperatingSystem.IsWindows()
         ? new ProcessStartInfo("ping", "-n 31 127.0.0.1")
         : new ProcessStartInfo("/bin/sleep", "30");

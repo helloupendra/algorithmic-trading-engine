@@ -199,7 +199,7 @@ public class DeskEventTests
 
         var controller = desk.ManualTicket(Owner);
         var result = await controller.Place(
-            new ManualOrdersController.PlaceManualOrderRequest(Call, "BUY", 1, null, StopLossPrice: 90m, TargetPrice: 120m, CarryForward: true),
+            new ManualOrdersController.PlaceManualOrderRequest(Call, "BUY", 1, null, StopLossPrice: 90m, TargetPrice: 120m, CarryForward: true, ClientOrderId: Guid.NewGuid()),
             CancellationToken.None);
 
         Assert.IsType<OkObjectResult>(result);

@@ -465,6 +465,7 @@ export function useSystemHost() {
 
 /** One instrument's live two-sided price and the rules its segment imposes. */
 export interface ManualInstrument {
+  supportsIdempotency?: boolean
   symbol: string
   exchange: string
   segment: string
@@ -546,17 +547,8 @@ export function useManualBook(enabled = true) {
 export function usePlaceManualOrder() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: {
-      symbol: string
-      side: 'BUY' | 'SELL'
-      quantity: number
-      limitPrice?: number | null
-      stopLossPrice?: number | null
-      targetPrice?: number | null
-      /** Hold overnight; false (the default) is intraday, squared off at the close. */
-      carryForward?: boolean
-    }) =>
-      api.post<ManualOrderResponse>('/api/ManualOrders', body),
+    mutationFn: (body: import('./manualOrderIntent').ManualOrderIntent) =>
+      api.post<ManualOrderResponse>('/api/ManualOrders/keyed', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['manual', 'book'] })
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })

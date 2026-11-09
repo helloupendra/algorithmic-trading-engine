@@ -177,11 +177,18 @@ namespace AlgoTrading.Api.Controllers
         [HttpDelete("{username}")]
         public async Task<IActionResult> DeleteByUsername(string username, CancellationToken cancellationToken)
         {
-            var success = await _authService.DeleteUserByUsernameAsync(username, cancellationToken);
-            if (!success)
-                return NotFound(new { message = "User not found." });
-
-            return Ok(new { message = $"User '{username}' deleted successfully." });
+            if (username == User.GetUserName())
+                return BadRequest(new { message = "You cannot delete your own account." });
+            try
+            {
+                var success = await _authService.DeleteUserByUsernameAsync(username, cancellationToken);
+                if (!success) return NotFound(new { message = "User not found." });
+                return Ok(new { message = $"User '{username}' deleted successfully." });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [Authorize]

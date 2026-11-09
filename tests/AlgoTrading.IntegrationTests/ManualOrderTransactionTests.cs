@@ -181,6 +181,106 @@ public sealed class ManualOrderTransactionTests : IAsyncLifetime
         Assert.True(protectedPosition.CarryForward);
     }
 
+    [PostgresTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Concurrent_keyed_orders_commit_one_fill_and_return_one_original_outcome(bool differentPayload)
+    {
+        var key = Guid.NewGuid();
+        async Task<ManualOrderOutcome> Place(int quantity)
+        {
+            await using var db = OpenDb();
+            return await Ticket(db, new RecordingEvents(() => OpenDb())).PlaceAsync(
+                Command(90, 120, true) with { ClientOrderId = key, Quantity = quantity }, default);
+        }
+        var results = await Task.WhenAll(Place(1), Place(differentPayload ? 2 : 1));
+        await using var check = OpenDb();
+        Assert.Equal(1, await check.PaperOrders.CountAsync());
+        Assert.Equal(1, await check.PaperPositions.CountAsync());
+        Assert.Equal(1, await check.ManualOrderReceipts.CountAsync());
+        if (differentPayload) Assert.Single(results, r => r.StatusCode == 409 && r.Fill is null);
+        else Assert.Equal(results[0].Fill!.SignalId, results[1].Fill!.SignalId);
+    }
+
+    [PostgresFact]
+    public async Task Lost_response_recovers_even_after_quotes_and_instrument_are_unavailable()
+    {
+        var key = Guid.NewGuid();
+        await using var db = OpenDb();
+        var ticket = Ticket(db, new RecordingEvents(() => OpenDb()));
+        var command = Command(90, 120, true) with { ClientOrderId = key };
+        var first = await ticket.PlaceAsync(command, default);
+        db.LiveQuotesLatest.RemoveRange(db.LiveQuotesLatest);
+        (await db.Instruments.SingleAsync()).IsEnabled = false;
+        await db.SaveChangesAsync();
+        var replay = await ticket.PlaceAsync(command, default);
+        Assert.Equal(first.Fill!.SignalId, replay.Fill!.SignalId);
+        Assert.Equal(first.Fill.Price, replay.Fill.Price);
+        Assert.Equal(first.Fill.Message, replay.Fill.Message);
+        Assert.Null(await ticket.ReadReceiptAsync(UserId + 1, key, null, default));
+        var conflict = await ticket.PlaceAsync(command with { StopLossPrice = 80 }, default);
+        Assert.Equal(409, conflict.StatusCode);
+    }
+
+    [PostgresFact]
+    public async Task A_receipt_write_failure_rolls_back_the_fill_and_can_retry()
+    {
+        var command = Command(90, 120, true) with { ClientOrderId = Guid.NewGuid() };
+        await using (var db = OpenDb(new FailReceipt()))
+            await Assert.ThrowsAsync<IOException>(() => Ticket(db, new RecordingEvents(() => OpenDb())).PlaceAsync(command, default));
+        await using var check = OpenDb();
+        Assert.Empty(await check.PaperOrders.ToListAsync());
+        Assert.Empty(await check.ManualOrderReceipts.ToListAsync());
+        Assert.NotNull((await Ticket(check, new RecordingEvents(() => OpenDb())).PlaceAsync(command, default)).Fill);
+    }
+
+    private sealed class FailReceipt : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<ManualOrderReceipt>().Any(e => e.State == EntityState.Added))
+                throw new IOException("Injected receipt persistence failure");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [PostgresFact]
+    public async Task A_retry_waits_for_the_original_commit_before_checking_changed_instrument_state()
+    {
+        var pause = new PauseReceipt();
+        await using var firstDb = OpenDb(pause);
+        var command = Command(90, 120, false) with { ClientOrderId = Guid.NewGuid() };
+        var original = Ticket(firstDb, new RecordingEvents(() => OpenDb())).PlaceAsync(command, default);
+        await pause.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try {
+            await using (var update = OpenDb())
+                await update.Instruments.ExecuteUpdateAsync(x => x.SetProperty(i => i.IsEnabled, false));
+            await using var secondDb = OpenDb();
+            var retry = Ticket(secondDb, new RecordingEvents(() => OpenDb())).PlaceAsync(command, default);
+            pause.Release.SetResult();
+            var results = await Task.WhenAll(original, retry);
+            Assert.All(results, result => Assert.NotNull(result.Fill));
+            Assert.Equal(results[0].Fill!.SignalId, results[1].Fill!.SignalId);
+            Assert.Single(await secondDb.PaperOrders.ToListAsync());
+        }
+        finally { pause.Release.TrySetResult(); }
+    }
+
+    private sealed class PauseReceipt : SaveChangesInterceptor
+    {
+        public readonly TaskCompletionSource Reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<ManualOrderReceipt>().Any(x => x.State == EntityState.Added)) {
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
+    }
+
     private static ManualOrderCommand Command(decimal? stop, decimal? target, bool carry) =>
         new(UserId, "test-trader", Symbol, "BUY", 1, null, stop, target, carry);
 

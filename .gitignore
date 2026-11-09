@@ -174,3 +174,7 @@ scripts/pager/pager.env
 scripts/pager/state.json
 scripts/pager/state.tmp
 scripts/pager/pager.log
+
+# Browser test output
+web/playwright-report/
+web/test-results/

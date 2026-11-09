@@ -191,6 +191,7 @@ public class ManualOrdersController : ControllerBase
 
         return Ok(new
         {
+            supportsIdempotency = true,
             symbol = instrument.Symbol,
             exchange = instrument.Exchange,
             segment = instrument.Segment,
@@ -279,16 +280,21 @@ public class ManualOrdersController : ControllerBase
         decimal? LimitPrice,
         decimal? StopLossPrice = null,
         decimal? TargetPrice = null,
-        bool CarryForward = false);
+        bool CarryForward = false,
+        Guid? ClientOrderId = null);
 
     /// <summary>Books one paper order into the caller's manual book (<see cref="ManualOrderService"/>).</summary>
     [HttpPost]
+    [HttpPost("keyed")]
     public async Task<IActionResult> Place(
         [FromBody] PlaceManualOrderRequest? request,
         CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Symbol))
             return BadRequest(new { message = "symbol is required." });
+
+        if (request.ClientOrderId is null || request.ClientOrderId == Guid.Empty)
+            return BadRequest(new { message = "clientOrderId is required and must be a non-empty UUID. Refresh the order page before placing an order." });
 
         var outcome = await _orders.PlaceAsync(new ManualOrderCommand(
             User.GetRequiredUserId(),
@@ -299,9 +305,22 @@ public class ManualOrdersController : ControllerBase
             request.LimitPrice,
             request.StopLossPrice,
             request.TargetPrice,
-            request.CarryForward), cancellationToken);
+            request.CarryForward, ClientOrderId: request.ClientOrderId), cancellationToken);
 
-        if (outcome.Fill is not { } fill) return BadRequest(outcome.Refusal);
+        if (outcome.Fill is not { } fill) return StatusCode(outcome.StatusCode, outcome.Refusal);
+
+        return FillResponse(fill);
+    }
+
+    [HttpGet("receipts/{clientOrderId:guid}")]
+    public async Task<IActionResult> Receipt(Guid clientOrderId, CancellationToken cancellationToken)
+    {
+        var outcome = await _orders.ReadReceiptAsync(User.GetRequiredUserId(), clientOrderId, null, cancellationToken);
+        return outcome?.Fill is { } fill ? FillResponse(fill) : NotFound(new { message = "No committed order with this clientOrderId." });
+    }
+
+    private IActionResult FillResponse(ManualOrderFill fill)
+    {
 
         return Ok(new
         {

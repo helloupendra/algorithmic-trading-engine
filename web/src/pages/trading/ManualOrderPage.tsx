@@ -26,6 +26,9 @@
  */
 
 import { useState } from 'react'
+import { useAuth } from '../../lib/auth'
+import { ApiError } from '../../lib/api'
+import { beginOrder, finishOrder, pendingOrder, type ManualOrderIntent } from '../../lib/manualOrderIntent'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
 import { Badge, EmptyState, FlashPrice, InlineError, Loading, Panel } from '../../components/ui'
 import { RunCard } from '../strategies/RunCard'
@@ -135,6 +138,13 @@ function InstrumentRules({ instrument }: { instrument: ManualInstrument }) {
 }
 
 export function ManualOrderPage() {
+  const { user } = useAuth()
+  const [savedIntent] = useState(() => {
+    try { return { pending: user ? pendingOrder(sessionStorage, user.id) : null, error: null as unknown } }
+    catch (error) { return { pending: null, error } }
+  })
+  const [pending, setPending] = useState(savedIntent.pending)
+  const [intentError, setIntentError] = useState<unknown>(savedIntent.error)
   const [symbol, setSymbol] = useState('')
   // What is typed belongs to one instrument and is cleared when the box names
   // another (lib/ticket.ts): 50 shares of SBIN must never become 50 lots of a
@@ -167,21 +177,40 @@ export function ManualOrderPage() {
   const live = ticketLive(instrumentQuery, symbol)
   const check = checkTicket(form, instrument, live)
   const { qty, qtyValid, limit, limitMissing, offTick } = check
-  const canBuy = !place.isPending && sideEnabled(check, instrument, 'BUY')
-  const canSell = !place.isPending && sideEnabled(check, instrument, 'SELL')
+  const canBuy = instrument?.supportsIdempotency === true && !intentError && !pending && !place.isPending && sideEnabled(check, instrument, 'BUY')
+  const canSell = instrument?.supportsIdempotency === true && !intentError && !pending && !place.isPending && sideEnabled(check, instrument, 'SELL')
 
   function submit(side: 'BUY' | 'SELL') {
     if (!instrument || !(side === 'BUY' ? canBuy : canSell)) return
     if (!window.confirm(confirmText(side, check, instrument, form.carryForward))) return
 
-    place.mutate({
-      symbol: instrument.symbol,
-      side,
-      quantity: qty,
-      limitPrice: limit,
-      stopLossPrice: form.stopLoss.trim() === '' ? null : Number(form.stopLoss),
-      targetPrice: form.target.trim() === '' ? null : Number(form.target),
-      carryForward: form.carryForward,
+    if (!user) return
+    try {
+      const intent = beginOrder(sessionStorage, user.id, {
+        symbol: instrument.symbol, side, quantity: qty, limitPrice: limit,
+        stopLossPrice: form.stopLoss.trim() === '' ? null : Number(form.stopLoss),
+        targetPrice: form.target.trim() === '' ? null : Number(form.target), carryForward: form.carryForward,
+      })
+      send(intent)
+    } catch (error) { setIntentError(error) }
+  }
+
+  function send(intent: ManualOrderIntent) {
+    if (!user) return
+    setPending(intent)
+    setIntentError(null)
+    const finish = () => {
+      try {
+        finishOrder(sessionStorage, user.id, intent.clientOrderId)
+        setPending(null)
+      } catch (error) { setIntentError(error) }
+    }
+    place.mutate(intent, {
+      onSuccess: finish,
+      onError: error => {
+        // An ambiguous transport/server error keeps the original key and payload.
+        if (error instanceof ApiError && error.status === 400) finish()
+      },
     })
   }
 
@@ -191,6 +220,16 @@ export function ManualOrderPage() {
 
   return (
     <div className="page ticket-page">
+      {intentError != null && <InlineError error={intentError} />}
+      {pending && (
+        <Panel title="Order outcome pending">
+          <p>{pending.side} {pending.quantity} of {pending.symbol}. Recover this order before placing another.</p>
+          <p className="small-note muted">If it already filled, recovery returns the original result. It cannot place it twice.</p>
+          <button className="btn" disabled={place.isPending} onClick={() => send(pending)}>
+            {place.isPending ? 'Checking order…' : 'Recover order outcome'}
+          </button>
+        </Panel>
+      )}
       <header className="page__header">
         <div>
           <h1 className="page__title">Manual order</h1>
@@ -229,6 +268,7 @@ export function ManualOrderPage() {
         {instrument && (
           <>
             <InstrumentRules instrument={instrument} />
+            {!instrument.supportsIdempotency && <p role="status">The order service is updating. Refresh this page before placing an order.</p>}
             <LivePrice instrument={instrument} />
 
             <div

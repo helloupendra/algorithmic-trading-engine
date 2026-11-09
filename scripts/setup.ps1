@@ -220,8 +220,9 @@ if (-not (Test-Path .venv)) {
     Write-Ok '.venv already exists'
 }
 $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-& $venvPython -m pip install --quiet --upgrade pip
-& $venvPython -m pip install --quiet -r src/AlgoTrading.PythonEngine/requirements.txt
+& $venvPython -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements-bootstrap.txt
+if ($LASTEXITCODE -ne 0) { Stop-WithError 'Python installer upgrade failed.' }
+& $venvPython -m pip install --quiet --require-hashes --only-binary=:all: -r src/AlgoTrading.PythonEngine/requirements.txt
 if ($LASTEXITCODE -ne 0) { Stop-WithError 'pip install failed.' }
 Write-Ok 'Python dependencies installed'
 

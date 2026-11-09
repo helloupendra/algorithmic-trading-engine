@@ -240,6 +240,81 @@ public sealed class AuthSessionTransactionTests : IAsyncLifetime
             Assert.Equal(true, await command.ExecuteScalarAsync());
     }
 
+    [PostgresTheory]
+    [InlineData("delete")]
+    [InlineData("demote")]
+    [InlineData("disable")]
+    public async Task Concurrent_admin_removal_keeps_one_active_administrator(string operation)
+    {
+        await using (var db = Open())
+        {
+            db.AppUsers.AddRange(
+                new AppUser { Id = 21, UserName = "admin-one", Email = "one@example.invalid", Role = "Admin" },
+                new AppUser { Id = 22, UserName = "admin-two", Email = "two@example.invalid", Role = "Admin" },
+                new AppUser { Id = 23, UserName = "inactive", Email = "off@example.invalid", Role = "Admin", IsActive = false });
+            await db.SaveChangesAsync();
+        }
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new[] { 21L, 22L }.Select(async id =>
+        {
+            await using var db = Open();
+            // Both requests may have already loaded the user before acquiring the administration lock.
+            var user = await db.AppUsers.SingleAsync(x => x.Id == id);
+            using var cache = new MemoryCache(new MemoryCacheOptions());
+            var admin = new UserAdminService(db, new PasswordHasher<AppUser>(),
+                new TokenValidityService(db, cache, NullLogger<TokenValidityService>.Instance), NullLogger<UserAdminService>.Instance);
+            await gate.Task;
+            try
+            {
+                if (operation == "delete") await Service(db).DeleteUserByUsernameAsync(user.UserName);
+                else await admin.UpdateAsync(id, new() { Role = operation == "demote" ? "Trader" : null,
+                    IsActive = operation == "disable" ? false : null }, 99, "operator");
+                return true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                Assert.Contains("only active admin", ex.Message);
+                return false;
+            }
+        }).ToArray();
+        gate.SetResult();
+        var results = await Task.WhenAll(calls);
+        Assert.Single(results, success => success);
+        await using var check = Open();
+        Assert.Equal(1, await check.AppUsers.CountAsync(x => x.Role == "Admin" && x.IsActive));
+    }
+
+    [PostgresFact]
+    public async Task Trading_receipts_prevent_legacy_account_deletion()
+    {
+        await using var db = Open();
+        db.ManualOrderReceipts.Add(new() { UserId = UserId, ClientOrderId = Guid.NewGuid(), RequestHash = "history", FillJson = "{}", CreatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Service(db).DeleteUserByUsernameAsync("trader"));
+        Assert.Contains("trading history", ex.Message);
+        Assert.True(await db.AppUsers.AnyAsync(x => x.Id == UserId));
+        Assert.Single(await db.ManualOrderReceipts.ToListAsync());
+    }
+
+    [PostgresFact]
+    public async Task Receipt_migration_can_upgrade_and_downgrade_an_empty_table()
+    {
+        await using var db = Open();
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE manual_order_receipts");
+        var migration = new ManualOrderReceipts();
+        var generator = db.GetService<IMigrationsSqlGenerator>();
+        foreach (var command in generator.Generate(migration.UpOperations)) await db.Database.ExecuteSqlRawAsync(command.CommandText);
+        db.ManualOrderReceipts.Add(new() { UserId = UserId, ClientOrderId = Guid.NewGuid(), RequestHash = "probe", FillJson = "{}", CreatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ManualOrderReceipts.ToListAsync());
+        await db.ManualOrderReceipts.ExecuteDeleteAsync();
+        foreach (var command in generator.Generate(migration.DownOperations)) await db.Database.ExecuteSqlRawAsync(command.CommandText);
+        await using var connection = new NpgsqlConnection(_connection);
+        await connection.OpenAsync();
+        await using var query = new NpgsqlCommand("SELECT to_regclass('manual_order_receipts') IS NULL", connection);
+        Assert.Equal(true, await query.ExecuteScalarAsync());
+    }
+
     private TradingDbContext Open(IInterceptor? interceptor = null)
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>().UseNpgsql(_connection);

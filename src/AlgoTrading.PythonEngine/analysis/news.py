@@ -216,7 +216,7 @@ class FinBert:
             from transformers.utils import logging as hf_logging
         except ImportError as ex:
             raise DataError(f'news-score needs torch and transformers ({ex.name} is missing): '
-                            'pip install -r src/AlgoTrading.PythonEngine/requirements.txt') from None
+                            'install the optional research profile; see docs/python-dependencies.md') from None
         hf_logging.set_verbosity_error()        # no progress bars in the API's log every ten minutes
         hf_logging.disable_progress_bar()
         torch.set_num_threads(self.threads)

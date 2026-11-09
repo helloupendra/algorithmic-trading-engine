@@ -13,6 +13,7 @@ public class TradingDbContext : DbContext
         : base(options)
     {
     }
+    public DbSet<ManualOrderReceipt> ManualOrderReceipts => Set<ManualOrderReceipt>();
     public DbSet<Candle> Candles => Set<Candle>();
     public DbSet<BrokerSession> BrokerSessions => Set<BrokerSession>();
     public DbSet<BrokerConfig> BrokerConfigs => Set<BrokerConfig>();

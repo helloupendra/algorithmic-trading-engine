@@ -1,5 +1,9 @@
 // src/AlgoTrading.Api/Services/ManualOrderService.cs
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using AlgoTrading.Domain.Entities;
+using Npgsql;
 using System.Text.Json;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Simulator;
@@ -33,7 +37,8 @@ public sealed record ManualOrderCommand(
     decimal? TargetPrice = null,
     bool CarryForward = false,
     object? Source = null,
-    Func<ManualOrderPrice, string?>? Confirm = null);
+    Func<ManualOrderPrice, string?>? Confirm = null,
+    Guid? ClientOrderId = null);
 
 /// <summary>The price an order would fill at, why, and the quote it came from (null fields when there is none).</summary>
 public sealed record ManualOrderPrice(decimal Price, string Basis, decimal? Bid, decimal? Ask, decimal? Ltp, DateTime? QuoteUtc);
@@ -66,7 +71,7 @@ public sealed record ManualOrderFill(
 /// An order's outcome: the fill, or the refusal as the ticket answers it (<c>Refusal</c> is its 400 body,
 /// <c>{ message, ... }</c>; <c>RefusalMessage</c> its words).
 /// </summary>
-public sealed record ManualOrderOutcome(ManualOrderFill? Fill, object? Refusal, string? RefusalMessage)
+public sealed record ManualOrderOutcome(ManualOrderFill? Fill, object? Refusal, string? RefusalMessage, int StatusCode = 400)
 {
     public static ManualOrderOutcome Refused(string message) => new(null, new { message }, message);
 
@@ -107,6 +112,20 @@ public sealed class ManualOrderService(
 {
     public async Task<ManualOrderOutcome> PlaceAsync(ManualOrderCommand command, CancellationToken cancellationToken)
     {
+        if (command.ClientOrderId is not { } key) return await PlaceCoreAsync(command, cancellationToken);
+        await using var held = await ManualOrderRequestLock.AcquireAsync(db, command.UserId, key, cancellationToken);
+        return await PlaceCoreAsync(command, cancellationToken);
+    }
+
+    private async Task<ManualOrderOutcome> PlaceCoreAsync(ManualOrderCommand command, CancellationToken cancellationToken)
+    {
+        string requestHash = RequestHash(command);
+        if (command.ClientOrderId is { } key)
+        {
+            if (key == Guid.Empty) return ManualOrderOutcome.Refused("clientOrderId must be a non-empty UUID.");
+            if (await ReadReceiptAsync(command.UserId, key, requestHash, cancellationToken) is { } previous) return previous;
+        }
+
         if (string.IsNullOrWhiteSpace(command.Symbol)) return ManualOrderOutcome.Refused("symbol is required.");
 
         string symbol = command.Symbol.Trim();
@@ -253,9 +272,29 @@ public sealed class ManualOrderService(
         };
 
         SimulationSignalResponse result;
+        ManualOrderFill? receiptFill = null;
         try
         {
-            result = await paperTrading.CreateSignalAsync(signal, cancellationToken);
+            result = command.ClientOrderId is null
+                ? await paperTrading.CreateSignalAsync(signal, cancellationToken)
+                : await paperTrading.CreateSignalWithReceiptAsync(signal, async (response, ct) =>
+                {
+                    receiptFill = await BuildFillAsync(response, ct);
+                    db.ManualOrderReceipts.Add(new ManualOrderReceipt
+                    {
+                        UserId = command.UserId, ClientOrderId = command.ClientOrderId.Value,
+                        RequestHash = requestHash, FillJson = JsonSerializer.Serialize(receiptFill), CreatedUtc = DateTime.UtcNow
+                    });
+                    await db.SaveChangesAsync(ct);
+                }, cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+            { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "pk_manual_order_receipts" })
+        {
+            // The losing fill transaction rolled back. Read the winner through a clean tracker.
+            db.ChangeTracker.Clear();
+            return await ReadReceiptAsync(command.UserId, command.ClientOrderId!.Value, requestHash, cancellationToken)
+                ?? throw new InvalidOperationException("The committed order receipt could not be read.");
         }
         catch (InvalidOperationException ex)
         {
@@ -284,39 +323,66 @@ public sealed class ManualOrderService(
             }
         }
 
-        var positionIds = await db.PaperPositions.AsNoTracking()
-            .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
-            .Select(x => x.Id)
-            .ToListAsync(cancellationToken);
-        var orders = await db.PaperOrders.AsNoTracking()
-            .Where(x => x.SimulationRunId == book.Id && x.SimulationSignalId == result.Id)
-            .Select(x => new { x.Id, x.FillPrice })
-            .ToListAsync(cancellationToken);
-        var orderIds = orders.Select(x => x.Id).ToList();
+        var fill = receiptFill ?? await BuildFillAsync(result, cancellationToken);
+        logger.LogInformation("Manual {Side} of {Symbol} by {By} committed to book {RunId}, signal {SignalId}.",
+            side, symbol, userName, fill.RunId, fill.SignalId);
+        return new ManualOrderOutcome(fill, null, null);
 
-        // What the engine booked, which is what the person is told: the same
-        // quote as the check above, unless it ticked in between.
-        if (orders.FirstOrDefault()?.FillPrice is { } bookedPrice && bookedPrice > 0) price = bookedPrice;
+        async Task<ManualOrderFill> BuildFillAsync(SimulationSignalResponse result, CancellationToken cancellationToken)
+        {
+            var positionIds = await db.PaperPositions.AsNoTracking()
+                .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
+                .Select(x => x.Id)
+                .ToListAsync(cancellationToken);
+            var orders = await db.PaperOrders.AsNoTracking()
+                .Where(x => x.SimulationRunId == book.Id && x.SimulationSignalId == result.Id)
+                .Select(x => new { x.Id, x.FillPrice })
+                .ToListAsync(cancellationToken);
+            var orderIds = orders.Select(x => x.Id).ToList();
 
-        int units = command.Quantity * Math.Max(1, lot.LotSize);
-        string unitWord = IsDerivative(instrument.InstrumentType) ? "lot" : "share";
+            // What the engine booked, which is what the person is told: the same
+            // quote as the check above, unless it ticked in between.
+            if (orders.FirstOrDefault()?.FillPrice is { } bookedPrice && bookedPrice > 0) price = bookedPrice;
 
-        logger.LogInformation(
-            "Manual {Side} {Quantity} {Unit}(s) of {Symbol} at {Price} ({Basis}) by {By} into book {RunId}, {Product}.",
-            side, command.Quantity, unitWord, symbol, price, priceBasis, userName, book.Id,
-            command.CarryForward ? "carry forward" : "intraday");
+            int units = command.Quantity * Math.Max(1, lot.LotSize);
+            string unitWord = IsDerivative(instrument.InstrumentType) ? "lot" : "share";
 
-        string message = $"{side} {command.Quantity} {unitWord}{(command.Quantity == 1 ? "" : "s")} "
-                         + $"({units} qty) of {symbol} at {Money(price)} — filled on the {priceBasis}"
-                         + (command.LimitPrice is { } within ? $", within your limit {Money(within)}. " : ". ")
-                         + (command.CarryForward
-                             ? "Carried forward: held overnight until you close it."
-                             : $"Intraday: squared off at the {PositionCarryForward.CloseName(symbol, IstTime.DateOf(DateTime.UtcNow), instrument.ExpiryDate)}.");
+            string message = $"{side} {command.Quantity} {unitWord}{(command.Quantity == 1 ? "" : "s")} "
+                             + $"({units} qty) of {symbol} at {Money(price)} — filled on the {priceBasis}"
+                             + (command.LimitPrice is { } within ? $", within your limit {Money(within)}. " : ". ")
+                             + (command.CarryForward
+                                 ? "Carried forward: held overnight until you close it."
+                                 : $"Intraday: squared off at the {PositionCarryForward.CloseName(symbol, IstTime.DateOf(DateTime.UtcNow), instrument.ExpiryDate)}.");
 
-        return new ManualOrderOutcome(new ManualOrderFill(
-            book.Id, groupId, symbol, side, command.Quantity, lot.LotSize, units, price, priceBasis, command.StopLossPrice,
-            command.TargetPrice, command.CarryForward, result.Id, message, unitWord, live.Bid, live.Ask, live.Ltp,
-            live.QuoteUtc, positionIds, orderIds), null, null);
+            return new ManualOrderFill(
+                book.Id, groupId, symbol, side, command.Quantity, lot.LotSize, units, price, priceBasis, command.StopLossPrice,
+                command.TargetPrice, command.CarryForward, result.Id, message, unitWord, live.Bid, live.Ask, live.Ltp,
+                live.QuoteUtc, positionIds, orderIds);
+        }
+    }
+
+    public async Task<ManualOrderOutcome?> ReadReceiptAsync(long userId, Guid key, string? requestHash, CancellationToken ct)
+    {
+        var receipt = await db.ManualOrderReceipts.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.UserId == userId && r.ClientOrderId == key, ct);
+        if (receipt is null) return null;
+        if (requestHash is not null && receipt.RequestHash != requestHash)
+            return new(null, new { message = "clientOrderId was already used for a different order." },
+                "clientOrderId was already used for a different order.", 409);
+        return new(JsonSerializer.Deserialize<ManualOrderFill>(receipt.FillJson)
+            ?? throw new InvalidOperationException("Invalid order receipt."), null, null);
+    }
+
+    private static string RequestHash(ManualOrderCommand command)
+    {
+        string? Number(decimal? value) => value?.ToString("G29", CultureInfo.InvariantCulture);
+        var payload = JsonSerializer.Serialize(new
+        {
+            Symbol = command.Symbol?.Trim(), Side = command.Side?.Trim().ToUpperInvariant(), command.Quantity,
+            Limit = Number(command.LimitPrice), Stop = Number(command.StopLossPrice), Target = Number(command.TargetPrice),
+            command.CarryForward
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 
     /// <summary>How the fill was priced, in the words the reply uses ("filled on the ask").</summary>
