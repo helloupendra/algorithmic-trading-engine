@@ -57,7 +57,6 @@ from core.feed_watchdog import assess_feed, session_market
 from core.tick_age import tick_age_seconds
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
 from core.warmup_source import load_warmup_bars
-import urllib3
 from typing import Callable, List, Dict, Any, Optional, Tuple
 
 from messaging.redis_subscriber import build_subscriber_from_env
@@ -135,13 +134,11 @@ from core.metrics import (
 )
 from datetime import datetime, timezone
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from core.config import API_BASE_URL, DEBUG_PRINT_MESSAGES
-VERIFY_SSL = False
+from core.config import API_BASE_URL, DEBUG_PRINT_MESSAGES, VERIFY_SSL
 
 # Total wait for ALL legs of one signal. It is time the strategy spends blind,
 # so it is bounded well under the feed watchdog's 90s stall threshold.

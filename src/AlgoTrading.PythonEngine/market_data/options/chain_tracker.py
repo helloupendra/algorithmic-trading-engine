@@ -2,11 +2,8 @@ import requests
 from core.api_client import api_get, api_post, api_delete, api_put
 import time
 import argparse
-import urllib3
 import os
 
-# Disable SSL warnings for localhost
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 # Add parent dir to sys.path
@@ -23,12 +20,12 @@ class OptionChainRecorder:
         self.active_subscriptions = set()
 
     def get_spot_price(self) -> float:
-        resp = api_get(f"{API_BASE_URL}/api/LiveData/latest", params={"symbol": self.spot_symbol}, verify=False)
+        resp = api_get(f"{API_BASE_URL}/api/LiveData/latest", params={"symbol": self.spot_symbol})
         resp.raise_for_status()
         return float(resp.json()["lastTradedPrice"])
 
     def get_nearest_expiry(self) -> str:
-        resp = api_get(f"{API_BASE_URL}/api/Instruments/derivatives/expiries", params={"underlying": self.underlying}, verify=False)
+        resp = api_get(f"{API_BASE_URL}/api/Instruments/derivatives/expiries", params={"underlying": self.underlying})
         resp.raise_for_status()
         expiries = resp.json()
         if not expiries:
@@ -45,7 +42,6 @@ class OptionChainRecorder:
                     "strike": strike,
                     "optionType": option_type,
                 },
-                verify=False
             )
             resp.raise_for_status()
             data = resp.json()
@@ -63,7 +59,7 @@ class OptionChainRecorder:
                 "isActive": True,
                 "priority": priority
             }
-            resp = api_post(f"{API_BASE_URL}/api/LiveData/watchlist", json=payload, verify=False)
+            resp = api_post(f"{API_BASE_URL}/api/LiveData/watchlist", json=payload)
             resp.raise_for_status()
         except Exception as e:
             print(f"Failed to upsert {symbol} to watchlist: {e}")

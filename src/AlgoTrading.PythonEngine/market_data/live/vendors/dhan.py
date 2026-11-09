@@ -57,6 +57,7 @@ except ImportError:                         # pragma: no cover - Windows
     fcntl = termios = array = None
 
 from core.api_client import build_session
+from core.tls import tls_verify
 from core.config import API_BASE_URL, ENV_FILE, VERIFY_SSL
 from core.live.symbol_list import symbols_for
 from core.live.vendor_feed import FeedEvent, VendorFeed, close_detail
@@ -514,7 +515,7 @@ class DhanFeed(VendorFeed):
         self._http = http
         self._http_lock = threading.Lock()
         self._api = (api_base_url or API_BASE_URL).rstrip("/")
-        self._verify = VERIFY_SSL if verify_ssl is None else verify_ssl
+        self._verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         self._resolved: dict[str, DhanInstrument] = {}
         self._reported_unresolved: set[str] = set()
 
@@ -636,7 +637,7 @@ class DhanFeed(VendorFeed):
         """The platform API session, built once, by whichever thread needs it first."""
         with self._http_lock:
             if self._http is None:
-                self._http = build_session()
+                self._http = build_session(base_url=self._api, verify_ssl=self._verify)
             return self._http
 
     # ------------------------------------------------------------ credentials

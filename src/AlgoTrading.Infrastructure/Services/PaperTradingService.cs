@@ -1469,24 +1469,33 @@ public class PaperTradingService : IPaperTradingService
         RunMarksRequest request,
         CancellationToken cancellationToken = default)
     {
-        var exists = await _dbContext.SimulationRuns
-            .AsNoTracking()
-            .AnyAsync(x => x.Id == simulationRunId, cancellationToken);
-
-        if (!exists)
-            throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
-
-        if (request.Marks.Count == 0) return 0;
-
         using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+        if (run is null)
+            throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
+        if (!IsReplay(run.Mode))
+            throw new InvalidOperationException("Caller-supplied marks are accepted for OfflineReplay runs only. LivePaper uses server market prices.");
+        // The spawned runner can reach the API before its launcher saves Running.
+        if (!string.Equals(run.Status, "Running", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(run.Status, "Pending", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Marks require an active OfflineReplay run.");
+        if (request is null || request.Marks is null || request.Marks.Count > 5000)
+            throw new InvalidOperationException("A marks array with at most 5000 entries is required.");
+        if (request.AtUtc == default || request.AtUtc.Kind == DateTimeKind.Unspecified)
+            throw new InvalidOperationException("atUtc must include a UTC offset.");
 
-        // A replay's marks are bar closes, all as of the bar the runner names.
         var atUtc = request.AtUtc.ToUniversalTime();
+        if (run.FromUtc is null || run.ToUtc is null || atUtc < run.FromUtc || atUtc > run.ToUtc)
+            throw new InvalidOperationException("atUtc must be inside the run's configured replay window.");
+
         var prices = new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal);
         foreach (var mark in request.Marks)
         {
-            if (string.IsNullOrWhiteSpace(mark.Symbol)) continue;
-            prices[mark.Symbol.Trim()] = new QuoteSnapshot(mark.Price, null, null, atUtc);
+            if (mark is null || string.IsNullOrWhiteSpace(mark.Symbol) || mark.Price <= 0m)
+                throw new InvalidOperationException("Every replay mark requires a symbol and a positive price.");
+            if (!prices.TryAdd(mark.Symbol.Trim(), new QuoteSnapshot(mark.Price, null, null, atUtc)))
+                throw new InvalidOperationException("A symbol may appear only once in a marks request.");
         }
 
         var open = await _dbContext.PaperPositions
@@ -1495,6 +1504,8 @@ public class PaperTradingService : IPaperTradingService
 
         var touched = open.Where(x => prices.ContainsKey(x.Symbol)).ToList();
         if (touched.Count == 0) return 0;
+        if (touched.Any(x => x.UpdatedUtc > atUtc))
+            throw new InvalidOperationException("Replay marks cannot move a position back to an earlier bar.");
 
         var lotSizes = await ResolveLotSizesForRunAsync(simulationRunId, touched.Select(x => x.Symbol), cancellationToken);
         MarkOpenPositions(touched, prices, lotSizes);

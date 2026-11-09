@@ -6,15 +6,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests, urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from core.config import API_BASE_URL
+from core.config import API_BASE_URL, VERIFY_SSL
+from core.tls import tls_verify
 from core.api_client import build_session
 
-VERIFY_SSL = False
 REFRESH_SECONDS = 2
 MAX_SIGNALS_TO_SHOW = 12
 MAX_ORDERS_TO_SHOW = 12
@@ -33,9 +32,9 @@ else:
 SEPARATOR = "─" * 140
 
 class ApiClient:
-    def __init__(self, base_url: str, verify_ssl: bool = False):
+    def __init__(self, base_url: str, verify_ssl: bool | str | None = None):
         self.base_url = base_url.rstrip("/")
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         self.http = build_session()
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None):

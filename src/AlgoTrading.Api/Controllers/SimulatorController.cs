@@ -7,6 +7,7 @@ using AlgoTrading.Application.UseCases.Simulator;
 using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.Simulator;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -342,7 +343,8 @@ public class SimulatorController : ControllerBase
         }
     }
 
-    /// <summary>Bar-close marks for the run's open positions (LastMarkPrice, UnrealizedPnl, UpdatedUtc = atUtc).</summary>
+    /// <summary>Runner/admin bar-close marks for an active OfflineReplay run; live runs use server prices.</summary>
+    [Authorize(Roles = UserRoles.Service + "," + UserRoles.Admin)]
     [HttpPost("runs/{id:long}/marks")]
     public async Task<IActionResult> ApplyMarks(long id, [FromBody] RunMarksRequest? request, CancellationToken cancellationToken)
     {

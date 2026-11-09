@@ -44,7 +44,10 @@ Anyone deploying this software is responsible for the following. These are not o
 - Do **not** expose PostgreSQL (5432) or Redis (6379) to the public internet. The default `docker-compose.yml` binds them to the host for local development only.
 - Set `REDIS_PASSWORD` and enable `requirepass` for any Redis instance reachable beyond localhost.
 - Change the default Grafana admin password before exposing port 3000.
-- Keep `VERIFY_SSL=True` outside of loopback-only development.
+- Python API clients require `VERIFY_SSL=True`; disabling verification is rejected.
+  Use `API_CA_BUNDLE` with a PEM CA bundle for private HTTPS. Relative paths resolve
+  from the repository root. `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` are supported
+  as fallbacks. Loopback HTTP development does not require a TLS exception.
 
 ### Broker account safety
 
@@ -60,3 +63,25 @@ This is research and portfolio software, not a certified trading system. There i
 ## Supported Versions
 
 Only the current `main` branch receives security fixes.
+
+
+### Python API certificate trust
+
+The strategy runner, logic engine, feeds, analysis client and operational API
+tools use the shared certificate policy in `core/tls.py`. Client defaults,
+login, 401 reauthentication and data requests all verify HTTPS. Per-request
+`verify=False` is rejected before credentials are fetched, and global insecure
+warning suppression has been removed.
+
+For a private CA, set `API_CA_BUNDLE` to the PEM bundle containing its issuing
+certificate chain. It overrides `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE`; with
+none configured, Requests uses its normal trust store. An explicit client CA
+path overrides these settings and is applied to both sign-in and data calls.
+Missing bundle files fail at configuration time. Keep the certificate hostname
+valid; trusting a CA does not disable hostname checking.
+
+On rollout, remove any `VERIFY_SSL=False` setting, provision a CA bundle where
+private HTTPS is used, and restart Python runners/tools to load the policy.
+Existing loopback HTTP development does not need a certificate or an insecure
+exception. This policy concerns platform API clients; it does not replace the
+internal transport implementations of third-party broker SDKs.

@@ -1,9 +1,7 @@
 import requests
 from core.api_client import api_get, api_post, api_delete, api_put
-import urllib3
 import os
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 import os
@@ -15,7 +13,7 @@ def clear_watchlist():
     url = f"{API_BASE_URL}/api/LiveData/watchlist"
     
     try:
-        response = api_get(url, verify=False)
+        response = api_get(url)
         response.raise_for_status()
         
         items = response.json()
@@ -25,7 +23,7 @@ def clear_watchlist():
             item_id = item.get('id')
             if item_id:
                 delete_url = f"{API_BASE_URL}/api/LiveData/watchlist/{item_id}"
-                api_delete(delete_url, verify=False)
+                api_delete(delete_url)
                 
         print("Watchlist cleared successfully! The Python terminal will automatically sync and unsubscribe in a few seconds.")
             

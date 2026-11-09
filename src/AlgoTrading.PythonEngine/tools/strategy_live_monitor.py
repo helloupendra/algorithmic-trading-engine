@@ -9,9 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import requests
-import urllib3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # -----------------------------------------------------------------------------
 # CONFIG
@@ -19,8 +17,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from core.config import API_BASE_URL
-VERIFY_SSL = False
+from core.config import API_BASE_URL, VERIFY_SSL
+from core.tls import tls_verify
 SIMULATION_RUN_ID = 1          # <- change this to your run id
 REFRESH_SECONDS = 2            # how often to refresh terminal
 MAX_ORDERS_TO_SHOW = 10
@@ -36,9 +34,9 @@ RESET = "\033[0m"
 
 
 class ApiClient:
-    def __init__(self, base_url: str, verify_ssl: bool = False):
+    def __init__(self, base_url: str, verify_ssl: bool | str | None = None):
         self.base_url = base_url.rstrip("/")
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         self.http = requests.Session()
 
     def _get(self, path: str):

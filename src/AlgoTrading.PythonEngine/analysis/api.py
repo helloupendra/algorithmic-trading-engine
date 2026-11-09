@@ -12,6 +12,8 @@ closed (409). Those refusals are answers, not failures, and come back as such.
 
 from __future__ import annotations
 
+from core.tls import tls_verify
+
 from datetime import date
 from typing import Any, Dict, List, NamedTuple, Optional
 
@@ -35,15 +37,15 @@ class ApiError(RuntimeError):
 
 
 class ForecastApi:
-    def __init__(self, base_url: Optional[str] = None, http: Any = None, verify_ssl: Optional[bool] = None):
+    def __init__(self, base_url: Optional[str] = None, http: Any = None, verify_ssl: Optional[bool | str] = None):
         from core.config import API_BASE_URL, VERIFY_SSL
 
         self.base_url = (base_url or API_BASE_URL).rstrip("/")
-        self.verify = VERIFY_SSL if verify_ssl is None else verify_ssl
+        self.verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         if http is None:
             from core.api_client import build_session
 
-            http = build_session()
+            http = build_session(base_url=self.base_url, verify_ssl=self.verify)
         self.http = http
 
     def register_model(self, payload: Dict[str, Any]) -> Answer:

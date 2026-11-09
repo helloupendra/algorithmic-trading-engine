@@ -99,7 +99,7 @@ def main():
     publisher = RedisTickPublisher.__new__(RedisTickPublisher)
     publisher.stream_name, publisher.maxlen = "market:ticks", 500_000
     publisher.client = publisher.stream_client = socketless_redis()
-    runner = FeedRunner(feed, http=NoApi(), publisher=publisher, api_base_url="http://x", verify_ssl=False,
+    runner = FeedRunner(feed, http=NoApi(), publisher=publisher, api_base_url="http://x",
                         market_open=lambda: True)
     feed._on_ticks = runner.on_ticks
     feed._on_event = lambda e, d="": None

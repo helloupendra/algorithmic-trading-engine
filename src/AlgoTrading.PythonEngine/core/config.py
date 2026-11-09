@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from core.tls import tls_verify
 
 # core/ -> AlgoTrading.PythonEngine/ -> src/ -> <repo root>
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -33,7 +34,7 @@ def _flag(name: str, default: str = "False") -> bool:
 
 # --- Backend API -----------------------------------------------------------
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:5025")
-VERIFY_SSL = _flag("VERIFY_SSL", "True")
+VERIFY_SSL = tls_verify()
 
 # --- FYERS broker ----------------------------------------------------------
 # No default: an empty APP_ID must fail loudly rather than silently connecting

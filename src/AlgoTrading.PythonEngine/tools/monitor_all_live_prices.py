@@ -2,12 +2,9 @@ import requests
 from core.api_client import api_get, api_post, api_delete, api_put
 import time
 import argparse
-import urllib3
 import os
 import sys
 
-# Disable SSL warnings for localhost
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
 import os
@@ -24,13 +21,13 @@ def monitor_all_live_prices(interval: int):
     while True:
         try:
             # 1. Get Watchlist
-            watchlist_resp = api_get(watchlist_url, verify=False)
+            watchlist_resp = api_get(watchlist_url)
             watchlist_resp.raise_for_status()
             watchlist_data = watchlist_resp.json()
             tracked_symbols = {item['symbol'] for item in watchlist_data if item.get('isActive', True)}
             
             # 2. Get Latest Prices
-            prices_resp = api_get(latest_url, verify=False)
+            prices_resp = api_get(latest_url)
             prices_resp.raise_for_status()
             prices_data = {item['symbol']: item for item in prices_resp.json()}
             

@@ -6,7 +6,7 @@ from core.config import API_BASE_URL
 from core.data_engine import DataEngine
 from datetime import datetime, timedelta
 
-api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
+api = PlatformApiClient(API_BASE_URL)
 engine = DataEngine()
 
 end_time = datetime.now()

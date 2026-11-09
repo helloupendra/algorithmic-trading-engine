@@ -32,6 +32,7 @@ from typing import Any, Optional
 import requests
 
 from core.config import API_BASE_URL, VERIFY_SSL
+from core.tls import tls_verify
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,10 @@ class _TokenProvider:
     (ENGINE_SERVICE_USERNAME / ENGINE_SERVICE_PASSWORD).
     """
 
-    def __init__(self, username: Optional[str] = None, password: Optional[str] = None) -> None:
+    def __init__(self, username: Optional[str] = None, password: Optional[str] = None,
+                 *, base_url: Optional[str] = None, verify_ssl: bool | str | None = None) -> None:
+        self.base_url = (base_url or API_BASE_URL).rstrip("/")
+        self.verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         self._token: Optional[str] = None
         self._lock = threading.Lock()
         self._username = (username or "").strip() or None
@@ -132,10 +136,10 @@ class _TokenProvider:
 
         while True:
             response = requests.post(
-                f"{API_BASE_URL}/api/UserAuth/login",
+                f"{self.base_url}/api/UserAuth/login",
                 json={"userNameOrEmail": username, "password": password},
                 timeout=15,
-                verify=VERIFY_SSL,
+                verify=self.verify,
             )
 
             if response.status_code != 429 or time.monotonic() >= deadline:
@@ -174,13 +178,14 @@ class AuthenticatedSession(requests.Session):
     def __init__(self, provider: Optional[_TokenProvider] = None) -> None:
         super().__init__()
         self._provider = provider or _provider
+        self.verify = self._provider.verify
 
     def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
+        # Check before login too: explicit per-request flags cannot weaken TLS.
+        kwargs["verify"] = tls_verify(kwargs.get("verify", self.verify))
         # Never attach a token to the login call itself — that would recurse.
         if any(path in str(url) for path in _AUTH_PATHS):
             return super().request(method, url, *args, **kwargs)
-
-        kwargs.setdefault("verify", VERIFY_SSL)
 
         headers = dict(kwargs.pop("headers", None) or {})
         headers["Authorization"] = f"Bearer {self._provider.get()}"
@@ -196,14 +201,17 @@ class AuthenticatedSession(requests.Session):
         return response
 
 
-def build_session(username: Optional[str] = None, password: Optional[str] = None) -> AuthenticatedSession:
+def build_session(username: Optional[str] = None, password: Optional[str] = None,
+                  *, base_url: Optional[str] = None, verify_ssl: bool | str | None = None) -> AuthenticatedSession:
     """
     A session that authenticates every request to the trading API — as the
     engine service account, or as `username` when credentials are given (the
     terminal tools sign in as an admin for the admin-only endpoints).
     """
-    if username and password:
-        return AuthenticatedSession(_TokenProvider(username, password))
+    verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
+    base = (base_url or API_BASE_URL).rstrip("/")
+    if (username and password) or base != _provider.base_url or verify != _provider.verify:
+        return AuthenticatedSession(_TokenProvider(username, password, base_url=base, verify_ssl=verify))
     return AuthenticatedSession()
 
 
@@ -266,12 +274,12 @@ class PlatformApiClient:
     replays another day.
     """
 
-    def __init__(self, base_url: str, verify_ssl: bool = False,
+    def __init__(self, base_url: str, verify_ssl: bool | str | None = None,
                  username: Optional[str] = None, password: Optional[str] = None,
                  replay: bool = False, replay_date: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
-        self.verify_ssl = verify_ssl
-        self.http = build_session(username, password)
+        self.verify_ssl = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
+        self.http = build_session(username, password, base_url=self.base_url, verify_ssl=self.verify_ssl)
         self.replay = bool(replay)
         self.replay_date = replay_date
 

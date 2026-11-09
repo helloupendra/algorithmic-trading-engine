@@ -63,7 +63,7 @@ class LogicEngine(BaseStrategy):
         self.recap_day: Optional[str] = None
         self._recap_clock: Optional[str] = None
 
-        self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
+        self.api = PlatformApiClient(API_BASE_URL)
         
         import redis
         import os

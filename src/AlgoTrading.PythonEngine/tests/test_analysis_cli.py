@@ -219,7 +219,7 @@ class ScoreTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def test_endpoints_and_bodies(self):
         http = fakes.FakeHttp()
-        api = ForecastApi(base_url="http://api.test/", http=http, verify_ssl=False)
+        api = ForecastApi(base_url="http://api.test/", http=http, verify_ssl=True)
         self.assertTrue(api.register_model({"key": "range.har"}).ok)
         api.issue({"modelKey": "range.har"})
         api.post_outcome(7, {"outcome": {}, "scores": {}})

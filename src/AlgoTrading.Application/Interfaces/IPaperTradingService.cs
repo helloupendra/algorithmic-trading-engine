@@ -184,6 +184,7 @@ public interface IPaperTradingService
     /// <summary>
     /// Sets LastMarkPrice and recomputes UnrealizedPnl (lots x lotSize) for the
     /// run's open positions from bar-close prices, stamping UpdatedUtc = atUtc.
+    /// Only active OfflineReplay runs accept these marks, within their replay window.
     /// Returns the number of positions updated.
     /// </summary>
     Task<int> ApplyMarksAsync(

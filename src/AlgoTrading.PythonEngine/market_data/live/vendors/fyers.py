@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 
 from core.api_client import build_session
+from core.tls import tls_verify
 from core.config import (API_BASE_URL, DEFAULT_DATA_TYPE, FYERS_LOG_PATH,
                          SOURCE_NAME, VERIFY_SSL, require_app_id)
 from core.live.vendor_feed import FeedEvent, VendorFeed
@@ -119,10 +120,10 @@ class FyersFeed(VendorFeed):
     max_symbols = 200
     ready_event = FeedEvent.CONNECTED
 
-    def __init__(self, http=None, api_base_url: str | None = None, verify_ssl: bool | None = None):
-        self._http = http or build_session()
+    def __init__(self, http=None, api_base_url: str | None = None, verify_ssl: bool | str | None = None):
         self._api = (api_base_url or API_BASE_URL).rstrip("/")
-        self._verify = VERIFY_SSL if verify_ssl is None else verify_ssl
+        self._verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
+        self._http = http or build_session(base_url=self._api, verify_ssl=self._verify)
         self._socket = None
 
     @classmethod

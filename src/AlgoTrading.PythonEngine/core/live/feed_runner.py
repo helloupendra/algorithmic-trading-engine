@@ -28,6 +28,7 @@ import traceback
 from datetime import datetime, timezone
 
 from core.api_client import build_session
+from core.tls import tls_verify
 from core.config import (API_BASE_URL, ENABLE_MOCK_TICKS, HEARTBEAT_SECONDS,
                          VERIFY_SSL, WATCHLIST_REFRESH_SECONDS)
 from core.heartbeat import run_forever
@@ -129,16 +130,16 @@ class FeedRunner:
     STATS_EVERY_SECONDS = 60
 
     def __init__(self, feed, http=None, publisher=None, fixed_symbols=None,
-                 api_base_url: str | None = None, verify_ssl: bool | None = None,
+                 api_base_url: str | None = None, verify_ssl: bool | str | None = None,
                  watchlist_refresh_seconds: float = WATCHLIST_REFRESH_SECONDS,
                  heartbeat_seconds: float = HEARTBEAT_SECONDS,
                  market_open=None, frame_silence_seconds: float | None = None,
                  backlog_alert_kb: float | None = None, stream_batch: bool | None = None):
         self._feed = feed
-        self._http = http or build_session()
         self._publisher = publisher
         self._api = (api_base_url or API_BASE_URL).rstrip("/")
-        self._verify = VERIFY_SSL if verify_ssl is None else verify_ssl
+        self._verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
+        self._http = http or build_session(base_url=self._api, verify_ssl=self._verify)
         self._watchlist_refresh = watchlist_refresh_seconds
         self._heartbeat_seconds = heartbeat_seconds
         self._market_open_override = market_open

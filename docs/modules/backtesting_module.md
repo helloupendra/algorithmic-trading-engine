@@ -133,3 +133,26 @@ The wrapper creates the run through the API, follows its progress and prints the
 - A strategy gets the contracts it declares (`get_contract_requirements`: ATM, OTM or ITM, a number of strikes or points from ATM, resolved on the underlying's strike grid as live), so strangles, butterflies and spreads open their OTM legs. A strike the instrument master or the stored premiums cannot supply is skipped and listed; on expired contracts that is anything beyond ATM±5 (see Data honesty).
 - One backtest = one underlying and one driver resolution; multi-symbol portfolios are out of scope.
 - The old C# `OfflineReplay` frame counter (`SimulationRunnerService`) is retained but `POST /api/Simulator/runs/{id}/start` now points callers at `/api/Backtest/runs`.
+
+
+## Replay mark write boundary
+
+`POST /api/Simulator/runs/{id}/marks` is restricted to the engine `Service` role
+and administrators. A trader cannot submit marks for their own run or another
+account's run. The shared service account remains trusted across runs because
+one runner account executes jobs owned by different users.
+
+`PaperTradingService.ApplyMarksAsync` checks the persisted run inside the run's
+write lock before touching positions. Only `OfflineReplay` in `Pending` or
+`Running` is accepted; `Pending` covers the interval between process launch and
+the launcher's status save. `LivePaper` rejects caller marks even for an admin
+or service account, including direct service calls. Its existing server quote
+marking path remains in use.
+
+Replay marks require an offset-bearing timestamp inside the configured
+`FromUtc`–`ToUtc` range and cannot move an open position back to an earlier bar.
+A batch contains at most 5000 unique, nonblank symbols with positive prices;
+invalid batches write nothing. Only matching open positions belonging to the
+requested run are updated. Retries at the same bar are accepted. These checks
+bind writes to a trusted runner role and the replay's time range; they do not
+independently recompute a trusted runner's submitted historical price.

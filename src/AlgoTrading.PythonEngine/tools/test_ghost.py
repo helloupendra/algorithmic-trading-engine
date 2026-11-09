@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from strategies.ghost_tangent_crossings import GhostTangentCrossingsStrategy
 from strategies.base_strategy import StrategyInput, BarFrame
 
-api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
+api = PlatformApiClient(API_BASE_URL)
 engine = DataEngine()
 
 end_time = datetime.now()
