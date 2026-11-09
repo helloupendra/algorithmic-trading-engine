@@ -69,6 +69,7 @@ from strategies.base_strategy import (
     BarFrame,
 )
 from strategies.registry import discover_strategies
+from strategies.position_snapshot import PositionSnapshot
 from strategies import signal_filters
 # Shared helpers live in importable modules (also used by the backtest engine);
 # they are re-exported here so existing `execution_runner.<name>` references work.
@@ -694,6 +695,8 @@ if __name__ == "__main__":
               f"contracts and the expiry as of {recap_date}, and the live watchlist is left alone.", flush=True)
 
     strategy = strategies_map[args.strategy](run_params)
+    position_snapshot = (PositionSnapshot(lambda: api.get_simulation_positions(args.run_id))
+                         if args.run_id and getattr(strategy, "requires_position_sync", False) else None)
     if getattr(strategy, "backtest_only", False):
         # The API refuses these first. This holds if its catalogue could not say so.
         message = f"{args.strategy} runs in backtests only: the live runner cannot trade it."
@@ -1007,7 +1010,9 @@ if __name__ == "__main__":
                             lot_size=lot_size,
                             contracts={},
                             bars={req.resolution: {"index": list(cumulative_frames)}},
-                            metadata={"source": "warmup"},
+                            metadata={"source": "warmup", "bars_as_of": (
+                                f"{recap_date}T00:00:00+05:30" if recap is not None
+                                else datetime.now(timezone.utc).isoformat())},
                             recap_date=recap_date,
                         )
                         strategy.on_bar(state, inp)
@@ -1286,6 +1291,8 @@ if __name__ == "__main__":
         """What follows a signal the book has: at once, or when an unconfirmed OPEN turns out to be in it."""
         if booking is not None:
             closed_groups.booked(sig, legs_key)
+            if position_snapshot is not None:
+                position_snapshot.invalidate()
 
         ORDERS_EMITTED.inc()
         if booking is None:
@@ -1519,7 +1526,8 @@ if __name__ == "__main__":
                     bars=bars_dict,
                     # The expiry the run trades, so the expiry-day filters judge the
                     # same way here as they do in a replay.
-                    metadata={"source": "live-api", "tick": tick, "expiry_date": expiry_date},
+                    metadata={"source": "live-api", "tick": tick, "expiry_date": expiry_date,
+                              **({"open_groups": position_snapshot.groups()} if position_snapshot is not None else {})},
                     recap_date=recap_date,
                 )
 

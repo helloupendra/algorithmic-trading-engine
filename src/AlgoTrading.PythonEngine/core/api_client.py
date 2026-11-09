@@ -489,6 +489,15 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_simulation_positions(self, run_id: int) -> list[dict[str, Any]]:
+        resp = self.http.get(
+            f"{self.base_url}/api/Simulator/runs/{run_id}/positions",
+            verify=self.verify_ssl,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def create_simulation_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         resp = self.http.post(
             f"{self.base_url}/api/Simulator/runs",

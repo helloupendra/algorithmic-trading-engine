@@ -137,6 +137,9 @@ class FakeApi:
         now = datetime.now(timezone.utc).isoformat()
         if method == "GET" and path == f"/api/Simulator/runs/{RUN_ID}":
             return {"id": RUN_ID, "symbol": SPOT, "parametersJson": json.dumps(self.run_params)}
+        if method == "GET" and path == f"/api/Simulator/runs/{RUN_ID}/positions":
+            return ([{"status": "Open", "groupId": "probe-1"}]
+                    if self.named("POST", "/api/Simulator/signals") else [])
         if method == "GET" and path == "/api/Instruments/derivatives/expiries":
             return [{"expiryDate": d} for d in self.expiries]
         if method == "GET" and path == "/api/Instruments/derivatives/chain":
@@ -353,6 +356,18 @@ class BacktestOnlyStrategyTests(unittest.TestCase):
         self.assertEqual(2, stopped.exception.code)
         self.assertIn("runs in backtests only", harness.output)
         self.assertEqual([], harness.inputs)
+
+
+class PositionSyncEndToEndTests(unittest.TestCase):
+    def test_opted_in_strategy_receives_book_and_refreshes_after_own_entry(self):
+        now = datetime.now(timezone.utc).isoformat()
+        ticks = [{"symbol": SPOT, "lastTradedPrice": 24910.0, "exchangeTimestampUtc": now} for _ in range(2)]
+        harness = RunnerHarness({"lots": 1, "underlying": "NIFTY"}, [utc_day(7)], ticks, [])
+        with mock.patch.object(ProbeStrategy, "requires_position_sync", True, create=True):
+            harness.run()
+        self.assertEqual([], harness.api.unexpected, harness.output)
+        self.assertEqual([[], ["probe-1"]], [i.metadata["open_groups"] for i in harness.live_inputs()])
+        self.assertEqual(2, len(harness.api.named("GET", f"/api/Simulator/runs/{RUN_ID}/positions")))
 
 
 class LiveRunEndToEndTests(unittest.TestCase):

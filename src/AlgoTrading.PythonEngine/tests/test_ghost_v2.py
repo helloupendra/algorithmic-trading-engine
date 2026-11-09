@@ -130,7 +130,7 @@ class GateTests(unittest.TestCase):
         self.assertAlmostEqual(ghost["cross_close"], round(frames[8].close, 2))
         self.assertAlmostEqual(ghost["trigger_at_cross"], round(line_of(strategy)(9), 2))
         self.assertLess(ghost["cross_close"], ghost["trigger_at_cross"])
-        self.assertEqual(state["last_signal_idx"], 9)
+        self.assertIsNone(state["last_signal_idx"])           # detection does not consume an unbookable entry
         json.dumps(signal.metadata)                           # it has to reach MetadataJson
 
     def test_a_stale_crossing_is_not_traded_and_is_counted_once(self):
@@ -184,7 +184,9 @@ class GateTests(unittest.TestCase):
     def test_a_crossing_already_signalled_is_not_counted_as_stale(self):
         strategy = GhostTangentCrossingsV2Strategy({})
         state = strategy.initialize_state()
-        state["last_signal_idx"] = 9
+        frames = up_leg_candles(strategy, cross_at=9, newest=9)
+        signal, _ = evaluate(strategy, frames, state)
+        strategy._consume(state, signal)
 
         signal, state = evaluate(strategy, up_leg_candles(strategy, cross_at=9, newest=12), state)
 
@@ -347,13 +349,14 @@ class TradingTests(unittest.TestCase):
         self.assertIsNone(self.state["position"])
         self.assertEqual([s.signal_type for s in self.act([found("BUY", cross_bar=12)], at=2)], ["OPEN_GROUP"])
 
-    def test_live_forgets_a_position_on_a_new_session(self):
-        self.act([found("BUY")], mode="LivePaper")
+    def test_live_keeps_a_position_without_an_authoritative_book_on_a_new_session(self):
+        self.act([found("BUY")])
+        self.assertIsNotNone(self.state["position"])
         tomorrow = Frame(stamp(date(2026, 9, 10), 9, 15), 100.5)
 
         self.strategy._sync(self.state, inp(tomorrow, mode="LivePaper"), tomorrow)
 
-        self.assertIsNone(self.state["position"])
+        self.assertIsNotNone(self.state["position"])
 
     def test_no_contract_no_position(self):
         out = self.act([found("BUY")], contracts={})
@@ -432,8 +435,10 @@ class ReplayTests(unittest.TestCase):
             step = inp(frames[i - 1], bars=frames[:i])
             crossings_1 += [(i, s.signal_type, s.reason) for s in original.on_bar(s1, step)]
             # The parent's on_bar with the V2 geometry: the crossings before any position rule.
-            crossings_2 += [(i, s.signal_type, s.reason)
-                            for s in GhostTangentCrossingsStrategy.on_bar(fixed, s2, step)]
+            found_signals = GhostTangentCrossingsStrategy.on_bar(fixed, s2, step)
+            crossings_2 += [(i, s.signal_type, s.reason) for s in found_signals]
+            for signal in found_signals:
+                fixed._consume(s2, signal)
 
         self.assertGreater(len(crossings_1), 2)
         self.assertEqual(crossings_1, crossings_2)

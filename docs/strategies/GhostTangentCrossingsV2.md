@@ -28,10 +28,20 @@ at a time.
 ## Timeframe
 
 - **Bar:** 5-minute index candles, as the original.
-- **Closed candles only.** Live, the runner calls `on_bar` on every tick with a
-  forming candle last; V2 drops it, so every decision is on a closed candle
-  and live reads what a replay reads. A replay hands over closed candles and
-  keeps them all.
+- **Closed candles only.** Live candles are checked against the tick's as-of
+  time and chart duration. A forming candle is excluded; a final candle that
+  has already closed is retained even when no forming candle follows it.
+  Warm-up uses its actual cutoff and cannot submit orders. Daily candles are
+  complete at the cash close. A replay supplies already closed candles.
+- **Configured timeframe.** An explicit `timeframe` also changes the live data
+  request. `auto` uses 5m live and the longer run chart in backtests.
+- **Continuous reading.** Each unseen closed candle advances the geometry once,
+  including candles arriving together after reconnect. A bounded 1,024-candle
+  buffer survives checkpoint reloads and rolling API windows. Intermediate
+  catch-up candles update pivots and check exits; only the newest candle can
+  enter. Old checkpoints or a lost history window rebuild geometry while
+  retaining exposure, and suppress entries during the rebuild. Invalid OHLC
+  and unreadable timestamps are excluded.
 - **Session candles only.** On an intraday chart, candles stamped before
   09:15 IST or from 15:30 IST (`core.market_hours.SESSION_OPEN` /
   `CASH_CLOSE`) are dropped before the geometry sees them: the ingestor's
@@ -61,9 +71,12 @@ $$
 \underbrace{x^* - x_B \le \lambda\,(x_B - x_A)}_{\texttt{line\_life}}
 $$
 
-with a gate switched off when its parameter is 0. A crossing already
-signalled (`last_signal_idx`) is skipped before the gates, as the original
-skips it. A crossing that fails a gate does not set `last_signal_idx`.
+with a gate switched off when its parameter is 0. Crossing timestamps are
+consumed only after an actionable or deliberately ignored decision, not during
+geometry detection. Missing contracts can be retried while the candidate stays
+fresh. The consumed timestamp survives restarts, so an exited trade cannot be
+reopened from the same crossing. Opposing candidates are both examined before
+the conflict decision.
 
 Then, on the signals of one call:
 
@@ -72,8 +85,15 @@ Then, on the signals of one call:
   CE: one `OPEN_GROUP`, one leg of `lots`, group id
   `GTC2_<tick stamp>_<n>`. V2 emits the `OPEN_GROUP` itself, so the runner's
   `GhostTangentCrossings` branch and the backtest's bare BUY/SELL conversion
-  are not used (and with them the backtest's `contract` rules —
-  `strike_offset`, `flip` — do not apply).
+  are not used. Non-default `contract.strike_offset` / `contract.flip` settings
+  are rejected explicitly instead of silently backtesting ATM contracts.
+- A crossing that is back across its trigger, or whose pivot stop has already
+  been breached by the latest close/live spot, cannot enter. A pivot-stop exit
+  cannot reopen a position on the same candle.
+- Live entries require a known, flat run book (or a preceding confirmed close
+  in the batch). An untracked open group blocks entries. Data older than one
+  chart interval after the last candle's close also blocks new entries.
+- Missing, expired, wrong-underlying or wrong-option-side contracts cannot enter.
 
 In words: trade the break only while it is happening, only on a swing of at
 least three candles, and only while the line is still near the swing it was
@@ -104,11 +124,17 @@ breakeven, trailing, indicator exits), `limits` (trade windows,
 `max_trades_per_day`, cooldowns), `costs` (slippage and statutory charges).
 V2 does not reimplement any of them.
 
-**Knowing the position is gone.** A replay tells the strategy which groups are
-open (`metadata.open_groups`), so a position closed by a run rule or the
-square-off is forgotten at once. Live says nothing: the position is dropped
-when a new IST session starts, so a run rule that closes it leaves V2
-believing it is held for the rest of that day.
+**Knowing the position is gone.** Replay and live both provide
+`metadata.open_groups`. The live runner polls this run's positions at most once
+every five seconds and invalidates the cache after its own booked orders.
+Risk/manual exits clear held state on the next successful refresh. An API
+failure means unknown, never flat; known exits remain available and new entries
+wait. A change of date alone never clears exposure. Carried rows transferred to
+the manual book are no longer open in this run.
+
+**Booking failures.** The existing runner sends a reversal's close before its
+open. A refused or unanswered close restores the strategy state and prevents
+the following open. This behavior is covered with V2-specific regression tests.
 
 ## Exit
 
@@ -144,10 +170,16 @@ meaning; see its spec. V2 adds:
 | `on_opposite` | `"reverse"` | `"reverse"`, `"close"` or `"ignore"` | n/a — a choice | |
 | `lots` (run parameter) | `default_lots` = 1 | lots per signal | | |
 
+Construction rejects fractional/negative counts, non-finite or negative
+`line_life`, unknown enum values and unsupported timeframes. `pivot_forward`
+accepts 1–250; `lots` 1–10,000; age/leg count 0–10,000. Booleans must be actual
+booleans or `"true"`/`"false"`; the string `"false"` does not enable a stop.
+Zero age still means **no age limit**, preserving existing runs' semantics.
+
 ## Worked example
 
-None yet: no live run of GhostTangentCrossingsV2 exists, and the offline
-replay of 5 Nov 2026 has not been walked through. The first run should be
+No audited production example is recorded here. The offline
+replay of 5 Nov 2026 has not been walked through. A representative run should be
 walked through here, signal by signal, with the
 template's SQL (docs/strategies/README.md); `MetadataJson.ghost` now carries
 the line and crossing values that the original's example had to rebuild from
@@ -164,15 +196,13 @@ it, V2 drops it as stale.
 
 ## Limitations
 
-- **It loses money.** Replayed on 5 Nov 2026 with recorded option premiums,
+- **The previous implementation lost money in historical replay.** Replayed on 5 Nov 2026 with recorded option premiums,
   1 Jan 2025 to 11 Sep 2026, NIFTY, BANKNIFTY and SENSEX together, 2 lots,
   0.5% slippage plus charges and a 20-point target: the original lost
   ₹24,27,695 and V2 ₹15,52,867. V2 loses less only because it trades less;
-  per trade it lost ₹489 against the original's ₹456.
-- **Live does not know a run rule closed its position** until the next
-  session (see Position management): after a leg target, signals in that
-  direction are ignored and an opposite one closes a group that is already
-  closed.
+  per trade it lost ₹489 against the original's ₹456. Those results predate the
+  9 Nov execution fixes. Regression tests do not establish profitability; no
+  new out-of-sample profitability claim is made.
 - **The pivot stop is a close beyond a wick extreme** (`pivot_type` =
   `"Wick"`): tight on a short leg, and checked on closed 5-minute candles,
   so the fill can be well past the level.
@@ -180,9 +210,23 @@ it, V2 drops it as stale.
   extreme after the entry is exactly what trips the stop, so ghost entries
   can be stopped quickly in a trend that keeps extending.
 - **The backtest's `contract` rules do not apply** (`strike_offset`, `flip`):
-  V2 always buys the ATM contract the platform resolves.
-- **Everything the original's spec lists about the geometry still holds**
-  (warm-up versus live series, the bar counter, expiry-day contracts).
+  V2 buys ATM options and now refuses incompatible settings.
+- **Regular cash sessions only.** The geometry filters 09:15–15:30 IST;
+  special evening sessions require a calendar-aware strategy extension.
+- **No recovered position details, no new exposure.** If the book contains a
+  group absent from a recovered checkpoint, entries wait rather than guessing
+  its stop or direction. API risk rules still manage that book.
+- **No automatic research promotion.** Slippage, liquidity, gaps, long-option
+  decay and ghost-leg instability still require walk-forward evaluation with
+  recorded option prices. This change does not tune defaults to old results.
+
+### Execution regression coverage (9 Nov 2026)
+
+`tests/test_ghost_v2.py`, `tests/test_ghost_v2_execution.py` and the live runner
+harness cover candle closure, warm-up, catch-up, rolling/recovered state,
+malformed configuration/data, candidate consumption, invalidated entries,
+external exits, unavailable/untracked books, expired contracts, and reversal
+booking failures. The synthetic replay still enforces one open group at a time.
 
 ## Facts (machine-readable)
 
@@ -196,5 +240,5 @@ instruments: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX
 default_lots: 1
 built_in_exit: true
 added: 2026-11-04
-spec_version: 1
+spec_version: 2
 ```
