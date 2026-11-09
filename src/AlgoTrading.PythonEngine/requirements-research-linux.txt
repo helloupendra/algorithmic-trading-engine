@@ -1772,10 +1772,12 @@ scipy==1.18.1 \
     # via
     #   -c src/AlgoTrading.PythonEngine/requirements.txt
     #   vollib
-setuptools==81.0.0 \
-    --hash=sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a \
-    --hash=sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6
-    # via torch
+setuptools==84.2.1 \
+    --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
+    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
+    # via
+    #   -r src/AlgoTrading.PythonEngine/requirements-research-linux.in
+    #   torch
 shellingham==1.5.4 \
     --hash=sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686 \
     --hash=sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de
@@ -1924,8 +1926,8 @@ tokenizers==0.23.3 \
     --hash=sha256:ec82e80e65a862275b97c3d90b7a523df8d9519ee48aeb4e9625b2cc909274e0 \
     --hash=sha256:efa3d7318406b4d115dce61ad5061953f1f44b128e79c020ce4615d763e23b6e
     # via transformers
-torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.12.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=ae4bb28409f5370852bd71af221066236c38d647f780d9b0a7240c330a9c12df \
-    --hash=sha256:ae4bb28409f5370852bd71af221066236c38d647f780d9b0a7240c330a9c12df
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=0955c7e3446326293f48af18fad67872fa31dee5a36a87690eb9e5be8b465be3 \
+    --hash=sha256:0955c7e3446326293f48af18fad67872fa31dee5a36a87690eb9e5be8b465be3
     # via -r src/AlgoTrading.PythonEngine/requirements-research-linux.in
 tqdm==4.70.1 \
     --hash=sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73 \
