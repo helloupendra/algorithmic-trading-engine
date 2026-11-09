@@ -352,7 +352,7 @@ function AttentionRow({ item, now }: { item: AttentionItem; now: number }) {
   )
 }
 
-/** The overview shows the most serious few; the rest unfold in place. */
+/** Keep the overview compact when the full attention list is expanded. */
 const ATTENTION_SHOWN = 6
 
 function Attention({ items, now }: { items: AttentionItem[] | null; now: number }) {
@@ -375,9 +375,11 @@ function Attention({ items, now }: { items: AttentionItem[] | null; now: number 
         <p className="tdy-calm">Nothing needs you right now.</p>
       ) : (
         <>
-          <ul className="tdy-att">{shown!.map((item, i) => <AttentionRow key={`${item.level}-${item.title}-${i}`} item={item} now={now} />)}</ul>
+          <ul id="today-attention-items" className="tdy-att" tabIndex={0} aria-label="Items needing attention">
+            {shown!.map((item, i) => <AttentionRow key={`${item.level}-${item.title}-${i}`} item={item} now={now} />)}
+          </ul>
           {hidden > 0 && (
-            <button type="button" className="tdy-fold" onClick={() => setAll(!all)} aria-expanded={all}>
+            <button type="button" className="tdy-fold" onClick={() => setAll(!all)} aria-expanded={all} aria-controls="today-attention-items">
               {all ? 'Show the most serious only' : `Show ${plural(hidden, 'more item')}`}
             </button>
           )}
