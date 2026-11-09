@@ -13,4 +13,7 @@ public interface ILiveConnectionCloser
 {
     /// <summary>Closes every open connection of the account; returns how many.</summary>
     int CloseConnectionsOf(long userId);
+
+    /// <summary>Closes only the connections opened by one login.</summary>
+    int CloseConnectionsOfSession(Guid sessionId) => 0;
 }

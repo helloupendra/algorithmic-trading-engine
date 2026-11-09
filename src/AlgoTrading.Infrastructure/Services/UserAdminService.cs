@@ -303,27 +303,16 @@ public class UserAdminService : IUserAdminService
     {
         var now = DateTime.UtcNow;
 
-        var live = await _dbContext.UserRefreshTokens
-            .Where(x => x.UserId == userId && x.RevokedUtc == null && x.ExpiresUtc > now)
-            .ToListAsync(cancellationToken);
+        int liveCount = await _dbContext.UserRefreshTokens
+            .CountAsync(x => x.UserId == userId && x.RevokedUtc == null && x.ExpiresUtc > now, cancellationToken);
 
-        foreach (var token in live)
-        {
-            token.RevokedUtc = now;
-        }
-
-        if (live.Count > 0)
-        {
-            await _dbContext.SaveChangesAsync(cancellationToken);
-        }
-
-        // Refresh tokens are only half of it: without this the access token the
-        // account already holds keeps working until it expires.
+        // The cutoff, login sessions and refresh credentials change together
+        // under the same user row lock as refresh rotation.
         await _tokenValidity.InvalidateExistingTokensAsync(userId, cancellationToken);
 
         _liveConnections?.CloseConnectionsOf(userId);
 
-        return live.Count;
+        return liveCount;
     }
 
     public async Task<bool> IsModuleAllowedAsync(

@@ -46,8 +46,8 @@ public sealed class LiveFeedSubscriptions : ILiveConnectionCloser
         => string.IsNullOrWhiteSpace(symbol) ? null : symbol.Trim().ToUpperInvariant();
 
     /// <summary>Records a connection as it opens: whose it is, whether they are an admin, and how to close it.</summary>
-    public void Connect(string connectionId, long? userId, bool isAdmin, Action? abort = null)
-        => _connections[connectionId] = new LiveFeedConnection(connectionId, userId, isAdmin, abort);
+    public void Connect(string connectionId, long? userId, bool isAdmin, Action? abort = null, Guid? sessionId = null, DateTime issuedAtUtc = default)
+        => _connections[connectionId] = new LiveFeedConnection(connectionId, userId, isAdmin, abort, sessionId, issuedAtUtc);
 
     /// <summary>Forgets a connection and everything it subscribed.</summary>
     public void Disconnect(string connectionId) => _connections.TryRemove(connectionId, out _);
@@ -69,6 +69,21 @@ public sealed class LiveFeedSubscriptions : ILiveConnectionCloser
             if (pair.Value.UserId != userId) continue;
             pair.Value.Abort?.Invoke();
             closed++;
+        }
+        return closed;
+    }
+
+    public int CloseConnectionsOfSession(Guid sessionId)
+    {
+        int closed = 0;
+        foreach (var pair in _connections)
+        {
+            if (pair.Value.SessionId != sessionId) continue;
+            if (_connections.TryRemove(pair.Key, out var connection))
+            {
+                connection.Abort?.Invoke();
+                closed++;
+            }
         }
         return closed;
     }
@@ -148,12 +163,14 @@ public sealed class LiveFeedConnection
     private readonly HashSet<string> _symbols = new(StringComparer.Ordinal);
     private volatile bool _all;
 
-    public LiveFeedConnection(string connectionId, long? userId, bool isAdmin, Action? abort = null)
+    public LiveFeedConnection(string connectionId, long? userId, bool isAdmin, Action? abort = null, Guid? sessionId = null, DateTime issuedAtUtc = default)
     {
         ConnectionId = connectionId;
         UserId = userId;
         IsAdmin = isAdmin;
         Abort = abort;
+        SessionId = sessionId;
+        IssuedAtUtc = issuedAtUtc;
     }
 
     public string ConnectionId { get; }
@@ -162,6 +179,8 @@ public sealed class LiveFeedConnection
     public long? UserId { get; }
 
     public bool IsAdmin { get; }
+    public Guid? SessionId { get; }
+    public DateTime IssuedAtUtc { get; }
 
     /// <summary>Closes the connection; null for an entry made without one.</summary>
     internal Action? Abort { get; }

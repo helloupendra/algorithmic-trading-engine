@@ -22,7 +22,10 @@ public interface ITokenValidityService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Invalidates every token this account already holds, from this moment.
+    /// Checks the persisted login family as well as its account and token cutoff.
     /// </summary>
+    Task<bool> IsSessionAcceptableAsync(long userId, Guid sessionId, DateTime issuedAtUtc, CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically invalidates every login session and refresh token held by the account.</summary>
     Task InvalidateExistingTokensAsync(long userId, CancellationToken cancellationToken = default);
 }

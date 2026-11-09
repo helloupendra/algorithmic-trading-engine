@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace AlgoTrading.Infrastructure.Services;
 
 /// <summary>
-/// Per-account token cutoff, cached so it can be consulted on every request.
+/// Persisted login-session validation, with a separate cached account-cutoff compatibility check.
 /// </summary>
 public class TokenValidityService : ITokenValidityService
 {
@@ -71,16 +71,33 @@ public class TokenValidityService : ITokenValidityService
         return issuedAtUtc > cutoffSecond;
     }
 
+    /// <summary>Session state is read from the database on every authentication; revocations are never cached.</summary>
+    public async Task<bool> IsSessionAcceptableAsync(long userId, Guid sessionId, DateTime issuedAtUtc, CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        var session = await _dbContext.UserSessions.AsNoTracking()
+            .Where(x => x.Id == sessionId && x.UserId == userId)
+            .Select(x => new { x.RevokedUtc, x.ExpiresUtc, x.User.IsActive, x.User.TokensValidFromUtc }).SingleOrDefaultAsync(cancellationToken);
+        if (session is null || session.RevokedUtc != null || session.ExpiresUtc <= now || !session.IsActive) return false;
+        return session.TokensValidFromUtc is not DateTime cutoff ||
+            issuedAtUtc > new DateTime(cutoff.Ticks - cutoff.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);
+    }
+
     public async Task InvalidateExistingTokensAsync(
         long userId,
         CancellationToken cancellationToken = default)
     {
+        await using var transaction = await AuthTransaction.BeginAsync(_dbContext, userId, cancellationToken);
         var user = await _dbContext.AppUsers.FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
-
         if (user is null) return;
-
-        user.TokensValidFromUtc = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        user.TokensValidFromUtc = now;
+        var sessions = await _dbContext.UserSessions.Where(x => x.UserId == userId && x.RevokedUtc == null).ToListAsync(cancellationToken);
+        foreach (var session in sessions) session.RevokedUtc = now;
+        var tokens = await _dbContext.UserRefreshTokens.Where(x => x.UserId == userId && x.RevokedUtc == null).ToListAsync(cancellationToken);
+        foreach (var token in tokens) token.RevokedUtc = now;
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         _cache.Remove(CacheKey(userId));
 

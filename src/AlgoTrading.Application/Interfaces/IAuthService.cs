@@ -15,7 +15,7 @@ namespace AlgoTrading.Application.Interfaces
 
         Task<AuthResponse> RefreshAsync(RefreshTokenRequest request, CancellationToken cancellationToken = default);
 
-        Task LogoutAsync(LogoutRequest request, CancellationToken cancellationToken = default);
+        Task LogoutAsync(LogoutRequest request, long? callerUserId = null, Guid? callerSessionId = null, CancellationToken cancellationToken = default);
 
         Task<MeResponse?> GetMeAsync(long userId, CancellationToken cancellationToken = default);
 

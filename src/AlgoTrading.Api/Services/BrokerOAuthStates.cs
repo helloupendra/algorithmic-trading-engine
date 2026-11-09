@@ -12,10 +12,10 @@ public sealed class BrokerOAuthStates(TimeProvider? time = null)
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, Pending> _pending = new(StringComparer.Ordinal);
 
-    public sealed record Pending(long UserId, string ProviderKey, long IssuedAt, DateTimeOffset ExpiresAt, string BrowserHash);
+    public sealed record Pending(long UserId, Guid SessionId, string ProviderKey, long IssuedAt, DateTimeOffset ExpiresAt, string BrowserHash);
     public sealed record Issued(string State, string BrowserSecret);
 
-    public Issued Issue(long userId, string providerKey, long issuedAt, DateTimeOffset tokenExpiresAt)
+    public Issued Issue(long userId, Guid sessionId, string providerKey, long issuedAt, DateTimeOffset tokenExpiresAt)
     {
         var now = _time.GetUtcNow();
         if (tokenExpiresAt <= now) throw new InvalidOperationException("Sign in to the console again before connecting the broker.");
@@ -23,7 +23,7 @@ public sealed class BrokerOAuthStates(TimeProvider? time = null)
         string state = "desk-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         string browser = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var expires = tokenExpiresAt < now + Lifetime ? tokenExpiresAt : now + Lifetime;
-        _pending[Hash(state)] = new(userId, providerKey, issuedAt, expires, Hash(browser));
+        _pending[Hash(state)] = new(userId, sessionId, providerKey, issuedAt, expires, Hash(browser));
         return new(state, browser);
     }
 

@@ -11,6 +11,9 @@ namespace AlgoTrading.Domain.Entities
         public long UserId { get; set; }
         public AppUser? User { get; set; }
 
+        public Guid? SessionId { get; set; }
+        public UserSession? Session { get; set; }
+
         public string TokenHash { get; set; } = string.Empty;
 
         public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;

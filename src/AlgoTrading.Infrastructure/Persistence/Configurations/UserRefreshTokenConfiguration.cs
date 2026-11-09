@@ -25,6 +25,9 @@ public class UserRefreshTokenConfiguration : IEntityTypeConfiguration<UserRefres
             .HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        builder.HasOne(x => x.Session).WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => x.SessionId).IsUnique().HasFilter("\"RevokedUtc\" IS NULL AND \"SessionId\" IS NOT NULL");
+
         builder.HasIndex(x => x.TokenHash).IsUnique();
         builder.HasIndex(x => new { x.UserId, x.ExpiresUtc });
     }

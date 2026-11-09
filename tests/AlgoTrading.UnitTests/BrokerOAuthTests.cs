@@ -100,6 +100,9 @@ public class BrokerOAuthTests
     [InlineData("revoked")]
     [InlineData("revoked-same-second")]
     [InlineData("deleted")]
+    [InlineData("session-revoked")]
+    [InlineData("session-expired")]
+    [InlineData("session-deleted")]
     public async Task The_initiating_administrator_must_still_be_authorized(string change)
     {
         using var desk = new Desk();
@@ -110,6 +113,9 @@ public class BrokerOAuthTests
         if (change == "revoked") admin.TokensValidFromUtc = desk.Time.Now.UtcDateTime.AddSeconds(1);
         if (change == "revoked-same-second") admin.TokensValidFromUtc = desk.Time.Now.UtcDateTime;
         if (change == "deleted") desk.Db.Remove(admin);
+        if (change == "session-revoked") desk.Session.RevokedUtc = desk.Time.Now.UtcDateTime;
+        if (change == "session-expired") desk.Session.ExpiresUtc = desk.Time.Now.UtcDateTime;
+        if (change == "session-deleted") desk.Db.Remove(desk.Session);
         await desk.Db.SaveChangesAsync();
         Assert.IsType<BadRequestObjectResult>(await desk.Callback(cookie).Callback("code", state, "ok", 200, default));
         Assert.Equal(0, desk.Fyers.Exchanges);
@@ -209,6 +215,7 @@ public class BrokerOAuthTests
     {
         public readonly Clock Time = new();
         public BrokerOAuthStates States;
+        public readonly UserSession Session = new() { UserId = 1, CreatedUtc = DateTime.UtcNow, ExpiresUtc = DateTime.UtcNow.AddDays(1) };
         public readonly TradingDbContext Db = new(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         public readonly Broker Fyers = new("fyers"), Other = new("other");
         public Broker Default;
@@ -223,6 +230,7 @@ public class BrokerOAuthTests
             Default = Fyers;
             TokenExpiry = Time.Now.AddHours(1);
             Db.AppUsers.Add(new AppUser { Id = 1, UserName = "admin", Role = UserRoles.Admin, IsActive = true });
+            Db.UserSessions.Add(Session);
             Db.SaveChanges();
             _registry = Stub<IProviderRegistry>.Create((name, args) => name == "GetBrokerProvider" ? (args![0] as string == "fyers" ? Fyers : Other) : throw new NotSupportedException(name));
             _router = Stub<IProviderRouter>.Create((name, _) => name == "ResolveBrokerAsync" ? Task.FromResult<IBrokerProvider>(Default) : throw new NotSupportedException(name));
@@ -233,7 +241,7 @@ public class BrokerOAuthTests
                 return Task.CompletedTask;
             });
         }
-        private BrokerOAuthFlow Flow() => new(States, _registry, Db);
+        private BrokerOAuthFlow Flow() => new(States, _registry, Db, Time);
         public AuthController Callback(string? cookie)
         {
             var context = new DefaultHttpContext();
@@ -248,6 +256,7 @@ public class BrokerOAuthTests
             var controller = Callback(null);
             controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity([
                 new Claim(ClaimTypes.NameIdentifier, "1"), new Claim(ClaimTypes.Role, UserRoles.Admin),
+                new Claim("sid", Session.Id.ToString()),
                 new Claim("iat", Time.Now.ToUnixTimeSeconds().ToString()), new Claim("exp", TokenExpiry.ToUnixTimeSeconds().ToString()),
             ], "test"));
             IActionResult result;

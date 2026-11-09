@@ -125,6 +125,7 @@ describe('requests belong to the login that started them', () => {
     tokenStore.set(jwt, 'RA')
     vi.stubGlobal('fetch', vi.fn(() => refresh.promise))
     const pending = fetchWithSession('/chat', { method: 'POST', body: 'hello' }).catch((e: unknown) => e)
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     tokenStore.set('B', 'RB')
     refresh.resolve(json({ accessToken: 'A2', refreshToken: 'RA2' }))
     expect(await pending).toBeInstanceOf(SessionChangedError)

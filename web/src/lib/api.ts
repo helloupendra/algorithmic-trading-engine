@@ -117,27 +117,45 @@ async function refreshAccessToken(scope = captureSession()): Promise<string | nu
   const refreshToken = tokenStore.refresh
   if (!refreshToken) return null
   const operation = { scope, promise: Promise.resolve<string | null>(null) }
+  const rotate = async (): Promise<string | null> => {
+    assertCurrentSession(scope)
+    // A tab holding the Web Lock may already have rotated this family.
+    if (tokenStore.refresh !== refreshToken) return tokenStore.access
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE_URL}/api/UserAuth/refresh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }), signal: scope.controller.signal,
+      })
+    } catch {
+      assertCurrentSession(scope)
+      throw new ApiError(503, 'Could not renew your session. Please retry when the connection returns.')
+    }
+    assertCurrentSession(scope)
+    if (tokenStore.refresh !== refreshToken) return tokenStore.access
+    if (response.status === 409) {
+      // Older browsers without Web Locks can lose a legitimate race. Allow the
+      // winning tab's storage update to arrive; a conflict never signs the user out.
+      for (let i = 0; i < 40; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        assertCurrentSession(scope)
+        if (tokenStore.refresh !== refreshToken) return tokenStore.access
+      }
+      throw new ApiError(409, 'Another tab is renewing this session. Please retry shortly.')
+    }
+    if (response.status === 401 || response.status === 400) return null
+    if (!response.ok) throw new ApiError(response.status, 'Session renewal is temporarily unavailable. Please retry.')
+    const data = (await response.json()) as AuthResponse
+    assertCurrentSession(scope)
+    if (tokenStore.refresh !== refreshToken) return tokenStore.access
+    tokenStore.rotate(scope, data.accessToken, data.refreshToken)
+    return data.accessToken
+  }
   operation.promise = Promise.resolve().then(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/UserAuth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-        signal: scope.controller.signal,
-      })
-      assertCurrentSession(scope)
-      // Another tab may have rotated this same login while we waited.
-      if (tokenStore.refresh !== refreshToken) return tokenStore.access
-      if (!response.ok) return null
-      const data = (await response.json()) as AuthResponse
-      assertCurrentSession(scope)
-      if (tokenStore.refresh !== refreshToken) return tokenStore.access
-      tokenStore.rotate(scope, data.accessToken, data.refreshToken)
-      return data.accessToken
-    } catch (error) {
-      assertCurrentSession(scope)
-      if (scope.controller.signal.aborted) throw error
-      return null
+      return typeof navigator !== 'undefined' && navigator.locks
+        ? await navigator.locks.request(`openfno-refresh:${scope.id}`, { signal: scope.controller.signal }, rotate)
+        : await rotate()
     } finally {
       if (refreshInFlight === operation) refreshInFlight = null
     }
@@ -246,11 +264,12 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     })
   }
 
-  let response = await send(anonymous ? null : tokenStore.access)
+  const sentToken = anonymous ? null : tokenStore.access
+  let response = await send(sentToken)
   assertCurrentSession(scope)
 
   if (response.status === 401 && !anonymous) {
-    const fresh = await refreshAccessToken(scope)
+    const fresh = tokenStore.access !== sentToken ? tokenStore.access : await refreshAccessToken(scope)
     assertCurrentSession(scope)
     if (fresh) {
       response = await send(fresh)
@@ -306,10 +325,11 @@ export async function fetchWithSession(path: string, init: RequestInit = {}): Pr
     return fetch(`${API_BASE_URL}${path}`, { ...init, signal, headers, credentials: 'include', cache: 'no-store' })
   }
 
-  let response = await send(await freshAccessToken())
+  const sentToken = await freshAccessToken()
+  let response = await send(sentToken)
   assertCurrentSession(scope)
   if (response.status === 401) {
-    const fresh = await refreshAccessToken(scope)
+    const fresh = tokenStore.access !== sentToken ? tokenStore.access : await refreshAccessToken(scope)
     assertCurrentSession(scope)
     if (fresh) response = await send(fresh)
     assertCurrentSession(scope)

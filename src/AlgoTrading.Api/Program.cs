@@ -387,6 +387,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberServic
 // Keeps the Telegram notifier running for as long as the API does.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NotifierStartupService>();
 
+builder.Services.AddHostedService<AlgoTrading.Api.Hubs.LiveSessionMonitor>();
+
 // The Portfolio page (docs/modules/portfolio.md): a user's own broker accounts, read only, and a factual report on
 // them. The broker clients are registered by the infrastructure (PortfolioRegistration); the link states and the sync
 // gate live in memory, one per process; old snapshots are deleted after 90 days.
@@ -475,38 +477,8 @@ builder.Services
                 }
                 return Task.CompletedTask;
             },
-            OnTokenValidated = async context =>
-            {
-                var principal = context.Principal;
-                long? userId = principal?.GetUserId();
+            OnTokenValidated = SessionAuthentication.ValidateAsync,
 
-                if (userId is null)
-                {
-                    context.Fail("The token carries no usable account id.");
-                    return;
-                }
-
-                // `iat` is seconds since the epoch; a token without one predates
-                // this check and is treated as issued at the epoch, so any cutoff
-                // refuses it.
-                var issuedAtClaim = principal!.FindFirst(JwtRegisteredClaimNames.Iat)?.Value;
-                DateTime issuedAtUtc = long.TryParse(issuedAtClaim, out long seconds)
-                    ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
-                    : DateTime.UnixEpoch;
-
-                var validity = context.HttpContext.RequestServices
-                    .GetRequiredService<ITokenValidityService>();
-
-                bool acceptable = await validity.IsTokenAcceptableAsync(
-                    userId.Value,
-                    issuedAtUtc,
-                    context.HttpContext.RequestAborted);
-
-                if (!acceptable)
-                {
-                    context.Fail("This session has been ended. Sign in again.");
-                }
-            },
         };
     })
     // The phone token's scheme, consulted only by the IraPhone policy on POST api/Ira/ask.

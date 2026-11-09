@@ -5111,6 +5111,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("RevokedUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("TokenHash")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -5121,12 +5124,41 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SessionId")
+                        .IsUnique()
+                        .HasFilter("\"RevokedUtc\" IS NULL AND \"SessionId\" IS NOT NULL");
+
                     b.HasIndex("TokenHash")
                         .IsUnique();
 
                     b.HasIndex("UserId", "ExpiresUtc");
 
                     b.ToTable("user_refresh_tokens", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "RevokedUtc");
+
+                    b.ToTable("user_sessions", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.UserStrategyGrant", b =>
@@ -5345,8 +5377,26 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.UserRefreshToken", b =>
                 {
+                    b.HasOne("AlgoTrading.Domain.Entities.UserSession", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
                         .WithMany("RefreshTokens")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Session");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserSession", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

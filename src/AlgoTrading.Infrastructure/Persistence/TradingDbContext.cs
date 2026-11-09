@@ -62,6 +62,7 @@ public class TradingDbContext : DbContext
     public DbSet<EquityGroupMember> EquityGroupMembers => Set<EquityGroupMember>();
 
     public DbSet<AppUser> AppUsers => Set<AppUser>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
     public DbSet<UserModuleGrant> UserModuleGrants => Set<UserModuleGrant>();
     public DbSet<StrategyPackage> StrategyPackages => Set<StrategyPackage>();

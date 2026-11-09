@@ -58,24 +58,59 @@ Accounts are **disabled, not deleted**: the runs and orders they made keep their
 
 ## Ending a session actually ends it
 
-`AppUser.TokensValidFromUtc` is a per-account cutoff: **access tokens issued before it are refused**,
-whatever their expiry says. Changing an account's role, disabling it, changing or resetting its password
-or signing it out sets it to now, so an existing token stops working immediately rather than lasting out
-its hour. The same moment closes the account's live feed websockets, which were authorized at their
-handshake and would otherwise keep their desk events until the socket closes.
+Each login creates a persisted `UserSession` and a refresh-token family. Its JWT
+carries `sid`. Every HTTP authentication checks the session's owner, expiry,
+revocation and account status directly in the database; session revocation is
+not cached. Ordinary logout revokes only that login, including every rotated
+refresh token in the family. Other devices remain signed in.
 
-A cutoff rather than a denylist of token ids: one nullable column instead of a table that grows
-forever, and "everything before now" is exactly what those three actions mean. Tokens carry an `iat`
-claim, and the JWT bearer handler compares it on every request through
-`ITokenValidityService`.
+`POST /api/UserAuth/logout` accepts the current or a previously rotated refresh
+credential, including after the access token expires. An authenticated caller
+must supply its own family's credential, or omit it to revoke its JWT session.
+A refresh credential authorizes revocation of its family only. Repeated logout
+is harmless. The endpoint uses the sign-in rate limit.
 
-The comparison is at second resolution — `iat` is written to whole seconds — and a token issued *in*
-the cutoff second is refused. The cost is one extra sign-in; the alternative, a second of slack, is a
-window an automated caller could sit inside.
+Changing role/password, disabling an account or choosing **Revoke sessions**
+sets `AppUser.TokensValidFromUtc` and revokes all persisted sessions and refresh
+tokens. JWT `iat` is compared at whole-second resolution; a token issued in the
+cutoff second is refused and may require another sign-in. The legacy account-only
+check retains a 30-second cache, but JWT authentication does not use that cache.
 
-The answer is cached for 30 seconds and the entry is dropped the moment this process sets a cutoff,
-so a single API sees the change at once. The TTL only bounds staleness if the platform is ever run as
-more than one instance.
+Logout closes the matching local live-feed sockets immediately. Account-wide
+actions close that account's sockets. Each API also checks connected sessions
+every five seconds, covering revocation by another process while the database
+is reachable. A session is checked again after socket registration to close the
+handshake/logout race. Pending shared-broker OAuth callbacks validate their
+initiating session before exchanging the authorization code. Revocation cannot
+undo a request already accepted before logout.
+
+## Refresh rotation
+
+Login, refresh, logout and account-wide revocation take the same PostgreSQL user
+row lock. Parent consumption and child insertion commit together. A partial
+unique index permits at most one active refresh token per session. Failed or
+cancelled writes roll back both changes.
+
+A second use of the parent within ten seconds returns `409 refresh_already_used`
+without issuing credentials or ending the session. Reuse after that grace period
+revokes the family and returns `401 refresh_reused`. The grace period tolerates
+concurrent tabs but does not let a replay retrieve the child token. A lost
+rotation response with no surviving tab holding the child requires fresh login.
+
+Console tabs share a Web Lock for their browser login and re-read stored tokens
+before refreshing. Browsers without Web Locks wait briefly for a winning tab's
+storage update on a 409. Conflicts, network failures, 429s and server errors
+preserve credentials and report a retryable error; a definitive rejection ends
+the browser login.
+
+## Session migration rollout
+
+`20261109112208_UserLoginSessions` invalidates existing access/refresh credentials
+and adds the login-session schema. Stop all API instances, apply the migration,
+then start the matching API and console build. Reload open tabs and sign in
+again, including unattended service clients. Do not mix old and new API versions
+during this change: the old version does not enforce `sid`. Rolling this migration
+back also invalidates credentials; do not expect old sessions to resume.
 
 ## Browser session boundaries
 
@@ -87,9 +122,8 @@ Storage events synchronize login/logout across tabs, and requests also check the
 current identity before retrying or returning data. An old action cannot retry
 with the next account's credentials, including when both logins use the same user.
 
-This browser boundary does not revoke an already issued server JWT or undo a
-request the server has already accepted. Backend logout revocation and concurrent
-refresh-token consumption have their own server-side contracts.
+The browser boundary complements the persisted server-session checks above; it
+also prevents delayed responses from a previous login appearing in a new login.
 
 Existing token pairs migrate on the first load of the updated console. Reload all
 open tabs after deployment so every tab uses the same storage format; older

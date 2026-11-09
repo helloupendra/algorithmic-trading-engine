@@ -39,7 +39,7 @@ jobs:
         run: dotnet test AlgoTrading.slnx --no-build --configuration Release --verbosity normal
 
   manual-order-transactions:
-    name: Manual order transactions (PostgreSQL)
+    name: PostgreSQL integration
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -63,8 +63,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Test manual order transactions
-        run: dotnet test tests/AlgoTrading.IntegrationTests/AlgoTrading.IntegrationTests.csproj --configuration Release --filter FullyQualifiedName~ManualOrderTransactionTests --verbosity normal
+      - name: Test order and authentication transactions
+        run: dotnet test tests/AlgoTrading.IntegrationTests/AlgoTrading.IntegrationTests.csproj --configuration Release --verbosity normal
 
   python:
     name: Python engine

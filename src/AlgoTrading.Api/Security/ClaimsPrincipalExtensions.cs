@@ -16,6 +16,9 @@ public static class ClaimsPrincipalExtensions
     /// <summary>
     /// The authenticated user's id, or null when the token carries no usable subject.
     /// </summary>
+    public static Guid? GetSessionId(this ClaimsPrincipal principal)
+        => Guid.TryParse(principal.FindFirstValue("sid") ?? principal.FindFirstValue(ClaimTypes.Sid), out var id) ? id : null;
+
     public static long? GetUserId(this ClaimsPrincipal principal)
     {
         // The JWT "sub" claim is remapped to NameIdentifier by the default inbound

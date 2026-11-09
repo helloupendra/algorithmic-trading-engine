@@ -351,6 +351,7 @@ public class DeskWriteAccessTests
                 new(ClaimTypes.NameIdentifier, userId.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 new(ClaimTypes.Name, $"user{userId}"),
                 new(ClaimTypes.Role, role),
+                new("sid", Guid.NewGuid().ToString()),
                 new("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
                 new("exp", DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds().ToString()),
             };

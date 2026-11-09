@@ -113,6 +113,11 @@ namespace AlgoTrading.Api.Controllers
 
                 return Ok(result);
             }
+            catch (RefreshTokenException ex)
+            {
+                HttpContext.Describe("A refresh token was refused.");
+                return StatusCode(ex.Retryable ? 409 : 401, new { message = ex.Message, code = ex.Code });
+            }
             catch (InvalidOperationException ex)
             {
                 // A refused refresh is how a revoked session shows up: the token
@@ -122,7 +127,12 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
-        [Authorize]
+        /// <summary>
+        /// A refresh token proves possession even after the access JWT expires. Anonymous callers
+        /// can only revoke the family of that credential; authenticated callers are also bound to their session.
+        /// </summary>
+        [AllowAnonymous]
+        [EnableRateLimiting(RateLimitPolicies.SignIn)]
         [HttpPost("logout")]
         public async Task<IActionResult> Logout(
             [FromBody] LogoutRequest request,
@@ -131,7 +141,7 @@ namespace AlgoTrading.Api.Controllers
             try
             {
                 _brokerStates.EndBrowserSession(HttpContext);
-                await _authService.LogoutAsync(request, cancellationToken);
+                await _authService.LogoutAsync(request, User.GetUserId(), User.GetSessionId(), cancellationToken);
                 return Ok(new { message = "Logged out successfully." });
             }
             catch (InvalidOperationException ex)

@@ -43,11 +43,13 @@ public class LiveFeedHub : Hub
 
     private readonly LiveFeedSubscriptions _subscriptions;
     private readonly IUserAdminService _users;
+    private readonly ITokenValidityService _validity;
 
-    public LiveFeedHub(LiveFeedSubscriptions subscriptions, IUserAdminService users)
+    public LiveFeedHub(LiveFeedSubscriptions subscriptions, IUserAdminService users, ITokenValidityService validity)
     {
         _subscriptions = subscriptions;
         _users = users;
+        _validity = validity;
     }
 
     /// <remarks>
@@ -78,6 +80,12 @@ public class LiveFeedHub : Hub
             // of the process.
             _subscriptions.Disconnect(Context.ConnectionId);
         }
+        catch
+        {
+            _subscriptions.Disconnect(Context.ConnectionId);
+            Context.Abort();
+            throw;
+        }
     }
 
     private async Task ConnectAsync()
@@ -92,8 +100,22 @@ public class LiveFeedHub : Hub
             return;
         }
 
+        if (Context.User?.GetSessionId() is not Guid sessionId ||
+            !long.TryParse(Context.User.FindFirst("iat")?.Value, out var seconds) || seconds < 0 || seconds > 253402300799)
+        {
+            Context.Abort();
+            return;
+        }
+        var issuedAt = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
         bool admin = string.Equals(account.Role, UserRoles.Admin, StringComparison.Ordinal);
-        _subscriptions.Connect(Context.ConnectionId, id, admin, Context.Abort);
+        _subscriptions.Connect(Context.ConnectionId, id, admin, Context.Abort, sessionId, issuedAt);
+        // Register first, then recheck: logout cannot miss a socket whose HTTP handshake preceded revocation.
+        if (!await _validity.IsSessionAcceptableAsync(id, sessionId, issuedAt, Context.ConnectionAborted))
+        {
+            _subscriptions.Disconnect(Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.User(id));
 

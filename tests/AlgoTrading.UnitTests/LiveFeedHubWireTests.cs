@@ -366,7 +366,7 @@ public class LiveFeedHubWireTests
             builder.Services.AddScoped(_ => new TradingDbContext(options));
             // Registered as the API registers it, so ILiveConnectionCloser reaches it the same way.
             builder.Services.AddSingleton(new PasswordHasher<AppUser>());
-            builder.Services.AddSingleton(RecapClockTests.Inert<ITokenValidityService>.Create());
+            builder.Services.AddSingleton<ITokenValidityService, AcceptHubSessions>();
             builder.Services.AddScoped<IUserAdminService, UserAdminService>();
             configure?.Invoke(builder.Services);
 
@@ -575,6 +575,8 @@ public class LiveFeedHubWireTests
 
             var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
             if (userId is WireHost.AdminId or WireHost.Disabled or WireHost.DemotedAdmin) claims.Add(new Claim(ClaimTypes.Role, UserRoles.Admin));
+            claims.Add(new Claim("sid", Guid.NewGuid().ToString()));
+            claims.Add(new Claim("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
 
             var properties = new AuthenticationProperties();

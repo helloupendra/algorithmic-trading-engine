@@ -380,7 +380,7 @@ public class LiveFeedHubTests
         using var gone = new CancellationTokenSource();
         gone.Cancel();
         var hub = new LiveFeedHub(subs, new UserAdminService(db, new PasswordHasher<AppUser>(),
-            RecapClockTests.Inert<ITokenValidityService>.Create(), NullLogger<UserAdminService>.Instance))
+            RecapClockTests.Inert<ITokenValidityService>.Create(), NullLogger<UserAdminService>.Instance), new AcceptHubSessions())
         {
             Context = new TestCallerContext("quick", Admin(AdminId), aborted: gone.Token),
             Groups = new RecordingHubContext().Groups
@@ -518,7 +518,7 @@ public class LiveFeedHubTests
             : new UserAdminService(db, new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(),
                 NullLogger<UserAdminService>.Instance);
 
-        return new LiveFeedHub(subs, users)
+        return new LiveFeedHub(subs, users, new AcceptHubSessions())
         {
             Context = new TestCallerContext(connectionId, user, query),
             Groups = (groups ?? new RecordingHubContext()).Groups
@@ -545,12 +545,19 @@ public class LiveFeedHubTests
     }
 
     internal static ClaimsPrincipal Trader(long id) => new(new ClaimsIdentity(
-        new[] { new Claim(ClaimTypes.NameIdentifier, id.ToString()), new Claim(ClaimTypes.Name, $"user{id}") }, "Test"));
+        new[] { new Claim(ClaimTypes.NameIdentifier, id.ToString()), new Claim(ClaimTypes.Name, $"user{id}"), new Claim("sid", Guid.NewGuid().ToString()), new Claim("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()) }, "Test"));
 
     internal static ClaimsPrincipal Admin(long id) => new(new ClaimsIdentity(
         new[]
         {
             new Claim(ClaimTypes.NameIdentifier, id.ToString()), new Claim(ClaimTypes.Name, "admin"),
-            new Claim(ClaimTypes.Role, UserRoles.Admin)
+            new Claim(ClaimTypes.Role, UserRoles.Admin), new Claim("sid", Guid.NewGuid().ToString()), new Claim("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())
         }, "Test"));
+}
+
+internal sealed class AcceptHubSessions : ITokenValidityService
+{
+    public Task<bool> IsTokenAcceptableAsync(long userId, DateTime issuedAtUtc, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<bool> IsSessionAcceptableAsync(long userId, Guid sessionId, DateTime issuedAtUtc, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task InvalidateExistingTokensAsync(long userId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
