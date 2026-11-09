@@ -506,6 +506,7 @@ while true; do
   # Cache for two minutes so the 30-second health loop stays lightweight.
   if [ "${session_plan_day:-}" != "$today" ] || [ $((now - ${session_plan_at:-0})) -ge 120 ]; then
     python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --api "$API" --output "$DESK_STATE_DIR/session-schedule.json" ${MARKET_OPEN_AT:+--open-at "$MARKET_OPEN_AT"} ${MARKET_CLOSE_AT:+--close-at "$MARKET_CLOSE_AT"}
+    # shellcheck disable=SC2034  # DESK_DEPLOY_UNTIL is read by the sourced deploy_clock_allows helper.
     read -r DESK_SESSION_STATE day_open day_open_until day_close DESK_DEPLOY_UNTIL _ _ _ _ day_close_due < <(python3 "$REPO_ROOT/scripts/lib/session_schedule.py" --read "$DESK_STATE_DIR/session-schedule.json")
     session_plan_day="$today"; session_plan_at=$now
   fi
