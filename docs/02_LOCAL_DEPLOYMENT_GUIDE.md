@@ -51,6 +51,19 @@ docker compose up -d
 Postgres and Redis declare health checks, so `docker compose ps` tells you when
 they are genuinely ready rather than merely started.
 
+The Redis health check uses the container's `REDIS_PASSWORD` through
+`REDISCLI_AUTH`, without putting the credential in CLI arguments. An intentionally
+empty password uses an unauthenticated ping. After a Compose health-check update,
+recreate an existing Redis container during a maintenance window; connected
+clients will briefly need to reconnect:
+
+```sh
+docker compose up -d --no-deps redis
+docker compose ps redis
+```
+
+Wait for Redis to report `healthy` before resuming dependent work.
+
 ### 3. Generate the .NET configuration
 
 ```bash
