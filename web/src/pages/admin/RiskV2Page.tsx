@@ -35,13 +35,12 @@ function KillSwitchPanel() {
   const active = view.kind === 'on'
   const state = known ? view.state : null
 
-  function toggle() {
+  function change(activate: boolean) {
     if (!known) return
-    const activate = !active
     // It flattens every account at once, or lets every account trade again: never on one click.
     if (!window.confirm(killSwitchConfirmText(activate))) return
     setKillSwitch.mutate(
-      { activate, reason: reason.trim() || (active ? 'Released from console' : 'Pulled from console') },
+      { activate, reason: reason.trim() || (activate ? 'Pulled from console' : 'Released from console') },
       { onSuccess: () => setReason('') },
     )
   }
@@ -68,7 +67,8 @@ function KillSwitchPanel() {
               </>
             ) : view.kind === 'reading' ? null : active ? (
               <>
-                Every strategy is paused and open positions were flattened when it was pulled.
+                New strategy starts and orders are blocked. Pulling the switch stops strategies and flattens open positions.
+                Releasing it does not restart stopped runs.
                 {state?.reason && <> Reason: “{state.reason}”.</>}{' '}
                 {state?.updatedBy && (
                   <>
@@ -78,8 +78,8 @@ function KillSwitchPanel() {
               </>
             ) : (
               <>
-                Pulling this pauses every strategy <b>and squares off every open position</b> in every account at the
-                last mark. It is announced to Telegram immediately.
+                Pulling this stops every strategy <b>and squares off every open position</b> in every account at the
+                last mark. It is announced to Telegram.
               </>
             )}
           </p>
@@ -91,11 +91,16 @@ function KillSwitchPanel() {
           {view.kind === 'unknown' && <InlineError error={killSwitch.error} />}
         </div>
         <div className="broker-state__actions">
+          {active && (
+            <button type="button" className="btn btn--danger" disabled={setKillSwitch.isPending} onClick={() => change(true)}>
+              Stop remaining runs…
+            </button>
+          )}
           <button
             type="button"
             className={active ? 'btn btn--primary' : 'btn btn--danger'}
             disabled={!known || setKillSwitch.isPending}
-            onClick={toggle}
+            onClick={() => change(!active)}
           >
             {setKillSwitch.isPending
               ? 'Working…'

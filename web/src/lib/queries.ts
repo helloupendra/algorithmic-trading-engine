@@ -1353,7 +1353,12 @@ export function useSetKillSwitch() {
       api.post<{ message: string }>(
         `/api/Risk/killswitch/${input.activate ? 'activate' : 'deactivate'}?reason=${encodeURIComponent(input.reason)}`,
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['risk'] }),
+    // Even an incomplete stop persists the switch. Refresh actual run/position
+    // state instead of leaving running cards behind until the next poll.
+    onSettled: () => Promise.all(
+      [['risk'], ['strategy'], ['strategies'], ['positions'], ['optionChainPositions'], ['today']]
+        .map(queryKey => qc.invalidateQueries({ queryKey })),
+    ),
   })
 }
 

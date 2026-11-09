@@ -305,7 +305,7 @@ function KillSwitchItem({ isAdmin }: { isAdmin: boolean }) {
 
   if (ks.data.isActive) {
     const why = [
-      'Trading is halted: every strategy is paused and new runs are refused.',
+      'Trading is halted: new strategy starts and positions are blocked. Stopped runs do not restart automatically.',
       ks.data.reason ? `Reason: “${ks.data.reason}”.` : '',
       ks.data.updatedBy ? `By ${ks.data.updatedBy} at ${formatDateTime(ks.data.updatedUtc)}.` : '',
     ]
@@ -378,8 +378,8 @@ function KillSwitchDialog({ onClose }: { onClose: () => void }) {
             </button>
           </div>
           <p className="muted" style={{ margin: 0 }}>
-            This pauses every strategy <b>and squares off every open position</b> at the last mark. It is announced to
-            Telegram immediately. It is released on the Risk page.
+            This stops every strategy <b>and squares off every open position</b> at the last mark. It is announced to
+            Telegram. Release it on the Risk page before starting strategies again; stopped runs do not restart automatically.
           </p>
           {setKillSwitch.isError && <InlineError error={setKillSwitch.error} />}
           <div className="field">

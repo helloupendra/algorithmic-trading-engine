@@ -114,8 +114,8 @@ export function killSwitchView(query: { data?: KillSwitchState; isError: boolean
 export function killSwitchConfirmText(activate: boolean): string {
   return activate
     ? 'Pull the kill switch?\n\n' +
-        'Every strategy is paused and every open position in every account, traders’ included, is squared off at the last mark. ' +
-        'No account can open a new position until it is released. It is announced to Telegram immediately.'
+        'Every strategy is stopped and every open position in every account, traders’ included, is squared off at the last mark. ' +
+        'New strategy starts and positions are blocked until it is released. It is announced to Telegram.'
     : 'Release the kill switch?\n\n' +
-        'Every account can open new positions again. It is announced to Telegram immediately.'
+        'Every account can open new positions again. Stopped strategies must be started again explicitly. It is announced to Telegram.'
 }

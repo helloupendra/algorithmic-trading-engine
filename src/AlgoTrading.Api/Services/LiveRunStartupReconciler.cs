@@ -43,6 +43,10 @@ public sealed class LiveRunStartupReconciler : IHostedService
             {
                 _logger.LogError("Left {Count} live strategy run(s) open without a runner: their pids are alive but could not be verified.", result.Unverified);
             }
+            var kill = await scope.ServiceProvider.GetRequiredService<KillSwitchControl>().ResumeAsync(cancellationToken);
+            if (kill is { Complete: false })
+                _logger.LogError("Persisted kill switch remains active with {Runs} runs and {Positions} positions still open.",
+                    kill.RemainingRuns.Length, kill.OpenPositions);
         }
         catch (Exception ex)
         {

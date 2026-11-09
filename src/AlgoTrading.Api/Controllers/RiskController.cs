@@ -45,16 +45,23 @@ public class RiskController : ControllerBase
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     public async Task<IActionResult> ActivateKillSwitch(
         [FromQuery] string? reason,
+        [FromServices] KillSwitchControl control,
         CancellationToken cancellationToken)
     {
-        await _riskManagementService.ActivateKillSwitchAsync(
-            User.GetUserName(), reason, cancellationToken);
-
-        await _paperTradingService.FlattenAllPositionsAsync(cancellationToken);
-        PublishKillSwitch($"Kill switch activated by {User.GetUserName() ?? "admin"}: every position flattened");
+        var result = await control.ActivateAsync(User.GetUserName(), reason, cancellationToken);
+        if (!result.Complete)
+        {
+            PublishKillSwitch("Kill switch active; stopping is incomplete and needs attention");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                message = "Kill switch is active, but some runs or positions could not be stopped. Retry the stop and inspect the remaining runs.",
+                result.RemainingRuns, result.OpenPositions,
+            });
+        }
+        PublishKillSwitch($"Kill switch activated by {User.GetUserName() ?? "admin"}: strategies stopped and every position flattened");
 
         HttpContext.Describe(
-            "Pulled the kill switch — every strategy paused and all positions flattened"
+            "Pulled the kill switch — every strategy stopped and all positions flattened"
                 + (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}"),
             "killswitch");
 
@@ -62,25 +69,26 @@ public class RiskController : ControllerBase
             NotificationCategory.Risk,
             NotificationSeverity.Error,
             "Kill switch ACTIVATED",
-            $"All strategies paused and every open position flattened. By {User.GetUserName() ?? "admin"}"
+            $"All strategies stopped and every open position flattened. By {User.GetUserName() ?? "admin"}"
                 + (string.IsNullOrWhiteSpace(reason) ? "." : $" — {reason}."),
-            cancellationToken: cancellationToken);
+            cancellationToken: CancellationToken.None);
 
-        return Ok(new { message = "GLOBAL KILL SWITCH ACTIVATED. ALL STRATEGIES PAUSED. ALL POSITIONS FLATTENED." });
+        return Ok(new { message = "GLOBAL KILL SWITCH ACTIVATED. ALL STRATEGIES STOPPED. ALL POSITIONS FLATTENED.", result.StoppedRuns });
     }
 
     [HttpPost("killswitch/deactivate")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     public async Task<IActionResult> DeactivateKillSwitch(
         [FromQuery] string? reason,
+        [FromServices] KillSwitchControl control,
         CancellationToken cancellationToken)
     {
-        await _riskManagementService.DeactivateKillSwitchAsync(
+        await control.DeactivateAsync(
             User.GetUserName(), reason, cancellationToken);
-        PublishKillSwitch($"Kill switch released by {User.GetUserName() ?? "admin"}: trading resumed");
+        PublishKillSwitch($"Kill switch released by {User.GetUserName() ?? "admin"}: new starts allowed");
 
         HttpContext.Describe(
-            "Released the kill switch — trading resumed"
+            "Released the kill switch — new starts allowed; stopped runs remain stopped"
                 + (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}"),
             "killswitch");
 
@@ -88,11 +96,11 @@ public class RiskController : ControllerBase
             NotificationCategory.Risk,
             NotificationSeverity.Warning,
             "Kill switch released",
-            $"Trading resumed. By {User.GetUserName() ?? "admin"}"
+            $"New starts allowed; stopped runs remain stopped. By {User.GetUserName() ?? "admin"}"
                 + (string.IsNullOrWhiteSpace(reason) ? "." : $" — {reason}."),
             cancellationToken: cancellationToken);
 
-        return Ok(new { message = "GLOBAL KILL SWITCH DEACTIVATED. TRADING RESUMED." });
+        return Ok(new { message = "GLOBAL KILL SWITCH DEACTIVATED. NEW STARTS ALLOWED; STOPPED RUNS REMAIN STOPPED." });
     }
 
     [HttpGet("killswitch/status")]

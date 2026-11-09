@@ -93,6 +93,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.KillSwitchControl>();
 // A live start's checks and launch (the Start button and the AI Trader's starts), and a manual-book order (the ticket
 // and the AI Trader's buys): one path each, whoever asks.
 builder.Services.AddScoped(sp => new AlgoTrading.Api.Services.StrategyStartService(

@@ -343,6 +343,15 @@ public sealed class StrategyStartService(
         IHostMemory memory,
         CancellationToken cancellationToken)
     {
+        // Under StartGate, also held by the global stop: no runner can appear
+        // between its snapshot and completion, or restart while the switch is on.
+        var killSwitch = await db.SystemSettings.AsNoTracking()
+            .Where(x => x.Key == SystemSettingKeys.KillSwitchActive)
+            .Select(x => x.Value).FirstOrDefaultAsync(cancellationToken);
+        if (string.Equals(killSwitch, "true", StringComparison.OrdinalIgnoreCase))
+            return StrategyStartOutcome.Refused(StrategyStartKind.Conflict,
+                "The global kill switch is active. Release it before starting a strategy.");
+
         // The same strategy may run on several underlyings at once, and two
         // traders may each run it on the same one — their books are separate.
         // Only the same strategy, on the same underlying, in the SAME account
