@@ -188,7 +188,9 @@ public class NotifierRestartTests : IDisposable
         info.ArgumentList.Add("-c");
         info.ArgumentList.Add("sleep 30; :");
         info.ArgumentList.Add(ProcessProbe.NotifierMarker);
-        return Launch(info);
+        var process = Launch(info);
+        TestSleeper.WaitForCommandLine(process, ProcessProbe.NotifierMarker);
+        return process;
     }
 
     private Process Launch(ProcessStartInfo info)
