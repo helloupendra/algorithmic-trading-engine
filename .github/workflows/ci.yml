@@ -46,7 +46,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: integration-test
+          POSTGRES_PASSWORD: integration-test # pragma: allowlist secret — disposable CI database only
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
@@ -56,7 +56,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      OPENFNO_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=integration-test;Database=postgres
+      OPENFNO_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=integration-test;Database=postgres # pragma: allowlist secret — disposable CI database only
     steps:
       - uses: actions/checkout@v4
       - name: Set up .NET 10
