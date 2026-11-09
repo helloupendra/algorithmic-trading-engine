@@ -234,3 +234,18 @@ as soon as anything comes back.
 | GET | `/api/OptionChain/poller/status` · `/logs` | process state and output |
 | GET | `/api/Straddle` | one session's ATM straddle and IV, a point per capture minute; `date` (IST), default today; market-data grant |
 | GET | `/api/Straddle/iv-history` | the last year's ATM IV near each session's open and close, and the IV rank and percentile of the value now with the sessions used; market-data grant |
+
+## Writer health
+
+`GET /api/OptionChain/health` reports the selected writer, both writers' required/enabled states,
+and capture freshness for each configured underlying and source. An enabled Dhan recorder selects
+Dhan; otherwise FYERS is expected. Sign-in alone does not select the recorder. Both enabled is a
+conflict because their captures interleave. System → Health displays this aggregate and each writer.
+An unused backup is disabled, a closed market is idle, and an open market without recent selected-source
+captures is stale. Dhan's threshold is two configured rounds plus 30 seconds (minimum 120 seconds);
+FYERS's is 120 seconds. A fresh capture for one underlying cannot hide a stalled one elsewhere.
+The legacy `poller/status`, start, stop and logs routes still describe/control only the Python FYERS
+fallback; its last-capture timestamp is now restricted to FYERS within the last 15 minutes.
+Health reads are bounded to at least 15 minutes (or twice the stale threshold when longer), so a
+stopped source cannot scan months of another provider's Timescale chunks. A null timestamp means
+no capture in that window, not that no historical capture exists. Disabled backups need no capture read.

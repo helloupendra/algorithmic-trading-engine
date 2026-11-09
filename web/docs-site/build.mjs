@@ -51,6 +51,7 @@ export const NAV = [
       { slug: 'modules/manual-orders', src: 'docs/modules/manual_orders.md', title: 'Manual orders & carried positions' },
       { slug: 'modules/backtesting', src: 'docs/modules/backtesting_module.md', title: 'Backtesting' },
       { slug: 'modules/market-replay', src: 'docs/modules/market_replay.md', title: 'Market replay' },
+      { slug: 'modules/external-integrations', src: 'docs/modules/external_integrations.md', title: 'Privacy & external integrations' },
       { slug: 'modules/ai', src: 'docs/modules/ai.md', title: 'AI workspace & agents' },
       { slug: 'modules/ai-trader', src: 'docs/modules/ai_trader.md', title: 'AI Trader' },
       { slug: 'modules/analysis', src: 'docs/modules/analysis.md', title: 'Forecasts & analysis' },

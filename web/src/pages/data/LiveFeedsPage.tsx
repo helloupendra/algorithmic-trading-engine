@@ -33,6 +33,7 @@ import {
   useStaleWatchlist,
   useStaleQuotes,
   useChainPollerStatus,
+  useChainHealth,
   useChainPollerLogs,
   useStartChainPoller,
   useStopChainPoller,
@@ -64,22 +65,11 @@ function changePct(quote: LiveQuote | undefined): number | null {
 
 /* ------------------------------------------------- option chain poller */
 
-/**
- * The chain poller's control.
- *
- * Kept beside the feed's because they are started together and for the same
- * session — but it is a separate process with a separate failure, and the one
- * thing that must be obvious is when it is NOT running. Open interest enters
- * the platform through this and nowhere else: the broker's tick feed does not
- * carry it. A session where this was stopped has prices and volume and no OI at
- * all, permanently, including in any backtest of that day.
- *
- * The last capture time sits next to the process state on purpose. A poller
- * that started but cannot reach the broker — an expired daily token is the
- * usual reason — is up, looks healthy, and is recording nothing.
- */
+/** Controls the FYERS fallback independently of Dhan's hosted recorder. */
 function ChainPollerPanel() {
   const status = useChainPollerStatus()
+  const health = useChainHealth()
+  const writer = health.data?.writers.find(w => w.provider === 'fyers')
   // Read once for the card: a failing status endpoint must not flip it between "Checking…" and failed every poll.
   const read = polledState(status)
   const known = status.data !== undefined
@@ -89,10 +79,9 @@ function ChainPollerPanel() {
 
   const running = status.data?.isRunning ?? false
   const captured = status.data?.lastCapturedUtc ?? null
-  const captureAge = captured ? (Date.now() - new Date(captured).getTime()) / 1000 : null
 
   // Running but not writing is the state worth shouting about.
-  const stalled = running && (captured === null || (captureAge != null && captureAge > 120))
+  const stalled = writer?.state === 'stale'
 
   return (
     <Panel
@@ -106,7 +95,7 @@ function ChainPollerPanel() {
               className="btn btn--danger"
               disabled={stop.isPending}
               onClick={() => {
-                if (window.confirm('Stop the chain poller? No open interest will be recorded while it is off, and it cannot be filled in afterwards.'))
+                if (window.confirm('Stop the FYERS chain poller? FYERS captures will stop. The Dhan recorder is controlled separately.'))
                   stop.mutate()
               }}
             >
@@ -128,7 +117,7 @@ function ChainPollerPanel() {
       }
     >
       <p className="small-note muted" style={{ marginTop: 0 }}>
-        While Dhan is signed in, its chain recorder captures every underlying once a minute and this poller stays off:
+        While the Dhan chain recorder is enabled, this fallback should stay off:
         two chain sources would interleave in one history. Dhan&apos;s recording shows on Connectors → Dhan.
       </p>
       <div className="kv-grid" style={{ marginBottom: 10 }}>
@@ -152,24 +141,23 @@ function ChainPollerPanel() {
           </span>
         </div>
         <div>
-          <span className="muted">Last chain stored</span>
+          <span className="muted">Last FYERS chain (15 min)</span>
           <span className={stalled ? 'warn' : undefined}>
-            {!known ? (read === 'failed' ? 'unknown' : '…') : captured ? formatAge(captured) : 'never'}
+            {!known ? (read === 'failed' ? 'unknown' : '…') : captured ? formatAge(captured) : 'none in the last 15 min'}
           </span>
         </div>
       </div>
 
       {known && !running && (
-        <p className="small-note warn">
-          No open interest is being recorded. The broker's tick feed does not carry it, so nothing
-          else fills this in — and a session missed here stays missing, in the chain, the OI curves
-          and any backtest of that day.
+        <p className={writer?.required === false ? 'small-note muted' : 'small-note warn'}>
+          The FYERS fallback is stopped. This is expected when the Dhan recorder is selected.
+          System → Health shows the selected writer and capture freshness for each underlying.
         </p>
       )}
 
       {stalled && (
         <p className="small-note warn">
-          The process is up but nothing has been stored. Check the log below — an expired daily
+          The process is up but FYERS captures are stale. Check the log below — an expired daily
           broker token is the usual reason, and it answers with a 401.
         </p>
       )}

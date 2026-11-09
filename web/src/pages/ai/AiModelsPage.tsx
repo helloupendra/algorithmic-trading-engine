@@ -313,6 +313,11 @@ export function AiModelsPage() {
             <span className="faint">Provider not known yet</span>
           )}
         </div>
+        <p className="small-note muted">
+          Hosted models receive your questions and selected context, including tool results and document excerpts.
+          Voice, embeddings and archives have separate data flows. Switching one provider off may select another.{' '}
+          <a href="/docs/modules/external-integrations/">Data sharing and retention</a>
+        </p>
         {provider && <BedrockLines provider={provider} />}
         {data && <CatalogLine data={data} />}
       </section>

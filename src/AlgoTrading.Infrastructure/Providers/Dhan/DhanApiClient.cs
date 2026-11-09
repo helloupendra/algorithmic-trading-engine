@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -37,6 +38,7 @@ public sealed class DhanRateGate
     };
 
     private readonly IReadOnlyDictionary<DhanRateClass, TimeSpan> _spacing;
+    private readonly TimeProvider _time;
 
     public DhanRateGate() : this(Published) { }
 
@@ -44,29 +46,44 @@ public sealed class DhanRateGate
     /// The same gate at another pace, for tests that prove calls share it
     /// without waiting three real seconds a chain.
     /// </summary>
-    internal DhanRateGate(IReadOnlyDictionary<DhanRateClass, TimeSpan> spacing)
+    internal DhanRateGate(IReadOnlyDictionary<DhanRateClass, TimeSpan> spacing, TimeProvider? time = null)
     {
         _spacing = spacing;
+        _time = time ?? TimeProvider.System;
     }
 
     private readonly Dictionary<DhanRateClass, SemaphoreSlim> _gates =
         Enum.GetValues<DhanRateClass>().ToDictionary(c => c, _ => new SemaphoreSlim(1, 1));
 
-    private readonly Dictionary<DhanRateClass, DateTime> _lastUtc =
-        Enum.GetValues<DhanRateClass>().ToDictionary(c => c, _ => DateTime.MinValue);
+    private readonly ConcurrentDictionary<DhanRateClass, long> _completed = new();
 
-    public async Task WaitAsync(DhanRateClass rateClass, CancellationToken cancellationToken)
+    /// <summary>
+    /// Holds the class's slot through the HTTP exchange, then spaces the next
+    /// call from its completion. Preparing a request or scheduling its send
+    /// can take arbitrarily long; reserving a timestamp before that allowed
+    /// the next request to arrive too soon. Failures also consume a slot.
+    /// </summary>
+    public async Task<T> SendAsync<T>(DhanRateClass rateClass, Func<Task<T>> send, CancellationToken cancellationToken)
     {
         var gate = _gates[rateClass];
         await gate.WaitAsync(cancellationToken);
+        bool attempted = false;
         try
         {
-            var wait = _lastUtc[rateClass] + _spacing[rateClass] - DateTime.UtcNow;
-            if (wait > TimeSpan.Zero) await Task.Delay(wait, cancellationToken);
-            _lastUtc[rateClass] = DateTime.UtcNow;
+            // Wall-clock corrections must not shorten the broker's interval.
+            while (_completed.TryGetValue(rateClass, out long completed))
+            {
+                var wait = _spacing[rateClass] - _time.GetElapsedTime(completed);
+                if (wait <= TimeSpan.Zero) break;
+                await Task.Delay(wait, _time, cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            attempted = true;
+            return await send();
         }
         finally
         {
+            if (attempted) _completed[rateClass] = _time.GetTimestamp();
             gate.Release();
         }
     }
@@ -195,8 +212,6 @@ public sealed class DhanApiClient
     private async Task<(int Status, string Text, bool Succeeded)> ExchangeAsync(
         HttpMethod method, string path, object? body, DhanRateClass rateClass, string clientId, string token, CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(rateClass, cancellationToken);
-
         using var request = new HttpRequestMessage(method, $"{_settings.ApiBaseUrl.TrimEnd('/')}{path}");
         request.Headers.TryAddWithoutValidation("access-token", token);
         request.Headers.TryAddWithoutValidation("client-id", clientId);
@@ -207,7 +222,7 @@ public sealed class DhanApiClient
         }
 
         var http = _httpClientFactory.CreateClient(DhanProvider.Key);
-        using var response = await http.SendAsync(request, cancellationToken);
+        using var response = await _gate.SendAsync(rateClass, () => http.SendAsync(request, cancellationToken), cancellationToken);
         string text = await response.Content.ReadAsStringAsync(cancellationToken);
         return ((int)response.StatusCode, text, response.IsSuccessStatusCode);
     }

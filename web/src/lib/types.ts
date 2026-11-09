@@ -1934,7 +1934,7 @@ export interface OptionChainSeries {
 }
 
 
-/** The chain poller's process, and whether it is actually recording. */
+/** The FYERS fallback process; aggregate writer health is /OptionChain/health. */
 export interface ChainPollerStatus {
   isRunning: boolean
   managed: boolean
@@ -1942,11 +1942,12 @@ export interface ChainPollerStatus {
   /** "managed" | "adopted" | "none" */
   source: string
   /**
-   * When the chain was last written. Reported next to the process status
+   * When FYERS last wrote a chain within the capture window. Reported next to the process status
    * because they are not the same thing: a poller that started but cannot reach
    * the broker is up, healthy-looking, and recording nothing.
    */
   lastCapturedUtc: string | null
+  captureWindowSeconds: number
 }
 
 /** One FYERS symbol master (NSE_CM, NSE_FO, BSE_CM, BSE_FO, MCX_COM) as GET /api/Instruments/masters reports it. */

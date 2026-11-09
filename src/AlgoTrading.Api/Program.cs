@@ -137,6 +137,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedSupervisorRegistry>()
 // What each connector is delivering right now, for its page in the Connectors module.
 builder.Services.AddScoped<AlgoTrading.Api.Services.ProviderUsageService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.OptionChainHealthService>();
 // The automatic switch from a silent Dhan feed to FYERS: what it reads (the tick
 // stream), what it drives (the supervisors above) and what it asks (FYERS's own
 // profile, Dhan's). Dry run unless FeedFailover:DryRun is false.

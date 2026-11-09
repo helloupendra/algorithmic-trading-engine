@@ -877,3 +877,12 @@ is.
 | `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |
 | `Api/Services/FeedFailoverService.cs` (+ `FeedFailoverPorts.cs`, `FeedFailoverAdapters.cs`) | The same fallback during the session: tick ages from `market:ticks`, the FYERS profile check, the once-a-day switch; dry run by default (`FeedFailover:DryRun`) |
 | `tests/AlgoTrading.UnitTests/FeedFailoverServiceTests.cs` | The failover under a fake clock, stream and feeds: fresh, grace, one stale check, dry run, the switch, the FYERS sign-in reminder, one switch a day across a restart, closed session, before 09:20, per-exchange silence, recovery |
+
+### Request pacing
+
+The process-wide `DhanRateGate` uses monotonic time. It holds each rate class's slot through
+HTTP response completion, then waits its configured spacing before the next exchange. This
+conservatively includes response time as well as the gap; a delayed send, wall-clock correction,
+failed request or concurrent recorder cannot consume a slot early. Data, quote and option-chain
+classes have independent gates. This budget is per API process; separate hosts sharing one Dhan
+account still need coordinated operation.

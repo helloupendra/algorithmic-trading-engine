@@ -20,7 +20,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import {
   useAlerterStatus,
   useBackendStatus,
-  useChainPollerStatus,
+  useChainHealth,
   useCheckupLatest,
   useFeeds,
   useIngestorStatuses,
@@ -29,6 +29,7 @@ import {
   useProviders,
   useSystemHost,
 } from '../../../lib/queries'
+import { chainState, writerDetail } from '../../../lib/chainHealth'
 import { connectorsSummary } from '../../../lib/pulse'
 import { feedDiagnostics } from '../../../lib/feeds'
 import { formatAge, formatDateTime, formatTime } from '../../../lib/format'
@@ -295,6 +296,11 @@ function ArchivePanel({ report }: { report: SystemHostReport }) {
 
   return (
     <>
+      <p className="small-note muted">
+        Archive jobs upload market data and run P&amp;L exports to the configured Drive remote.
+        Local retention does not delete remote copies.{' '}
+        <a href="/docs/modules/external-integrations/">Data sharing and retention</a>
+      </p>
       <p className="sys-lead">
         {archive.unverifiedDays > 0 ? (
           <Badge tone="warn">{archive.unverifiedDays} day(s) not verified</Badge>
@@ -383,7 +389,7 @@ function withRefresh(detail: string, query: StatusRead): string {
 function ServicesPanel({ host }: { host: SystemHostReport | undefined }) {
   const backend = useBackendStatus()
   const feeds = useFeeds()
-  const poller = useChainPollerStatus()
+  const chain = useChainHealth()
   const alerter = useAlerterStatus()
 
   return (
@@ -429,10 +435,17 @@ function ServicesPanel({ host }: { host: SystemHostReport | undefined }) {
           />
         )}
       <ServiceRow
-        name="Option chain poller"
-        state={<RunState running={poller.data?.isRunning} known={!!poller.data} error={unread(poller)} />}
-        detail={poller.data ? withRefresh(`last chain written ${formatAge(poller.data.lastCapturedUtc)}`, poller) : readState(poller)}
+        name="Chain ingestion"
+        state={chain.data ? <Badge tone={chainState(chain.data.state).tone}>{chainState(chain.data.state).label}</Badge>
+          : <RunState running={undefined} known={false} error={unread(chain)} />}
+        detail={chain.data ? withRefresh(chain.data.conflictingWriters ? 'Both writers are enabled; captures may interleave'
+          : `${chain.data.selectedProvider.toUpperCase()} selected`, chain) : readState(chain)}
       />
+      {chain.data?.writers.map(writer => (
+        <ServiceRow key={writer.provider} name={writer.writer}
+          state={<Badge tone={chainState(writer.state).tone}>{chainState(writer.state).label}</Badge>}
+          detail={withRefresh(writerDetail(writer), chain)} />
+      ))}
       <ServiceRow
         name="Signal alerter"
         state={<RunState running={alerter.data?.isRunning} known={!!alerter.data} error={unread(alerter)} />}

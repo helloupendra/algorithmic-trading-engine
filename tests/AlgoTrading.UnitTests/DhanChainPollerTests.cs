@@ -475,18 +475,20 @@ public class DhanChainPollerTests
     {
         var (db, handler, _, _) = await NiftyWeekliesAsync();
         await using var _ = db;
-        var recorder = Recorder(db, handler, State(), marketOpen: true, QuickGate(chainMilliseconds: 300));
+        var clock = new DhanRateGateTests.AdvancingClock();
+        handler.Time = clock;
+        var recorder = Recorder(db, handler, State(), marketOpen: true, DhanRateGateTests.Gate(clock));
         var round = DateTime.UtcNow;
 
         var nearest = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
         await recorder.RecordLaterExpiriesAsync(new[] { "NIFTY" }, nearest, round, round.AddMinutes(1), TimeSpan.FromMinutes(5), CancellationToken.None);
 
-        // The nearest's chain, then each later one: never two inside one 300 ms slot (less a
-        // Windows timer tick of slack). Without the shared gate they would be a millisecond apart.
+        // Measure transport entry with the same monotonic clock as the gate.
+        // Every nearest/later chain must take the shared slot, without timer slack.
         Assert.True(handler.Chains.Count >= 2);
-        var sent = handler.Chains.Select(c => c.SentUtc).Order().ToList();
+        var sent = handler.ChainSentAt;
         for (int i = 1; i < sent.Count; i++)
-            Assert.True(sent[i] - sent[i - 1] >= TimeSpan.FromMilliseconds(250), $"chains {i - 1} and {i} were {(sent[i] - sent[i - 1]).TotalMilliseconds:0} ms apart");
+            Assert.True(clock.GetElapsedTime(sent[i - 1], sent[i]) >= TimeSpan.FromMilliseconds(300));
     }
 
     // ---------------------------------------------------------------- the switch
@@ -790,6 +792,8 @@ public class DhanChainPollerTests
 
         /// <summary>Every chain request as (when it was sent, the expiry it asked for).</summary>
         public List<(DateTime SentUtc, string Expiry)> Chains { get; } = new();
+        public TimeProvider Time { get; set; } = TimeProvider.System;
+        public List<long> ChainSentAt { get; } = new();
 
         /// <summary>A chain request for this expiry ("yyyy-MM-dd") is never answered: it waits until cancelled.</summary>
         public string? HoldExpiry { get; set; }
@@ -801,6 +805,7 @@ public class DhanChainPollerTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            long sentAt = Time.GetTimestamp();
             string path = request.RequestUri!.AbsolutePath;
             Called.Add(path);
             if (request.Content is not null)
@@ -812,7 +817,11 @@ public class DhanChainPollerTests
             {
                 using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
                 string expiry = body.RootElement.GetProperty("Expiry").GetString()!;
-                lock (Chains) Chains.Add((DateTime.UtcNow, expiry));
+                lock (Chains)
+                {
+                    Chains.Add((DateTime.UtcNow, expiry));
+                    ChainSentAt.Add(sentAt);
+                }
                 if (expiry == HoldExpiry) await Task.Delay(Timeout.Infinite, cancellationToken);
             }
 

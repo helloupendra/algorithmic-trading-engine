@@ -6,8 +6,8 @@
  * Bedrock's are off, and Claude on Bedrock once AWS allows it), grouped
  * into tiers. A tier is an ordered chain: the first model answers, and the
  * next is asked only when it fails or times out. An agent uses its tier's
- * chain unless the owner gave it one of its own. The key never leaves the
- * server; the API says only whether one is configured.
+ * chain unless the owner gave it one of its own. The key is sent to the
+ * provider for authentication; the browser learns only whether it is configured.
  *
  * This module is the page-free half of the workspace, so it can be tested:
  *   - the API's shapes and a reader that refuses a body it cannot read (a

@@ -275,9 +275,9 @@ public class OptionChainController : ControllerBase
     /// Records one poll of the chain. Posted by the ingestor's chain poller.
     /// </summary>
     /// <remarks>
-    /// This is the only way open interest enters the platform — the broker's
-    /// tick feed does not carry it — so a session with the poller stopped has
-    /// prices and volume and no OI at all, for good. It cannot be backfilled.
+    /// The Python fallback posts here; the Dhan recorder stores captures directly.
+    /// Tick feeds do not carry open interest, so at least one chain writer must
+    /// record it during the session.
     /// <para>
     /// The poller signs in as the Service account (core/api_client.py). Until
     /// 2 Nov any signed-in account could post a row here, and the chain view,
@@ -306,10 +306,8 @@ public class OptionChainController : ControllerBase
     /// Launches option_chain_poller.py.
     /// </summary>
     /// <remarks>
-    /// Worth starting alongside the ingestor, every session. Open interest
-    /// enters the platform through this process and nowhere else, and it cannot
-    /// be backfilled — a session where this was not running has no OI at all,
-    /// for good, including in any backtest of that day.
+    /// Start this FYERS fallback when Dhan is not recording. Running both writers
+    /// interleaves their captures in the same history.
     /// </remarks>
     [HttpPost("poller/start")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
@@ -335,7 +333,7 @@ public class OptionChainController : ControllerBase
         var outcome = await _poller.StopAsync($"Stopped by {userName}", cancellationToken);
 
         HttpContext.Describe(outcome.WasRunning
-            ? $"Stopped the option chain poller (pid {outcome.ProcessId}). No open interest is being recorded."
+            ? $"Stopped the option chain poller (pid {outcome.ProcessId}). The Dhan recorder is controlled separately."
             : "Stopped the option chain poller — it was not running.");
 
         return Ok(new
@@ -359,7 +357,7 @@ public class OptionChainController : ControllerBase
         // The process being up is not the same as it working. A poller that
         // started but cannot reach the broker looks identical from the outside,
         // so the last capture time is reported next to it.
-        var lastCaptured = await _chain.GetLastCaptureUtcAsync(cancellationToken);
+        var lastCaptured = await _chain.GetLastCaptureUtcAsync(cancellationToken, sourceKey: "fyers", sinceUtc: DateTime.UtcNow.AddMinutes(-15));
 
         return Ok(new
         {
@@ -368,7 +366,17 @@ public class OptionChainController : ControllerBase
             processId = status.ProcessId,
             source = status.Source,
             lastCapturedUtc = lastCaptured,
+            captureWindowSeconds = 900,
         });
+    }
+
+    /// <summary>Provider-specific capture health, including the selected writer and disabled backup.</summary>
+    [HttpGet("health")]
+    public async Task<ActionResult<OptionChainHealth>> GetHealth(
+        [FromServices] OptionChainHealthService health, CancellationToken cancellationToken)
+    {
+        var python = await _poller.GetStatusAsync(cancellationToken);
+        return Ok(await health.ReadAsync(python.IsRunning, cancellationToken));
     }
 
     /// <summary>Recent stdout/stderr — where the broker's real field names are logged on first run.</summary>

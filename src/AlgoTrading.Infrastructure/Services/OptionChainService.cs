@@ -725,9 +725,10 @@ public class OptionChainService
     /// same thing: a poller that started but cannot reach the broker is up,
     /// healthy-looking, and recording nothing.
     /// </remarks>
-    public async Task<DateTime?> GetLastCaptureUtcAsync(CancellationToken cancellationToken = default)
+    public async Task<DateTime?> GetLastCaptureUtcAsync(CancellationToken cancellationToken = default, string? sourceKey = null, string? underlying = null, DateTime? sinceUtc = null)
         => await _dbContext.OptionChainSnapshots
             .AsNoTracking()
+            .Where(x => (sinceUtc == null || x.CapturedUtc >= sinceUtc) && (sourceKey == null || x.SourceKey == sourceKey) && (underlying == null || x.Underlying == underlying))
             .OrderByDescending(x => x.CapturedUtc)
             .Select(x => (DateTime?)x.CapturedUtc)
             .FirstOrDefaultAsync(cancellationToken);

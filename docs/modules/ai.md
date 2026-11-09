@@ -36,6 +36,14 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   `src/AlgoTrading.Api/Services/AiAgents/`.
 - Tables: `ai_calls`, `ai_reports`; `regulatory_circulars` and `compliance_follow_ups` for the Compliance Triage.
 
+## External processing
+
+Hosted AI sends questions and selected context to the configured provider. Tool results can include
+run/trade summaries, strategy descriptions and document excerpts. Voice and embeddings have their own
+outbound paths. AI → Models shows configured providers; AI → Calls shows audited calls.
+See [Self-hosting and external integrations](external_integrations.md) for data categories, controls
+and retention limits. Disabling one provider or the scheduler does not disable every AI path.
+
 ## Ground rules
 
 - **Owner and admins only.** The models run on NVIDIA's free hosted endpoint (build.nvidia.com). Its terms cover
@@ -46,7 +54,7 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   in an account, switch an AI agent);
   code resolves the target, waits for the owner's PIN, and carries it out as his own click would
   ([Actions (with a PIN)](#actions-with-a-pin)). No model can place a broker order.
-- **The key never leaves the server.** It sits in the server's `.env` as `NVIDIA_API_KEY`. The desk writes it into
+- **The key is not returned to the browser.** It sits in the server's `.env` as `NVIDIA_API_KEY`. The desk writes it into
   `appsettings.Local.json` on each deploy (`scripts/_gen_local_settings.py`), and it is sent only in the provider's
   `Authorization` header. The browser learns `keyConfigured: true` and nothing more. Every stored text is scrubbed
   of it as a second layer.

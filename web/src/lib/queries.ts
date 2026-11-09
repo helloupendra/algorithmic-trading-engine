@@ -2353,9 +2353,15 @@ export function useIvHistory(underlying: string, marketOpen: boolean) {
 
 // --- option chain poller -----------------------------------------------------
 //
-// Open interest enters the platform through this process and nowhere else, and
-// it cannot be backfilled — so it needs to be as easy to start as the ingestor,
-// and as obvious when it is not running.
+// Python is the FYERS fallback; the aggregate health also reads Dhan's recorder.
+
+export function useChainHealth() {
+  return useQuery({
+    queryKey: ['chainHealth'],
+    queryFn: () => api.get<import('./chainHealth').OptionChainHealth>('/api/OptionChain/health'),
+    refetchInterval: POLL_SLOW,
+  })
+}
 
 export function useChainPollerStatus() {
   return useQuery({
@@ -2369,7 +2375,7 @@ export function useStartChainPoller() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.post<{ message: string }>('/api/OptionChain/poller/start'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['chainPoller'] }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['chainPoller'] }), qc.invalidateQueries({ queryKey: ['chainHealth'] })]),
   })
 }
 
@@ -2377,7 +2383,7 @@ export function useStopChainPoller() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.post<{ message: string }>('/api/OptionChain/poller/stop'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['chainPoller'] }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ['chainPoller'] }), qc.invalidateQueries({ queryKey: ['chainHealth'] })]),
   })
 }
 
