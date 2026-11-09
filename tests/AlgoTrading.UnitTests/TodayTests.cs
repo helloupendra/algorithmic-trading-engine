@@ -44,6 +44,19 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task Manual_books_contribute_to_pnl_but_not_running_or_stopped_strategy_counts()
+    {
+        using var desk = new RunnerDesk();
+        long book = Seed(desk, RunnerDesk.AdminId, "NIFTY", "Running", ManualOrdersController.BookStrategyName, net: 250m);
+        var trading = await Build(desk).TradingAsync(Day, CancellationToken.None);
+        var account = Assert.Single(trading.Accounts);
+        Assert.Equal((250m, 0, 0), (account.Net, account.RunsLive, account.RunsStopped));
+        var row = Assert.Single(trading.Runs);
+        Assert.Equal(book, row.RunId);
+        Assert.Equal("Manual book", row.Status);
+    }
+
+    [Fact]
     public async Task Open_losses_use_stored_marks_when_quotes_are_missing_and_sort_before_closed_losses()
     {
         using var desk = new RunnerDesk();

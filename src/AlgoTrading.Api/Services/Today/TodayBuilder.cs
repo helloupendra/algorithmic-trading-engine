@@ -251,7 +251,8 @@ public sealed class TodayBuilder(
             .CountAsync(r => r.Mode == StrategyRunControl.LivePaperMode
                 && (r.StartedUtc ?? r.CreatedUtc) >= start && (r.StartedUtc ?? r.CreatedUtc) < end, cancellationToken);
 
-        static bool Live(LiveRunSummaryResponse r) => r.IsActive || r.Status is "Running" or "Stopping";
+        static bool Manual(LiveRunSummaryResponse r) => r.StrategyName == ManualOrdersController.BookStrategyName;
+        static bool Live(LiveRunSummaryResponse r) => !Manual(r) && (r.IsActive || r.Status is "Running" or "Stopping");
         // Round the displayed components once per run, then aggregate those same
         // figures so rows, accounts and the headline reconcile to the cent.
         var figures = runs.ToDictionary(r => r.RunId, r => new RunPnl.Figures(Round(r.RealizedPnl), Round(r.UnrealizedPnl), Round(r.Charges)));
@@ -259,7 +260,7 @@ public sealed class TodayBuilder(
             .GroupBy(r => r.UserId)
             .Select(g => new TodayAccount(g.First().UserName ?? $"user {g.Key}", g.Sum(r => figures[r.RunId].Net),
                 g.Sum(r => figures[r.RunId].Realized), g.Sum(r => figures[r.RunId].Charges),
-                g.Count(Live), g.Count(r => !Live(r)), g.Sum(r => r.OpenPositions))
+                g.Count(Live), g.Count(r => !Manual(r) && !Live(r)), g.Sum(r => r.OpenPositions))
             {
                 Unrealized = g.Sum(r => figures[r.RunId].Unrealized),
             })
@@ -267,7 +268,7 @@ public sealed class TodayBuilder(
             .ToList();
         var rows = runs
             .OrderBy(r => figures[r.RunId].Net)
-            .Select(r => new TodayRun(r.RunId, r.UserName ?? string.Empty, r.StrategyName, r.Underlying, Live(r) ? "Running" : r.Status,
+            .Select(r => new TodayRun(r.RunId, r.UserName ?? string.Empty, r.StrategyName, r.Underlying, Manual(r) ? "Manual book" : Live(r) ? "Running" : r.Status,
                 figures[r.RunId].Net, r.Trades, Utc(r.StartedUtc), Utc(r.StoppedUtc), r.StopReason)
             {
                 RealizedNet = figures[r.RunId].Realized - figures[r.RunId].Charges,
