@@ -73,7 +73,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eod", default="15:15", help="EOD square-off time IST, HH:MM; empty for none")
     parser.add_argument("--charges", type=float, default=0.0, help="Flat charges per lot per fill (rupees)")
     parser.add_argument("--capital", type=float, default=None, help="Initial capital (default 1,000,000)")
-    parser.add_argument("--params", default=None, help="Strategy parameter overrides as a JSON object")
+    parser.add_argument("--params", default=None,
+                        help='Strategy parameter overrides as a JSON object; a "risk" key carries the run\'s risk '
+                             'rules, e.g. {"risk": {"leg": {"stopLossPoints": 10, "targetPoints": 20}}}')
     parser.add_argument("--poll", type=float, default=2.0, help="Seconds between status polls (default 2)")
     parser.add_argument("--json", action="store_true", help="Print the final run view as JSON instead of the report")
     parser.add_argument("--user", default=None,
@@ -136,6 +138,14 @@ def build_request(args: argparse.Namespace, strategy_id: int) -> Dict[str, Any]:
             raise SystemExit(f"--params must be a JSON object: {ex}")
         if not isinstance(overrides, dict):
             raise SystemExit("--params must be a JSON object")
+        # Risk rules are the request's own field (StartBacktestRequest.Risk). Left inside the
+        # parameters, the API writes the resolved rules over them, an empty {}: a run asked for
+        # a leg stop-loss or target went ahead with none, and its report matched the run without.
+        risk = overrides.pop("risk", None)
+        if risk is not None:
+            if not isinstance(risk, dict):
+                raise SystemExit('--params "risk" must be a JSON object, e.g. {"leg": {"stopLossPoints": 10}}')
+            payload["risk"] = risk
         payload["parameters"] = overrides
     return payload
 
