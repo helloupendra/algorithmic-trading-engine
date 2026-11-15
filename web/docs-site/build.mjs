@@ -107,16 +107,15 @@ export const NAV = [
 
 /** Screenshots on the overview page, with what each shows. */
 const GALLERY = [
-  ['console-desk.png', 'Desk — the trading day on one sheet: results after charges, runs, P&L, checkup and the market'],
-  ['console-trader-desk.png', 'A trader\'s Desk — the same page, scoped by the API to their own runs'],
-  ['console-palette.png', '⌘K — one search for pages, symbols, strategies and today\'s runs'],
-  ['console-option-chain.png', 'Option chain — OI, change, IV and build-up per strike, stamped with its capture'],
-  ['console-market-factors.png', 'Flows — FII, DII, pro and client positions, labelled with what testing found'],
-  ['console-run-history.png', 'Run history — every run, lots × lot size, net after charges, and why it stopped'],
-  ['console-backtests.png', 'Backtests — coverage first, so a replay never runs on missing data'],
-  ['console-forecasts.png', 'Forecasts — judged on live forecasts only; a backtest is history, not proof'],
-  ['console-checkup.png', 'Checkup — Sentinel\'s weekly review, each item with what to do'],
-  ['console-incidents.png', 'Incidents — each problem once, with its root cause and what fixed it'],
+  ['console-desk-2.png', 'Desk — the trading day on one sheet: results after charges, runs, P&L, checkup and the market'],
+  ['console-trader-desk-2.png', 'A trader\'s Desk — the same page, scoped by the API to their own runs'],
+  ['console-palette-2.png', '⌘K — one search for pages, symbols, strategies and today\'s runs'],
+  ['console-option-chain-2.png', 'Option chain — OI, change, IV and build-up per strike, stamped with its capture'],
+  ['console-market-factors-2.png', 'Flows — FII, DII, pro and client positions, labelled with what testing found'],
+  ['console-run-history-2.png', 'Run history — every run, lots × lot size, net after charges, and why it stopped'],
+  ['console-backtests-2.png', 'Backtests — coverage first, so a replay never runs on missing data'],
+  ['console-checkup-2.png', 'Checkup — Sentinel\'s review, each item with what to do'],
+  ['console-incidents-2.png', 'Incidents — each problem once, with its root cause and what fixed it'],
 ]
 
 /* ------------------------------------------------------------------ utils */

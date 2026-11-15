@@ -220,106 +220,59 @@
 
 
 <section class="home-section sc-section" id="screens" aria-labelledby="screens-title">
-<div class="section-intro"> <div> <p class="eyebrow">Screens</p> <h2 id="screens-title">Six screens <em>from the console.</em> </h2> </div> </div>
+<div class="section-intro"> <div> <p class="eyebrow">Screens</p> <h2 id="screens-title">Six screens <em>from the console.</em> </h2> </div> <p class="section-note">Captured from the console as it ships, running against a local mock of the API with an invented trading day. Nothing here is a quote.</p> </div>
 <div class="sc-grid">
 <article class="sc-card"> <a href="/markets" aria-label="Open Market pulse in the console">
-<div class="sc-slot sc-market" data-capture-size="2200x924">
-<div class="sc-bar"> <span>Markets · Dhan · 13:45 IST</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<table class="sc-table"> <thead> <tr> <th>Instrument</th> <th>Last price</th> <th>Change</th> <th>Day range</th> <th>Age</th> </tr> </thead> <tbody>
-<tr> <td>NIFTY 50</td> <td>25,031.40</td> <td class="sc-up">+0.18%</td> <td> <i class="sc-range" style="--point:64%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>BANK NIFTY</td> <td>56,388.90</td> <td class="sc-down">−0.22%</td> <td> <i class="sc-range" style="--point:37%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>CRUDE OIL</td> <td>7,942.00</td> <td class="sc-down">−0.86%</td> <td> <i class="sc-range" style="--point:22%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>GOLD</td> <td>1,26,410.00</td> <td class="sc-up">+0.34%</td> <td> <i class="sc-range" style="--point:73%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>SENSEX</td> <td>81,904.19</td> <td class="sc-up">+0.23%</td> <td> <i class="sc-range" style="--point:58%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>INDIA VIX</td> <td>13.42</td> <td class="sc-down">−4.49%</td> <td> <i class="sc-range" style="--point:12%"> </i> </td> <td>2 s</td> </tr>
-<tr> <td>SILVER</td> <td>1,52,870.00</td> <td class="sc-up">+0.41%</td> <td> <i class="sc-range" style="--point:69%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>RELIANCE</td> <td>1,486.30</td> <td class="sc-up">+0.62%</td> <td> <i class="sc-range" style="--point:81%"> </i> </td> <td>1 s</td> </tr>
-<tr> <td>HDFC BANK</td> <td>1,002.15</td> <td class="sc-down">−0.18%</td> <td> <i class="sc-range" style="--point:41%"> </i> </td> <td>3 s</td> </tr>
-</tbody> </table>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-market">
+<div class="sc-bar"> <span>Markets · Dhan · 13:45 IST</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/market-pulse-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The Markets page: indices, MCX contracts and large caps with day ranges and quote ages (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/market-pulse-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The Markets page: indices, MCX contracts and large caps with day ranges and quote ages (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>Market pulse <span aria-hidden="true">↗</span> </h3> <p>Indices, the nearest MCX contracts and the large caps, each with its day range and how old its last price is. A stale price says so.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/markets/chain" aria-label="Open Option chain in the console">
-<div class="sc-slot sc-chain" data-capture-size="2200x1291">
-<div class="sc-bar"> <span>Markets / Option chain</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<div class="sc-head"> <strong>NIFTY · 09 Nov 2026</strong> <span>Dhan · 13:45 IST</span> </div>
-<div class="sc-metrics"> <div> <span>PCR</span> <strong>1.08</strong> </div> <div> <span>Max pain</span> <strong>25,050</strong> </div> <div> <span>ATM IV</span> <strong>12.42%</strong> </div> </div>
-<table class="sc-table sc-chain-table"> <thead> <tr> <th colspan="3">CALLS</th> <th> </th> <th colspan="3">PUTS</th> </tr> <tr> <th>OI (L)</th> <th>IV %</th> <th>LTP</th> <th>STRIKE</th> <th>LTP</th> <th>IV %</th> <th>OI (L)</th> </tr> </thead> <tbody>
-<tr> <td>71</td> <td>12.86</td> <td>144.20</td> <th>24,950</th> <td>38.80</td> <td>13.10</td> <td>59</td> </tr>
-<tr> <td>87</td> <td>12.63</td> <td>115.60</td> <th>25,000</th> <td>58.40</td> <td>12.87</td> <td>80</td> </tr>
-<tr class="sc-atm"> <td>78</td> <td>12.40</td> <td>87.00</td> <th>25,050</th> <td>78.00</td> <td>12.64</td> <td>87</td> </tr>
-<tr> <td>49</td> <td>12.63</td> <td>67.60</td> <th>25,100</th> <td>106.40</td> <td>12.87</td> <td>78</td> </tr>
-<tr> <td>60</td> <td>12.86</td> <td>48.20</td> <th>25,150</th> <td>134.80</td> <td>13.10</td> <td>55</td> </tr>
-</tbody> </table>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-chain">
+<div class="sc-bar"> <span>Markets / Option chain</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/option-chain-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The NIFTY option chain: calls, strikes and puts with OI, IV and LTP around the at-the-money strike (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/option-chain-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The NIFTY option chain: calls, strikes and puts with OI, IV and LTP around the at-the-money strike (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>Option chain <span aria-hidden="true">↗</span> </h3> <p>Calls left, puts right, strike in the middle; open interest and its change, IV, and what the pair of them means. Stamped with when it was captured and by which vendor.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/data" aria-label="Open History on hand in the console">
-<div class="sc-slot sc-history sc-expanded" data-capture-size="2100x1112">
-<div class="sc-bar"> <span>Data / Inventory</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<div class="sc-coverage"> <span>Index candles</span> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <i> </i> <span>Option premiums</span> <i> </i> <i> </i> <i class="sc-sparse"> </i> <i> </i> <i> </i> <i class="sc-sparse"> </i> <i> </i> <i class="sc-missing"> </i> </div>
-<div class="sc-archive-key sc-wide-only"> <span>Every session accounted for</span> <span>Complete · sparse · missing</span> </div>
-<table class="sc-table"> <thead> <tr> <th>On disk</th> <th>Stored from</th> <th>Records</th> <th>Coverage</th> </tr> </thead> <tbody>
-<tr> <td>Index candles</td> <td>Jan 2020</td> <td>12.8M bars</td> <td>99.9%</td> </tr>
-<tr> <td>Option premiums</td> <td>Jan 2025</td> <td>86.4M bars</td> <td class="sc-warn">97.8%</td> </tr>
-<tr> <td>Chain snapshots</td> <td>Jan 2025</td> <td>4.2M</td> <td>99.1%</td> </tr>
-<tr> <td>Market ticks</td> <td>Last 90 days</td> <td>426M ticks</td> <td>99.7%</td> </tr>
-<tr class="sc-wide-only"> <td>VIX &amp; breadth</td> <td>Jan 2020</td> <td>1.8M points</td> <td>99.9%</td> </tr>
-</tbody> </table>
-<div class="sc-next-panel"> <strong>Next archive · 7 Nov · 01:30 IST</strong> <span>Near-expiry chain · every minute</span> </div>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-history">
+<div class="sc-bar"> <span>Data / Inventory</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/history-on-hand-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The Data overview: stored history per index and resolution, with ranges and bar counts (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/history-on-hand-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="The Data overview: stored history per index and resolution, with ranges and bar counts (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>History on hand <span aria-hidden="true">↗</span> </h3> <p>What is actually on disk — index, resolution, first and last session, bars, and whether they came from a backfill or the live feed — before you are asked to pick a range.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/research/backtests/new" aria-label="Open Setup editor in the console">
-<div class="sc-slot sc-setup sc-expanded" data-capture-size="2000x924">
-<div class="sc-bar"> <span>Research / New experiment · paper</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<div class="sc-setup-range"> <span>NIFTY · 1-minute premiums</span> <span>01 Jan 2025 → 05 Nov 2026</span> </div>
-<div class="sc-setups"> <div> <strong>Long setup</strong> <span>close &gt; vwap <b>AND</b> close &gt; ema:9</span> </div> <div> <strong>Short setup</strong> <span>close &lt; vwap <b>AND</b> close &lt; ema:9</span> </div> </div>
-<div class="sc-mini-note"> <span>03 Aug → 05 Nov 2026</span> <span>1 lot · square-off 15:30</span> </div>
-<div class="sc-setup-controls"> <div> <span>Entry window</span> <strong>09:30–14:30</strong> </div> <div> <span>Contract</span> <strong>ATM</strong> </div> <div> <span>Max trades / day</span> <strong>3</strong> </div> <div> <span>Stop / target</span> <strong>25% / 40%</strong> </div> </div>
-<div class="sc-execution"> <strong>Keep execution honest</strong> <span>Recorded bid / ask · ₹0.50 extra slippage</span> </div>
-<div class="sc-checkline sc-wide-only"> <span>✓ Statutory charges</span> <span>✓ Skip missing quotes</span> <span>✓ Final 20% held out</span> </div>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-setup">
+<div class="sc-bar"> <span>Research / New backtest · paper</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/setup-editor-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="New backtest: the strategy cards with their legs, and the history each replay will read (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/setup-editor-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="New backtest: the strategy cards with their legs, and the history each replay will read (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>Setup editor <span aria-hidden="true">↗</span> </h3> <p>A long setup and a short setup written as conditions, under the history the replay will read: each resolution's stored sessions, the range, the lots and the square-off time.</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/markets/factors" aria-label="Open Market factors in the console">
-<div class="sc-slot sc-factors sc-expanded" data-capture-size="2200x1222">
-<div class="sc-bar"> <span>Flows &amp; events · 05 Nov close</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<div class="sc-metrics"> <div> <span>FII cash</span> <strong class="sc-down">−₹1,842Cr</strong> </div> <div> <span>DII cash</span> <strong class="sc-up">+₹2,116Cr</strong> </div> <div> <span>Today's flows</span> <strong class="sc-unknown">Not known yet</strong> </div> </div>
-<div class="sc-factor-panels"> <div class="sc-factor-panel"> <strong>Foreign &amp; domestic flows</strong> <table class="sc-table"> <thead> <tr> <th>Session</th> <th>FII net</th> <th>DII net</th> </tr> </thead> <tbody>
-<tr> <td>05 Nov</td> <td class="sc-down">−₹1,842Cr</td> <td class="sc-up">+₹2,116Cr</td> </tr>
-<tr> <td>04 Nov</td> <td class="sc-down">−₹1,208Cr</td> <td class="sc-up">+₹1,476Cr</td> </tr>
-<tr> <td>03 Nov</td> <td class="sc-up">+₹486Cr</td> <td class="sc-up">+₹924Cr</td> </tr>
-<tr> <td>02 Nov</td> <td class="sc-down">−₹2,014Cr</td> <td class="sc-up">+₹2,438Cr</td> </tr>
-</tbody> </table> </div> <div class="sc-factor-panel"> <strong>Participant index futures OI</strong> <table class="sc-table"> <thead> <tr> <th>Type</th> <th>Long</th> <th>Short</th> <th>Net</th> </tr> </thead> <tbody>
-<tr> <td>FII</td> <td>38,420</td> <td>72,610</td> <td class="sc-down">−34,190</td> </tr>
-<tr> <td>DII</td> <td>24,110</td> <td>15,430</td> <td class="sc-up">+8,680</td> </tr>
-<tr> <td>Pro</td> <td>31,780</td> <td>29,960</td> <td class="sc-up">+1,820</td> </tr>
-<tr> <td>Client</td> <td>68,520</td> <td>44,830</td> <td class="sc-up">+23,690</td> </tr>
-</tbody> </table> </div> </div>
-<div class="sc-calendar-line sc-wide-only"> <strong>US employment report</strong> <span>Today · 19:00 IST</span> <span class="sc-warn">High impact</span> </div>
-<div class="sc-evidence">Signal evidence <strong>Not tested yet</strong> </div>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-factors">
+<div class="sc-bar"> <span>Flows & events · 05 Nov close</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/market-factors-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="Market factors: FII and DII flows, participant open interest and the events ahead (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/market-factors-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="Market factors: FII and DII flows, participant open interest and the events ahead (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>Market factors <span aria-hidden="true">↗</span> </h3> <p>Walls, max pain, PCR, ATM IV, participant open interest and flows — each stamped with how fresh it is and with what our own testing found, including "not tested yet".</p> </div>
 </a> </article>
 <article class="sc-card"> <a href="/research/backtests/runs" aria-label="Open A finished run in the console">
-<div class="sc-slot sc-run" data-capture-size="2100x1351">
-<div class="sc-bar"> <span>Research / Backtest result</span> <span class="sc-label">Illustration</span> </div>
-<div class="sc-mini" aria-hidden="true">
-<div class="sc-head"> <strong>Strategy name hidden</strong> <span>NIFTY · BT-024</span> </div>
-<div class="sc-metrics sc-metrics-four"> <div> <span>Net after charges</span> <strong class="sc-down">−₹12,842</strong> </div> <div> <span>Win rate</span> <strong>48.6%</strong> </div> <div> <span>Profit factor</span> <strong>0.94</strong> </div> <div> <span>Drawdown</span> <strong class="sc-down">−8.4%</strong> </div> </div>
-<div class="sc-run-layout"> <div class="sc-curve"> <div class="sc-head"> <strong>Net equity curve</strong> <span>After charges</span> </div> <svg viewBox="0 0 320 110" preserveAspectRatio="none"> <path class="sc-grid-line" d="M0 20H320M0 55H320M0 90H320"/> <path class="sc-equity-line" d="M0.0 10.0L5.1 11.7L10.2 14.8L15.2 15.7L20.3 18.0L25.4 18.8L30.5 18.7L35.6 19.0L40.6 18.7L45.7 16.6L50.8 16.5L55.9 20.2L61.0 24.9L66.0 24.5L71.1 25.9L76.2 25.7L81.3 27.9L86.3 27.9L91.4 28.8L96.5 26.9L101.6 31.2L106.7 35.9L111.7 37.3L116.8 35.1L121.9 33.9L127.0 32.5L132.1 34.8L137.1 39.7L142.2 38.1L147.3 36.0L152.4 37.7L157.5 37.2L162.5 38.6L167.6 36.7L172.7 37.8L177.8 37.1L182.9 40.9L187.9 39.2L193.0 40.2L198.1 44.7L203.2 43.7L208.3 45.5L213.3 50.4L218.4 54.2L223.5 54.9L228.6 58.9L233.7 59.3L238.7 62.6L243.8 64.3L248.9 69.3L254.0 68.7L259.0 67.8L264.1 72.1L269.2 75.6L274.3 80.2L279.4 81.6L284.4 82.3L289.5 87.2L294.6 89.4L299.7 87.2L304.8 87.1L309.8 90.2L314.9 94.3L320.0 98.0"/> </svg> </div> <div class="sc-account"> <strong>Paper account</strong> <span>Opening <b>₹2,50,000</b> </span> <span>Closing <b>₹2,37,158</b> </span> <span>Trades <b>214</b> </span> </div> </div>
-</div> <div class="sc-synthetic">Synthetic · not a quote</div>
+<div class="sc-slot sc-run">
+<div class="sc-bar"> <span>Research / Backtest result</span> <span class="sc-label">Capture</span> </div>
+<img class="sc-shot sc-shot--light" src="/screens/finished-run-light.webp" width="1100" height="688" loading="lazy" decoding="async" alt="A finished backtest: net P&L, win rate, profit factor, drawdown and the account panel (light theme)">
+<img class="sc-shot sc-shot--dark" src="/screens/finished-run-dark.webp" width="1100" height="688" loading="lazy" decoding="async" alt="A finished backtest: net P&L, win rate, profit factor, drawdown and the account panel (dark theme)">
+<div class="sc-synthetic">Local mock · invented day · not a quote</div>
 </div>
 <div class="sc-copy"> <h3>A finished run <span aria-hidden="true">↗</span> </h3> <p>Net P&amp;L, win rate, profit factor, drawdown — and the account panel, because a total says nothing about whether the account survived to collect it. Strategy name hidden.</p> </div>
 </a> </article>
