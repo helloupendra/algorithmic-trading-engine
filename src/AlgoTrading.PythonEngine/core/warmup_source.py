@@ -22,12 +22,61 @@ bars in hand there is nothing to wait for, so the broker gets one try.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional, Sequence
 
 from core.data_models import BarData
+from core.resolutions import is_daily, minutes_of
 from core.warmup_retry import WARMUP_AUTH_RETRY_ATTEMPTS, fetch_warmup_bars_with_retry, is_auth_failure
+
+#: Calendar days of history a warm-up loads when the strategy names no need.
+WARMUP_DAYS = 15
+#: Bars a live warm-up replays when the strategy names no need: 500 5-minute
+#: bars are six and a half sessions.
+LIVE_WARMUP_BARS = 500
+#: One NSE session, 09:15-15:30.
+SESSION_MINUTES = 375
+
+
+def required_warmup_bars(strategy: Any) -> Optional[int]:
+    """The bars a strategy says it needs before it evaluates (`warmup_bars`), or None."""
+    bars = getattr(strategy, "warmup_bars", None)
+    if callable(bars):
+        bars = bars()
+    return bars if isinstance(bars, int) and bars > 0 else None
+
+
+def warmup_days_for(strategy: Any, resolution_code: str, default: int = WARMUP_DAYS) -> int:
+    """
+    Calendar days of index history to load before the range so the strategy
+    has the bars it says it needs (`warmup_bars`) at the run's resolution.
+    Fifteen days hold ~1,100 5-minute bars but only ~11 daily ones, which left
+    a daily run of a 51-bar strategy with nothing to evaluate: the window has
+    to follow the bar length, not stay fixed. Never less than `default`.
+    The backtest and the live runner both size their warm-up with it.
+    """
+    bars = required_warmup_bars(strategy)
+    if bars is None:
+        return default
+    if is_daily(resolution_code):
+        sessions = bars
+    else:
+        sessions = math.ceil(bars / max(1, SESSION_MINUTES // max(1, minutes_of(resolution_code))))
+    # Sessions to calendar days: five sessions a week, plus room for holidays.
+    return max(default, math.ceil(sessions * 7 / 5 * 1.1) + 5)
+
+
+def live_warmup_count(strategy: Any) -> int:
+    """
+    How many of the newest warm-up bars a live runner replays: LIVE_WARMUP_BARS,
+    or more when the strategy needs more. TrendRider needs ten full sessions
+    before today (900 5-minute bars); cut at 500 it saw six and a half and
+    skipped every day for want of history.
+    """
+    return max(LIVE_WARMUP_BARS, required_warmup_bars(strategy) or 0)
+
 
 #: Fewer bars than this and the broker is still worth asking: most warming
 #: strategies need tens of bars (Ghost's pivots, an EMA's span) before they

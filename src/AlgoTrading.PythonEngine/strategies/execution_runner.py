@@ -56,7 +56,7 @@ from core.api_client import build_session, PlatformApiClient
 from core.feed_watchdog import assess_feed, session_market
 from core.tick_age import tick_age_seconds
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
-from core.warmup_source import load_warmup_bars
+from core.warmup_source import live_warmup_count, load_warmup_bars, warmup_days_for
 from typing import Callable, List, Dict, Any, Optional, Tuple
 
 from messaging.redis_subscriber import build_subscriber_from_env
@@ -963,7 +963,9 @@ if __name__ == "__main__":
                     # Warm-up up to today would feed this morning's real close
                     # into the state before the replay reaches the open.
                     end_time = datetime.fromisoformat(recap.warmup_end_date())
-                start_time = end_time - timedelta(days=15)
+                # Enough days for the bars the strategy says it needs
+                # (warmup_bars); fifteen when it names none.
+                start_time = end_time - timedelta(days=warmup_days_for(strategy, req.resolution))
 
                 warmup = load_warmup_bars(
                     api=api,
@@ -981,8 +983,9 @@ if __name__ == "__main__":
                 if bars and recap is not None:
                     bars = [b for b in bars if recap.before_session(b.timestamp_start)]
                 if bars:
-                    # Take the last 500 for warmup
-                    warmup_bars = bars[-500:] if len(bars) > 500 else bars
+                    # The newest 500, or more when the strategy needs more.
+                    keep = live_warmup_count(strategy)
+                    warmup_bars = bars[-keep:] if len(bars) > keep else bars
                     print(f"[{args.underlying}] Feeding {len(warmup_bars)} bars into strategy warmup...")
                     
                     cumulative_frames = []

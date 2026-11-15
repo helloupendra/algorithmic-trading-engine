@@ -30,7 +30,6 @@ with `[SKIP]` and listed in the summary's `skippedEntries`.
 
 from __future__ import annotations
 
-import math
 import sys
 import time
 import traceback
@@ -38,7 +37,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from core.resolutions import is_daily, minutes_of, to_strategy_resolution
+from core.resolutions import is_daily, to_strategy_resolution
+from core.warmup_source import WARMUP_DAYS, warmup_days_for  # noqa: F401  (warmup_days_for is re-exported)
 from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
 from strategies.contract_selector import describe_requirement, fallback_strike_step, format_strike
 from strategies.signal_utils import signal_to_request, stamp_signal_metadata
@@ -55,33 +55,10 @@ from backtest.trailing import TrailLevels
 
 SNAPSHOT_BATCH = 500
 PROGRESS_INTERVAL_SECONDS = 2.0
-WARMUP_DAYS = 15
 #: Minutes in one NSE session (09:15-15:30), to turn intraday bars into days.
-SESSION_MINUTES = 375
 MAX_LOGGED_SKIPS = 200
 #: India's volatility index, as the VIX filters read it.
 VIX_SYMBOL = "NSE:INDIAVIX-INDEX"
-
-
-def warmup_days_for(strategy: BaseStrategy, resolution_code: str, default: int = WARMUP_DAYS) -> int:
-    """
-    Calendar days of index history to load before the range so the strategy
-    has the bars it says it needs (`warmup_bars`) at the run's resolution.
-    Fifteen days hold ~1,100 5-minute bars but only ~11 daily ones, which left
-    a daily run of a 51-bar strategy with nothing to evaluate: the window has
-    to follow the bar length, not stay fixed. Never less than `default`.
-    """
-    bars = getattr(strategy, "warmup_bars", None)
-    if callable(bars):
-        bars = bars()
-    if not isinstance(bars, int) or bars <= 0:
-        return default
-    if is_daily(resolution_code):
-        sessions = bars
-    else:
-        sessions = math.ceil(bars / max(1, SESSION_MINUTES // max(1, minutes_of(resolution_code))))
-    # Sessions to calendar days: five sessions a week, plus room for holidays.
-    return max(default, math.ceil(sessions * 7 / 5 * 1.1) + 5)
 
 
 ProgressCallback = Callable[[Dict[str, Any]], None]

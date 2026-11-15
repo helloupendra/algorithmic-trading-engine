@@ -11,7 +11,8 @@ broker only to fill a gap, and never a blocking wait when local bars exist.
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from core.warmup_source import canonical_resolution, load_warmup_bars, local_bars
+from core.warmup_source import (LIVE_WARMUP_BARS, WARMUP_DAYS, canonical_resolution, live_warmup_count,
+                                 load_warmup_bars, local_bars, warmup_days_for)
 
 
 def rows(count, symbol="NSE:NIFTY50-INDEX", start="2026-09-15T03:45:00Z"):
@@ -119,3 +120,28 @@ class LoadTests(unittest.TestCase):
         out = self.load(FakeApi(rows(12)), FakeEngine(error=RuntimeError("history API 500")))
         self.assertEqual(("local store", 12), (out.source, len(out.bars)))
         self.assertIn("broker failed", out.detail)
+
+
+class WarmupSizeTest(unittest.TestCase):
+    """How much a live warm-up loads and replays, from what the strategy says it needs."""
+
+    class Needs:
+        def __init__(self, bars):
+            self.warmup_bars = bars
+
+    def test_a_strategy_that_names_no_need_keeps_the_old_window(self):
+        self.assertEqual(WARMUP_DAYS, warmup_days_for(object(), "5m"))
+        self.assertEqual(LIVE_WARMUP_BARS, live_warmup_count(object()))
+
+    def test_a_small_need_does_not_shrink_the_window(self):
+        self.assertEqual(WARMUP_DAYS, warmup_days_for(self.Needs(150), "5m"))
+        self.assertEqual(LIVE_WARMUP_BARS, live_warmup_count(self.Needs(150)))
+
+    def test_trend_rider_gets_its_twelve_sessions(self):
+        # Ten full sessions before today for its average range: 900 5-minute bars.
+        # Cut at 500 it saw six and a half sessions and skipped every live day.
+        from strategies.directional.trend_rider import TrendRiderStrategy
+        strategy = TrendRiderStrategy()
+        self.assertEqual(900, live_warmup_count(strategy))
+        days = warmup_days_for(strategy, "5m")
+        self.assertGreaterEqual(days * 5 / 7 - 2, 12)   # 12 sessions even with two holidays
