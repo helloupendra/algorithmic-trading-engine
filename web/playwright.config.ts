@@ -6,13 +6,9 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 45_000,
-  // The console loads a page's code when its route is first opened (App.tsx
-  // lazy). Against the dev server that first open also transforms the page's
-  // modules, which on a cold CI runner takes longer than the 5 s an
-  // expectation waits by default; the suite's first "Manual order" heading
-  // used to time out there (15 Nov 2026).
-  expect: { timeout: 15_000 },
-  reporter: [['list'], ['html', { open: 'never' }]],
+  // On CI the github reporter writes each failure as an annotation on the run,
+  // readable without downloading the HTML report.
+  reporter: process.env.CI ? [['github'], ['list'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
   use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: [
     { command: 'dotnet run --project ../tests/AlgoTrading.BrowserHost --no-launch-profile', url: 'http://127.0.0.1:5025/test/ready', timeout: 120_000, reuseExistingServer: false },
