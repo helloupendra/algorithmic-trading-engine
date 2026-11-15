@@ -6,42 +6,60 @@
  * not signed in, it carries the heading too.
  */
 
+import type { ReactNode } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { FORBIDDEN_PAGE, NOT_FOUND_LABEL } from '../lib/modules'
 import { useInShell } from '../components/shell/stripSlot'
 
-export function ForbiddenPage() {
+/* One card for both: the title, one sentence and the one way out, in the
+   console's panel language, so a wrong turn reads like any other page. */
+function Fallback({ title, children, action }: { title: string; children: ReactNode; action: ReactNode }) {
   const inShell = useInShell()
   return (
     <div className={inShell ? 'page' : 'page page--centered'}>
-      {!inShell && <h1 className="page__title">{FORBIDDEN_PAGE.label}</h1>}
-      <p className="page__subtitle">Your account does not have access to that area.</p>
-      <p>
-        <Link className="btn" to="/desk">
+      <section className="panel fallback" aria-labelledby="fallback-title">
+        <h1 className="fallback__title" id="fallback-title">
+          {title}
+        </h1>
+        <p className="fallback__text">{children}</p>
+        <div className="fallback__actions">{action}</div>
+      </section>
+    </div>
+  )
+}
+
+export function ForbiddenPage() {
+  return (
+    <Fallback
+      title={FORBIDDEN_PAGE.label}
+      action={
+        <Link className="btn btn--primary" to="/desk">
           Back to the Desk
         </Link>
-      </p>
-    </div>
+      }
+    >
+      Your account does not have access to that area. An admin grants modules on System → People; until then the Desk
+      and your Account are yours.
+    </Fallback>
   )
 }
 
 export function NotFoundPage() {
   const { isAuthenticated } = useAuth()
   const { pathname } = useLocation()
-  const inShell = useInShell()
   return (
-    <div className={inShell ? 'page' : 'page page--centered'}>
-      {!inShell && <h1 className="page__title">{NOT_FOUND_LABEL}</h1>}
-      <p className="page__subtitle">
-        There is no page at <code>{pathname}</code>.
-      </p>
-      <p>
+    <Fallback
+      title={NOT_FOUND_LABEL}
+      action={
         <Link className="btn btn--primary" to={isAuthenticated ? '/desk' : '/'}>
           {isAuthenticated ? 'Open the Desk' : 'Open the homepage'}
         </Link>
-      </p>
-    </div>
+      }
+    >
+      There is no page at <code>{pathname}</code>. The address may have moved; the sidebar lists every page you can
+      open.
+    </Fallback>
   )
 }
 
