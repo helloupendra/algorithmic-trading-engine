@@ -396,7 +396,10 @@ stop_daemon() {  # label, path
 DHAN_PRIMARY=0
 DHAN_WAIT_UNTIL="${MARKET_OPEN_DHAN_UNTIL:-0912}"
 
-dhan_state() {  # prints "ok|<hours of token left, or ?>" or "no|<reason>"
+# >>> dhan-state (also loaded by scripts/tests/market-open-dhan-plan.test.sh)
+# "plan|<reason>" means signed in, or able to sign in, but the data subscription has ended: no
+# sign-in or wait can fix that, so the morning goes straight to FYERS (16 Nov 2026: the plan lapsed).
+dhan_state() {  # prints "ok|<hours of token left, or ?>|<ends HH:MM>", "plan|<reason>" or "no|<reason>"
   api_get /api/Dhan/status 2>/dev/null | python3 -c '
 import json, sys
 from datetime import datetime, timedelta, timezone
@@ -405,8 +408,25 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     print("no|the API did not answer"); sys.exit(0)
+if d.get("notSubscribed"):
+    print("plan|Dhan says the Data API subscription is not active"); sys.exit(0)
 if not d.get("ok"):
     print("no|" + (d.get("error") or "not signed in")); sys.exit(0)
+plan = str(d.get("dataPlan") or "").strip()
+if plan and plan.lower() != "active":
+    print("plan|Dhan data plan is " + plan); sys.exit(0)
+validity = str(d.get("dataValidity") or "").strip().split(".")[0]
+if validity:
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
+        try:
+            ends = datetime.strptime(validity, fmt).replace(tzinfo=IST)
+        except Exception:
+            continue
+        if fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+            ends += timedelta(days=1)
+        if ends <= datetime.now(timezone.utc):
+            print("plan|Dhan data plan ended " + validity); sys.exit(0)
+        break
 until = None
 if d.get("signInExpiresUtc"):
     try:
@@ -426,6 +446,7 @@ else:
     print("ok|%.1f|%s" % ((until - datetime.now(timezone.utc)).total_seconds() / 3600, until.astimezone(IST).strftime("%H:%M")))
 ' 2>/dev/null || echo "no|could not read the answer"
 }
+# <<< dhan-state
 
 start_dhan_primary() {  # makes Dhan the day's feed: today's ids, a fresh feed, the chain recorder
   # Today's contracts (a new weekly expiry, new strikes) get their Dhan ids.
@@ -478,15 +499,19 @@ elif [ "$DRY_RUN" = 1 ]; then
 else
   say "checking Dhan ..."
   DHAN="$(dhan_state)"
-  if [ "${DHAN%%|*}" != ok ] && dhan_auto_configured; then
+  if [ "${DHAN%%|*}" = plan ]; then
+    # Not a sign-in problem: a code or a wait can't bring the data back, so neither is tried.
+    say "  ${DHAN#*|}; FYERS is today's feed"
+    notify "AlgoTrading" "${DHAN#*|}. FYERS is today's feed: sign in to FYERS at $CONSOLE before 09:15."
+  elif [ "${DHAN%%|*}" != ok ] && dhan_auto_configured; then
     say "  Dhan is not usable (${DHAN#*|}); signing in with the PIN and a TOTP code ..."
     say "  $(dhan_auto_sign_in)"
     DHAN="$(dhan_state)"
   fi
-  if [ "${DHAN%%|*}" != ok ]; then
+  if [ "${DHAN%%|*}" = no ]; then
     say "  Dhan is not usable: ${DHAN#*|}"
     notify "AlgoTrading" "Dhan is not signed in — press Connect on Connectors > Dhan before 09:12. FYERS is the fallback."
-    while [ "${DHAN%%|*}" != ok ] && [ "$(date +%H%M)" -lt "$DHAN_WAIT_UNTIL" ]; do
+    while [ "${DHAN%%|*}" = no ] && [ "$(date +%H%M)" -lt "$DHAN_WAIT_UNTIL" ]; do
       sleep 20
       DHAN="$(dhan_state)"
     done
@@ -513,6 +538,8 @@ else
     fi
 
     start_dhan_primary
+  elif [ "${DHAN%%|*}" = plan ]; then
+    warn "Dhan's data plan is not active — FYERS will be the feed today"
   else
     warn "no Dhan sign-in by $DHAN_WAIT_UNTIL IST — FYERS will be the feed today"
   fi
