@@ -36,16 +36,18 @@ count() {  # account -> runs the plan starts for it
   echo "$n"
 }
 # Fulcrum came off the plan on 10 Oct: the owner stopped it on 1 Oct, and its line kept deploying it.
+# coderforchange came off on 15 Nov: its runs loaded the box's CPU; admin alone trades the plan.
+check "the plan's accounts are admin alone"         "admin" "$(grep -i '^[[:space:]]*accounts:' config/morning-plan.txt | head -1 | cut -d: -f2- | xargs)"
 check "admin gets 10 runs"                          "10" "$(count admin)"
-check "coderforchange gets 10 runs"                 "10" "$(count coderforchange)"
 
 echo "the tally's expected runs (expected_runs), from the same parser"
 eval "$(sed -n '/^expected_runs() {/,/^}/p' scripts/market-open.sh)"
-ACCOUNTS="admin coderforchange" LOTS_DEFAULT=2 LEG_TARGET_PTS=20
+ACCOUNTS="$(grep -i '^[[:space:]]*accounts:' config/morning-plan.txt | head -1 | cut -d: -f2-)" LOTS_DEFAULT=2 LEG_TARGET_PTS=20
 EXPECTED="$(expected_runs)"
-check "20 planned runs in all"                      "20" "$(printf '%s\n' "$EXPECTED" | grep -c .)"
+check "10 planned runs in all"                      "10" "$(printf '%s\n' "$EXPECTED" | grep -c .)"
 check "one line per account, strategy, underlying"  "0"  "$(printf '%s\n' "$EXPECTED" | grep -vc '^[^|]*|[^|]*|[^|]*$')"
 check "no Fulcrum in any account (stopped 1 Oct)"   "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '|Fulcrum|')"
-check "crude in both accounts"                      "2"  "$(printf '%s\n' "$EXPECTED" | grep -c '|CrudeMomentum|CRUDEOIL$')"
+check "no run for coderforchange (off 15 Nov)"      "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '^coderforchange|')"
+check "crude in admin"                              "1"  "$(printf '%s\n' "$EXPECTED" | grep -c '^admin|CrudeMomentum|CRUDEOIL$')"
 
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

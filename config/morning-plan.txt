@@ -19,8 +19,11 @@
 # stayed here, so the 08:45 job deployed it again on each of 5-9 Oct: 15 runs,
 # 7,474 trades, Rs 7.6 lakh of charges and Rs 11.8 lakh net lost. A strategy the
 # owner stops comes off this file the same day.
+#
+# 2026-11-15: coderforchange is off the plan, on the owner's word: its runs load
+# the box's CPU. From 16 Nov only admin trades the plan: 10 runs.
 
-accounts: admin coderforchange
+accounts: admin
 
 GhostTangentCrossings  BANKNIFTY,NIFTY,SENSEX  2
 ChainFlowBuy           BANKNIFTY,NIFTY,SENSEX  2
