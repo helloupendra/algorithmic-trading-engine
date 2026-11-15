@@ -16,7 +16,7 @@
  * guards the admin pages beneath it.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useLiveFeed } from '../lib/live'
@@ -24,7 +24,9 @@ import { ACCOUNT_PAGE, accessFor, allows, locate, nameRoute, navFor, routeTitle,
 import type { NavPage, NavWorkspace } from '../lib/modules'
 import { isPaletteShortcut } from '../lib/palette'
 import { installScrollCues } from '../lib/scrollCues'
+import { ChunkErrorBoundary } from './ChunkErrorBoundary'
 import { IconLogo, IconSearch } from './icons'
+import { Loading } from './ui'
 import { StatusItems } from './shell/StatusItems'
 import { useIstDate } from './shell/useIstDate'
 import { CommandPalette } from './shell/CommandPalette'
@@ -218,7 +220,15 @@ export function AppLayout() {
         </div>
 
         <main className="shell__main">
-          <Outlet context={{ stripSlot } satisfies ShellOutlet} />
+          {/* A page loads when its route is first opened (App.tsx lazy); the
+              shell stays put and the page area says so meanwhile. A chunk that
+              will not load (a deploy since this tab opened) offers a reload;
+              the key clears that on the next navigation. */}
+          <ChunkErrorBoundary key={pathname} what="this page">
+            <Suspense fallback={<Loading label="Opening the page…" />}>
+              <Outlet context={{ stripSlot } satisfies ShellOutlet} />
+            </Suspense>
+          </ChunkErrorBoundary>
         </main>
       </div>
 
