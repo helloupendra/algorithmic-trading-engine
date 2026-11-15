@@ -232,6 +232,11 @@ jobs:
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
+      # Built here, not inside Playwright's web server: a compile error shows as
+      # its own failed step with the compiler's message, and the build's time
+      # stays out of the server's start-up limit.
+      - name: Build the browser test host
+        run: dotnet build tests/AlgoTrading.BrowserHost
       - run: npx playwright test
         working-directory: web
       - uses: actions/upload-artifact@v4
