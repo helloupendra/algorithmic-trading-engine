@@ -75,10 +75,16 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
         // 17th and the future on the 21st, and for those four days the runner
         // picked the 21st, found no CE or PE at any strike, and ran without
         // ever being able to trade.
+        // A backtest of an earlier year needs the expiries of that year. Contracts
+        // that expired after the master was first imported are still in it, only
+        // disabled: listing enabled rows alone, a replay after the last stored
+        // expired-options history (16 Sep 2026 for NIFTY) found no expiry from
+        // that day to the next live one and priced every day on the wrong one.
+        // GetExactContractAsync already reads disabled rows for history.
         var rows = await _dbContext.Instruments
             .AsNoTracking()
             .Where(x =>
-                x.IsEnabled &&
+                (x.IsEnabled || includeHistory) &&
                 x.Underlying == underlying &&
                 x.ExpiryDate.HasValue &&
                 (x.InstrumentType == "CE" || x.InstrumentType == "PE"))
@@ -87,8 +93,7 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
             .OrderBy(x => x)
             .ToListAsync(cancellationToken);
 
-        // A backtest of an earlier year needs the expiries of that year, which the
-        // master disabled or never had.
+        // Expiries the master never had come from the stored expired-options history.
         if (includeHistory && _optionHistory is not null)
         {
             rows = rows.Concat(await _optionHistory.ExpiriesAsync(underlying, cancellationToken))
