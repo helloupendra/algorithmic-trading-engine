@@ -28,11 +28,12 @@ docs/strategies/TrendRiderV2.md, Limitations.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List
 
 from strategies.base_strategy import BarFrame, StrategyInput, StrategySignal
-from strategies.directional.trend_rider import BAR_MINUTES, TrendRiderStrategy, _compact, _ist
+from strategies.directional.trend_rider import TrendRiderStrategy, _compact
+from strategies.index_exits import IndexExitRules
 
 
 class TrendRiderV2Strategy(TrendRiderStrategy):
@@ -73,51 +74,12 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
             raise ValueError("index_stop_adr, trail_arm_adr and trail_giveback_adr cannot be negative")
         if self.trail_arm_adr and not self.trail_giveback_adr:
             raise ValueError("trail_giveback_adr must be above 0 when the trailing exit is on")
-
-    # ------------------------------------------------------------------ run ---
-    def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
-        exit_now = self._guard(state, inp)
-        if exit_now is not None:
-            return [exit_now]
-        return super().on_bar(state, inp)
-
-    def _guard(self, state: Dict[str, Any], inp: StrategyInput) -> Optional[StrategySignal]:
-        """The index stop and the index trail, on every call: live, every tick of the spot."""
-        position = state.get("position")
-        if position is None or position.get("entry_spot") is None:
-            return None
-        meta = inp.metadata or {}
-        if meta.get("source") == "warmup":
-            return None
-        open_groups = meta.get("open_groups")
-        if open_groups is not None and position["group_id"] not in open_groups:
-            return None                     # the run closed it: TrendRider's _sync frees the strategy
-        spot = float(inp.spot_price or 0)
-        if spot <= 0:
-            return None
-        buy = position["direction"] == "BUY"
-        entry, adr = float(position["entry_spot"]), float(position["adr"])
-        favour = spot - entry if buy else entry - spot
-        position["best"] = max(float(position.get("best") or 0.0), favour)
-        name = inp.underlying or "the index"
-        reason = None
-        if self.index_stop_adr and -favour >= self.index_stop_adr * adr:
-            reason = (f"Trend Rider V2 stop: {name} {spot:g} is {-favour:.0f} points against the entry {entry:g}, "
-                      f"past {self.index_stop_adr:g} x the {adr:.0f}-point average range")
-        elif (self.trail_arm_adr and position["best"] >= self.trail_arm_adr * adr
-              and position["best"] - favour >= self.trail_giveback_adr * adr):
-            reason = (f"Trend Rider V2 trail: {name} {spot:g} gave back {position['best'] - favour:.0f} points from its "
-                      f"best ({position['best']:.0f} in favour), past {self.trail_giveback_adr:g} x the "
-                      f"{adr:.0f}-point average range")
-        if reason is None:
-            return None
-        state["position"] = None
-        now = _ist(inp.timestamp_utc)
-        if now is not None:
-            # No new entry from the candle this exit falls in: the same wait TrendRider keeps after its own exit.
-            start = now.replace(minute=now.minute - now.minute % BAR_MINUTES, second=0, microsecond=0)
-            state["busy_until"] = (start + timedelta(minutes=BAR_MINUTES)).strftime("%H:%M")
-        return self._close(position, inp, reason)
+        # V2's own stop and trail, with anything the run's "index_exits" sets on top (it wins where both speak).
+        rules = IndexExitRules(stop_adr=self.index_stop_adr, trail_arm_adr=self.trail_arm_adr,
+                               trail_giveback_adr=self.trail_giveback_adr)
+        if self.index_exits is not None:
+            rules = rules.merged(**{k: v for k, v in self.index_exits.__dict__.items() if v})
+        self.index_exits = rules if rules.any_rule else None
 
     # ---------------------------------------------------------------- entry ---
     def _enter(self, state: Dict[str, Any], inp: StrategyInput, at: datetime, bar: BarFrame,
@@ -127,8 +89,7 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
         if signals and state.get("position") is not None:
             ctx = signals[0].metadata.get("trend_rider") or {}
             state["position"].update(entry_spot=float(bar.close), adr=float(ctx["adr"]), best=0.0)
-            ctx.update(entry_spot=float(bar.close), index_stop_adr=self.index_stop_adr,
-                       trail_arm_adr=self.trail_arm_adr, trail_giveback_adr=self.trail_giveback_adr)
+            ctx.update(entry_spot=float(bar.close), index_exits=self.index_exits.describe() if self.index_exits else {})
         return signals
 
     def _enter_prev_day(self, state: Dict[str, Any], inp: StrategyInput, at: datetime, bar: BarFrame,

@@ -31,24 +31,37 @@ targetPoints. The run's end-of-day square-off closes what is still open.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 from strategies.base_strategy import (BarFrame, BaseStrategy, ContractRequirement, DataRequirement, StrategyInput,
                                       StrategySignal)
+from strategies.index_exits import IndexExitRules
 
 IST = timezone(timedelta(hours=5, minutes=30))
+#: The default candle; `timeframe` picks another (TIMEFRAMES).
 BAR_MINUTES = 5
-SESSION_FIRST, SESSION_LAST = "09:15", "15:25"
-#: A remembered session counts towards the average range only when this many of its 75 candles
-#: were seen; a window that starts mid-day would otherwise report a range that never happened.
+TIMEFRAMES = (1, 2, 3, 5, 10, 15)
+SESSION_FIRST, SESSION_CLOSE = "09:15", "15:30"
+SESSION_LAST = "15:25"          # the last 5-minute candle; other timeframes compute their own
+SESSION_MINUTES = 375
+#: A remembered session counts towards the average range only when this share of its candles (60 of 75 at
+#: 5 minutes) were seen; a window that starts mid-day would otherwise report a range that never happened.
+FULL_SESSION_SHARE = 0.8
 FULL_SESSION_BARS = 60
 
 
-def _ist(stamp: Any) -> Optional[datetime]:
+@lru_cache(maxsize=65536)
+def _ist_text(stamp: str) -> Optional[datetime]:
     try:
-        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(IST)
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(IST)
     except ValueError:
         return None
+
+
+def _ist(stamp: Any) -> Optional[datetime]:
+    # Cached: every call re-reads the whole window of candles, and parsing their stamps was most of its cost.
+    return _ist_text(str(stamp))
 
 
 def _compact(stamp: Any) -> str:
@@ -88,6 +101,10 @@ class TrendRiderStrategy(BaseStrategy):
         "max_gap_against_pct": 0.2,
         # Only trade after a session narrower than this fraction of the average range; 0 turns it off.
         "max_prev_range": 0.7,
+        # The candle the rules read: 1m, 2m, 3m, 5m, 10m or 15m.
+        "timeframe": "5m",
+        # Exits on the index (strategies/index_exits.py): none by default.
+        "index_exits": None,
     }
     # Twelve sessions of 5-minute candles: the average range needs ten complete ones before today.
     warmup_bars = 75 * 12
@@ -96,8 +113,19 @@ class TrendRiderStrategy(BaseStrategy):
         params = dict(params or {})
         p = {**self.default_params, **{k: v for k, v in params.items() if k in self.default_params}}
         self.params = {**params, **p}
+        tf = str(p.get("timeframe") or "5m").strip().lower().rstrip("m")
+        if not tf.isdigit() or int(tf) not in TIMEFRAMES:
+            raise ValueError(f"timeframe must be one of {', '.join(f'{m}m' for m in TIMEFRAMES)}")
+        self.bar_minutes = int(tf)
+        self.resolution = f"{self.bar_minutes}m"
+        self.session_last = (datetime(2000, 1, 1, 15, 30) - timedelta(minutes=self.bar_minutes)).strftime("%H:%M")
+        self.full_session_bars = int(FULL_SESSION_SHARE * SESSION_MINUTES / self.bar_minutes)
+        self.warmup_bars = (SESSION_MINUTES // self.bar_minutes) * 12
+        if int(p["or_minutes"]) % self.bar_minutes:
+            raise ValueError(f"or_minutes must be a whole number of {self.resolution} candles")
+        self.index_exits = IndexExitRules.parse(p.get("index_exits"))
         try:
-            self.or_bars = int(p["or_minutes"]) // BAR_MINUTES
+            self.or_bars = int(p["or_minutes"]) // self.bar_minutes
             self.max_entries = int(p["max_entries"])
             self.adr_days = int(p["adr_days"])
             self.skip_after_wide = float(p["skip_after_wide"])
@@ -114,9 +142,9 @@ class TrendRiderStrategy(BaseStrategy):
             raise ValueError("itm_steps must be between 0 (ATM) and 5")
         self.lots = self.lots_from(params, self.default_lots)
 
-    @classmethod
-    def get_data_requirements(cls) -> List[DataRequirement]:
-        return [DataRequirement(symbol_type="index", resolution="5m")]
+    def get_data_requirements(self=None) -> List[DataRequirement]:
+        # The catalogue asks the class; the runners ask a configured instance, which may read another timeframe.
+        return [DataRequirement(symbol_type="index", resolution=getattr(self, "resolution", None) or "5m")]
 
     @classmethod
     def get_contract_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[ContractRequirement]:
@@ -149,11 +177,11 @@ class TrendRiderStrategy(BaseStrategy):
         """Session candles that have closed: a replay hands only those, live hands a forming one too."""
         now = None if inp.mode == "OfflineReplay" else _ist(inp.timestamp_utc)
         out = []
-        for frame in (inp.bars.get("5m") or {}).get("index") or []:
+        for frame in (inp.bars.get(self.resolution) or {}).get("index") or []:
             at = _ist(getattr(frame, "timestamp_utc", None))
-            if at is None or not SESSION_FIRST <= at.strftime("%H:%M") <= SESSION_LAST:
+            if at is None or not SESSION_FIRST <= at.strftime("%H:%M") <= self.session_last:
                 continue
-            if now is not None and at + timedelta(minutes=BAR_MINUTES) > now:
+            if now is not None and at + timedelta(minutes=self.bar_minutes) > now:
                 continue
             out.append((at, frame))
         return out
@@ -178,7 +206,7 @@ class TrendRiderStrategy(BaseStrategy):
     def _context(self, state: Dict[str, Any], today: str) -> Tuple[Optional[float], Optional[List[float]]]:
         """The average range of the last `adr_days` complete sessions, and yesterday's session."""
         past = [d for d in sorted(state["days"]) if d < today]
-        full = [d for d in past if state["days"][d][4] >= FULL_SESSION_BARS][-self.adr_days:]
+        full = [d for d in past if state["days"][d][4] >= self.full_session_bars][-self.adr_days:]
         if len(full) < self.adr_days or not past:
             return None, None
         adr = sum(state["days"][d][1] - state["days"][d][2] for d in full) / len(full)
@@ -189,6 +217,9 @@ class TrendRiderStrategy(BaseStrategy):
 
     # ------------------------------------------------------------------ run ---
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
+        exit_now = self._tick_exit(state, inp)
+        if exit_now is not None:
+            return [exit_now]
         closed = self._closed(inp)
         if not closed:
             return []
@@ -207,16 +238,45 @@ class TrendRiderStrategy(BaseStrategy):
         day = [b for a, b in closed if a.date().isoformat() == today]
         day_open = day[0].open
         position = state["position"]
+        if position is not None and self.index_exits is not None and self.index_exits.bar_rules:
+            why = self.index_exits.check_bar(position, [b for _, b in closed[-300:]], inp.underlying or "the index")
+            if why is not None:
+                state["position"] = None
+                state["busy_until"] = (at + timedelta(minutes=self.bar_minutes)).strftime("%H:%M")
+                return [self._close(position, inp, f"{self.name} {why}")]
         if position is not None:
             against = bar.close < day_open if position["direction"] == "BUY" else bar.close > day_open
             if not against:
                 return []
             state["position"] = None
-            state["busy_until"] = (at + timedelta(minutes=BAR_MINUTES)).strftime("%H:%M")
+            state["busy_until"] = (at + timedelta(minutes=self.bar_minutes)).strftime("%H:%M")
             side = "call" if position["direction"] == "BUY" else "put"
             return [self._close(position, inp, f"NIFTY closed {bar.close:g} back across the day's open {day_open:g}: "
                                                f"the trend the {side} rode has given way")]
         return self._enter(state, inp, at, bar, day, day_open)
+
+    def _tick_exit(self, state: Dict[str, Any], inp: StrategyInput) -> Optional[StrategySignal]:
+        """The index stop, trail and time exit (index_exits), on every call: live, every tick of the spot."""
+        rules = self.index_exits
+        position = state.get("position")
+        if rules is None or position is None or position.get("entry_spot") is None:
+            return None
+        meta = inp.metadata or {}
+        if meta.get("source") == "warmup":
+            return None
+        open_groups = meta.get("open_groups")
+        if open_groups is not None and position["group_id"] not in open_groups:
+            return None                     # the run closed it; _sync frees the strategy on the next candle
+        now = _ist(inp.timestamp_utc)
+        why = rules.check_tick(position, float(inp.spot_price or 0), now, inp.underlying or "the index")
+        if why is None:
+            return None
+        state["position"] = None
+        if now is not None:
+            # No new entry from the candle this exit falls in: the same wait as after the strategy's own exit.
+            start = now.replace(minute=now.minute - now.minute % self.bar_minutes, second=0, microsecond=0)
+            state["busy_until"] = (start + timedelta(minutes=self.bar_minutes)).strftime("%H:%M")
+        return self._close(position, inp, f"{self.name} {why}")
 
     def _sync(self, state: Dict[str, Any], inp: StrategyInput, at: datetime) -> None:
         """A position the run closed (its stop-loss, the square-off) frees the strategy."""
@@ -226,7 +286,7 @@ class TrendRiderStrategy(BaseStrategy):
         open_groups = (inp.metadata or {}).get("open_groups")
         if open_groups is not None and position["group_id"] not in open_groups:
             state["position"] = None
-            state["busy_until"] = (at + timedelta(minutes=BAR_MINUTES)).strftime("%H:%M")
+            state["busy_until"] = (at + timedelta(minutes=self.bar_minutes)).strftime("%H:%M")
 
     def _enter(self, state: Dict[str, Any], inp: StrategyInput, at: datetime, bar: BarFrame,
                day: List[BarFrame], day_open: float) -> List[StrategySignal]:
@@ -278,7 +338,8 @@ class TrendRiderStrategy(BaseStrategy):
             return []
         state["opened"] += 1
         group_id = f"TR_{_compact(inp.timestamp_utc)}_{state['opened']:03d}"
-        state["position"] = {"group_id": group_id, "direction": side, "symbol": contract.symbol, "day": at.date().isoformat()}
+        state["position"] = {"group_id": group_id, "direction": side, "symbol": contract.symbol, "day": at.date().isoformat(),
+                             "entry_spot": float(bar.close), "adr": float(adr), "best": 0.0}
         state["count"] += 1
         state["last_side"] = side
         state["extreme"] = hi_lo

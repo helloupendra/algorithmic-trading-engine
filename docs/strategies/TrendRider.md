@@ -171,6 +171,8 @@ In order of precedence, the first that fires wins:
 | `min_range_frac` | 0.40 | Today's range so far must be at least this × the average | Fewer, later entries | Takes breaks of a still-quiet day |
 | `max_gap_against_pct` | 0.2 | Largest gap against the trade, in % | Fights bigger gaps | Refuses smaller ones |
 | `max_prev_range` | 0.7 | Trade only after a session narrower than this × the average; 0 turns the rule off | Trades more days (see Limitations: worse) | Fewer days |
+| `timeframe` | `"5m"` | The candle every rule reads: `1m`, `2m`, `3m`, `5m`, `10m` or `15m`. `or_minutes` must be a whole number of candles; live, the API builds any of them from 1-minute bars | Fewer, slower signals | More, noisier signals |
+| `index_exits` | none | Exits on the index, from `strategies/index_exits.py`: `stop_adr`, `trail_arm_adr` + `trail_giveback_adr`, `supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`. Stop, trail and time act on every tick; the candle rules on closed candles | — | — |
 | `lots` | 1 (`default_lots`) | Lots per leg | — | — |
 
 ## Worked example

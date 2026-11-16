@@ -87,6 +87,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 | `index_stop_adr` | 0.5 | Index move against the entry, × ADR, that sells; 0 turns it off | Fewer stops, bigger losses | Tighter; more whipsaw exits |
 | `trail_arm_adr` | 0.5 | Move in favour, × ADR, after which the trail is live; 0 turns it off | Protects only bigger runs | Protects smaller runs, sells more trends early |
 | `trail_giveback_adr` | 0.35 | Give-back from the best, × ADR, that sells once armed | Holds through deeper pullbacks | Sells sooner |
+| `index_exits` | none | More index exits on top of the three above (`supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`; see TrendRider). A `stop_adr` or trail set here replaces V2's own | — | — |
 
 ## Worked example
 
