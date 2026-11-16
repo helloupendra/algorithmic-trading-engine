@@ -22,10 +22,16 @@
 #
 # 2026-11-15: coderforchange is off the plan, on the owner's word: its runs load
 # the box's CPU. From 16 Nov only admin trades the plan: 10 runs.
+#
+# 2026-11-17: on the owner's word (16 Nov night), admin runs only Ghost, Ghost V2,
+# TrendRider and Crude; ChainFlowBuy and SmcStructureBreak are off, and no other
+# account runs anything. Still 10 runs. TrendRider has no leg target ("-"): it holds a
+# trend until a candle closes back across the day's open or 15:15, and the job's
+# 20-point default would close its big days in the first minutes.
 
 accounts: admin
 
-GhostTangentCrossings  BANKNIFTY,NIFTY,SENSEX  2
-ChainFlowBuy           BANKNIFTY,NIFTY,SENSEX  2
-SmcStructureBreak      BANKNIFTY,NIFTY,SENSEX  2
-CrudeMomentum          CRUDEOIL                2  -
+GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
+GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
+TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
+CrudeMomentum            CRUDEOIL                2  -

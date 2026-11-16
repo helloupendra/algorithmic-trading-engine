@@ -49,5 +49,9 @@ check "one line per account, strategy, underlying"  "0"  "$(printf '%s\n' "$EXPE
 check "no Fulcrum in any account (stopped 1 Oct)"   "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '|Fulcrum|')"
 check "no run for coderforchange (off 15 Nov)"      "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '^coderforchange|')"
 check "crude in admin"                              "1"  "$(printf '%s\n' "$EXPECTED" | grep -c '^admin|CrudeMomentum|CRUDEOIL$')"
+# 17 Nov, the owner: admin runs Ghost, Ghost V2, TrendRider and Crude, nothing else.
+check "only the four strategies the owner named"    "CrudeMomentum GhostTangentCrossings GhostTangentCrossingsV2 TrendRider" \
+  "$(printf '%s\n' "$EXPECTED" | cut -d'|' -f2 | sort -u | xargs)"
+check "TrendRider has no leg target"                "-" "$(parse_plan_line "$(grep '^TrendRider ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
 
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
