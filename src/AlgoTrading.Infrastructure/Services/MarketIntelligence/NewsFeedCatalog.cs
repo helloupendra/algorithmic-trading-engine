@@ -131,6 +131,16 @@ public static class NewsFeedCatalog
         ("global", new("Federal Reserve · Press releases", "https://www.federalreserve.gov/feeds/press_all.xml", Utc)),
         ("global", new("ECB · Press", "https://www.ecb.europa.eu/rss/press.html", Utc)),
         ("global", new("BBC World", "https://feeds.bbci.co.uk/news/world/rss.xml", Utc)),
+        // Added 16 Nov 2026 (owner: "duniya mein itna news hai, sab ko tally karo"), each checked that day: it answered,
+        // carried current items, and is the publisher's own feed. More voices on one story are the Market Impact
+        // Analyst's tally of how widely it is told; the world desks carry the geopolitics (a war, a ceasefire) that
+        // moved NIFTY most in Oct-Nov 2026 and that the market sections write up late.
+        ("global", new("CNBC · World markets", "https://www.cnbc.com/id/100727362/device/rss/rss.html", Utc)),
+        ("global", new("New York Times · Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", Utc)),
+        ("global", new("New York Times · World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", Utc)),
+        ("global", new("The Guardian · Business", "https://www.theguardian.com/uk/business/rss", Utc)),
+        ("global", new("The Guardian · World", "https://www.theguardian.com/world/rss", Utc)),
+        ("global", new("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml", Utc)),
 
         ("commodities", new("OilPrice.com", "https://oilprice.com/rss/main", Utc)),
     ];

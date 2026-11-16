@@ -40,6 +40,12 @@ public sealed class IraMarks
     /// </summary>
     public IraCursor News { get; set; } = new();
 
+    /// <summary>The stories whose tally update went (the Market Impact report id, and when), kept a day.</summary>
+    public Dictionary<string, DateTime> NewsTallied { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>The IST day (yyyy-MM-dd) the last mausam card went.</summary>
+    public string? Mausam { get; set; }
+
     /// <summary>The IST day (yyyy-MM-dd) the last morning briefing went.</summary>
     public string? Morning { get; set; }
 
@@ -370,6 +376,25 @@ public sealed class IraAlertService(
                 }
             }
 
+            // The mausam card (owner, 16 Nov 2026): once on each NSE trading day at MausamAt, to the news channel, or to the
+            // owners while none is set. Not counted against their hour, like the briefings.
+            if (alerts.News && TimeOnly.TryParseExact(alerts.MausamAt?.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var mausamAt)
+                && (newsChannel is not null || listening.Count > 0))
+            {
+                var mausamSession = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
+                var mausamDay = IstTime.DateOf(nowUtc);
+                string mausamText = mausamDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                var mausamDue = IstTime.FromIst(mausamDay.ToDateTime(mausamAt));
+                if (mausamSession.IsTradingDay && marks.Mausam != mausamText && nowUtc >= mausamDue && nowUtc < mausamDue + BriefingWindow
+                    && await BriefingAsync("mausam", () => desk.MausamAsync(nowUtc, LastCloseUtc(nowUtc), cancellationToken),
+                        m => IraAlertText.Mausam(m, mausamDay), cancellationToken) is { } card)
+                {
+                    marks.Mausam = mausamText;
+                    if (newsChannel is long channel) outbox.Add(new Outgoing(channel, NewsChannelWho, "mausam", card));
+                    else outbox.AddRange(listening.Select(o => new Outgoing(o, "mausam", card)));
+                }
+            }
+
             // Kept before anything is sent: a crash between the two loses a message, and nothing is told twice. A quiet
             // minute that moved nothing writes nothing.
             if (marks.ToJson() != stored) await marks.SaveAsync(db, nowUtc, cancellationToken);
@@ -448,6 +473,19 @@ public sealed class IraAlertService(
                 // Voice or spoken replies switched off, or Polly paused after a refusal: text only.
                 return null;
         }
+    }
+
+    /// <summary>The close of the last NSE trading day before today's: where the mausam card starts counting the night's news.</summary>
+    private DateTime LastCloseUtc(DateTime nowUtc)
+    {
+        var day = IstTime.DateOf(nowUtc);
+        for (int back = 1; back <= 10; back++)
+        {
+            var info = sessions.GetSessionInfo(IstTime.FromIst(day.AddDays(-back).ToDateTime(new TimeOnly(12, 0))), "NSE", "FO");
+            if (info.IsTradingDay) return info.SessionCloseUtc;
+        }
+
+        return nowUtc.AddHours(-18);
     }
 
     /// <summary><paramref name="text"/> with what was folded for this owner, which is then cleared.</summary>

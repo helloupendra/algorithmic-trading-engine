@@ -731,6 +731,28 @@ world's markets mean for India's.
   - `repeatOf` names one of the stories the model was shown.
 
   An invalid record is never told.
+- **Stocks and sectors** (owner, 16 Nov 2026: "kaunse stocks pe asar padega"): for a 2 or a 3, up to 5 NSE stocks and
+  any sectors (banks, financials, it, oil-gas, auto, pharma, fmcg, metals, realty, power, telecom, aviation,
+  capital-goods, cement, chemicals, defence, media), each with an effect (up, down, mixed).
+  - A stock is kept only when the instrument master lists `NSE:<symbol>-EQ`.
+  - A stock or sector the check cannot place is dropped quietly; the record is not made invalid for it.
+  - The alert names them: "Stocks: ONGC neeche, INDIGO upar. Sector: aviation upar."
+- **The tally** (owner, 16 Nov 2026: "sab ko tally karo"):
+  - Every item, whatever its impact, names the told story it repeats (`repeatOf`).
+  - When `Ai:Voice:Alerts:NewsTallyAt` (4) publishers carry a big story within six hours, Ira posts one update: "Update:
+    yeh khabar ab 4 jagah hai (Reuters, CNBC, Mint, Al Jazeera): …".
+  - Feeds of one publisher ("CNBC · Asia", "CNBC · World markets") count once.
+  - 0 switches the update off.
+- **The mausam card**, at `Ai:Voice:Alerts:MausamAt` (09:05 IST) on NSE trading days, to the news channel (or the owners
+  while none is set). Empty switches it off. It holds, in this order:
+  - **Today's call:** TEZ, AAM or SHAANT, from NIFTY's range forecast against its baseline (≥ 1.15× is TEZ, ≤ 0.85×
+    SHAANT). The forecast's median and baseline, and the trend-day chance against its base rate.
+  - **The one strategy line the tests support:** TrendRider at its defaults. Switching by regime failed its
+    pre-registered test (private research, 16 Nov).
+  - **The day's top three events,** with a suggestion (not tested) to keep new entries away from them.
+  - **The night's big news:** stories rated big since the last close, not repeats, with the biggest one's line.
+- **The world desks** (16 Nov 2026): the recorder also reads CNBC World markets, the New York Times (Business, World),
+  the Guardian (Business, World) and Al Jazeera, each checked that day to answer with current items.
 - **Told** by Ira, any hour ([Ira speaks first](#ira-speaks-first)).
 - **Chat**: on AI → Assistant. It reads `get_news`, `get_quotes` and `get_forecasts`, and answers in Hinglish when
   spoken to in Hinglish.

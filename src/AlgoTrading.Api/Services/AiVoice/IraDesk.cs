@@ -18,6 +18,17 @@ namespace AlgoTrading.Api.Services.AiVoice;
 /// <param name="Key">The record it came from: <c>decision:118</c>, <c>signal:40512</c>, <c>incident:206</c>, <c>compliance:3</c>, <c>news:9012</c>.</param>
 public sealed record IraEvent(string Kind, string Key, DateTime AtUtc, string Text);
 
+/// <summary>The mausam card's facts: NIFTY's range and trend forecasts for the day against their baselines, the day's events, the night's big news.</summary>
+/// <param name="RangeMedian">The range model's median for NIFTY's high − low, % of the previous close; null with no forecast.</param>
+/// <param name="RangeBaseline">The baseline's (the last 20 sessions' mean range).</param>
+/// <param name="TrendP">The chance of a trend day; null with no forecast.</param>
+/// <param name="TrendBaseline">The trailing base rate of trend days.</param>
+/// <param name="Events">The day's listed events, most important first: (HH:mm IST or empty, title).</param>
+/// <param name="BigNews">Market Impact stories rated big since the last close, repeats not counted.</param>
+/// <param name="TopNews">The biggest of them, in its Hinglish line.</param>
+public sealed record IraMausam(decimal? RangeMedian, decimal? RangeBaseline, double? TrendP, double? TrendBaseline,
+    IReadOnlyList<(string Time, string Title)> Events, int BigNews, string? TopNews);
+
 /// <summary>The market as a news alert states it: today's change of NIFTY and of crude oil, each only while it is live.</summary>
 /// <param name="NiftyPercent">NIFTY 50's change on the day, in per cent; null when its quote is not fresh.</param>
 /// <param name="CrudePercent">MCX crude oil's change on the day; null when not fresh.</param>
@@ -64,6 +75,9 @@ public interface IIraDesk
 
     Task<IraMorning> MorningAsync(DateTime nowUtc, CancellationToken cancellationToken);
 
+    /// <summary>The mausam card's facts for the session of <paramref name="nowUtc"/>, the night's news counted from <paramref name="sinceUtc"/>.</summary>
+    Task<IraMausam> MausamAsync(DateTime nowUtc, DateTime sinceUtc, CancellationToken cancellationToken);
+
     Task<IraClose> CloseAsync(DateTime nowUtc, CancellationToken cancellationToken);
 }
 
@@ -96,7 +110,8 @@ public sealed class IraDesk(
     TodayBuilder? today = null,
     DeskPlanBuilder? plan = null,
     IMarketPulseService? pulse = null,
-    IOptionsMonitor<AiSettings>? settings = null) : IIraDesk
+    IOptionsMonitor<AiSettings>? settings = null,
+    AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsQueries? factors = null) : IIraDesk
 {
     /// <summary>Rows read from a source in one pass at most; the rest wait for the next minute.</summary>
     public const int Batch = 200;
@@ -141,8 +156,96 @@ public sealed class IraDesk(
         events.AddRange(await IncidentsAsync(marks.Incidents, fresh, cancellationToken));
         events.AddRange(await ComplianceAsync(marks.Compliance, fresh, cancellationToken));
         events.AddRange(await NewsAsync(marks.News, nowUtc, fresh, cancellationToken));
+        events.AddRange(await NewsTallyAsync(marks, nowUtc, cancellationToken));
         return events.OrderBy(e => e.AtUtc).ThenBy(e => e.Key, StringComparer.Ordinal).ToList();
     }
+
+    /// <summary>
+    /// The tally (owner, 16 Nov 2026: "sab ko tally karo"): a big story of the last six hours that
+    /// <see cref="AiVoiceAlertsSettings.NewsTallyAt"/> publishers now carry (the Market Impact Analyst names each later
+    /// item that repeats it) gets one update, with the publishers. Feeds of one publisher count once.
+    /// </summary>
+    private async Task<List<IraEvent>> NewsTallyAsync(IraMarks marks, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        foreach (string old in marks.NewsTallied.Where(kv => Utc(kv.Value) < nowUtc.AddDays(-1)).Select(kv => kv.Key).ToList()) marks.NewsTallied.Remove(old);
+        var all = settings?.CurrentValue ?? new AiSettings();
+        var alerts = all.Voice.Alerts;
+        if (!alerts.News || alerts.NewsTallyAt < 2) return [];
+        int minImpact = Math.Clamp(alerts.NewsMinImpact, 1, 3);
+
+        var since = nowUtc - MarketImpactAgent.RepeatWindow;
+        var rows = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.MarketImpact && r.Status == AiReportStatus.Ok && r.UpdatedUtc >= since)
+            .Select(r => new { r.Id, r.DataJson })
+            .ToListAsync(cancellationToken);
+        var facts = rows.Select(r => (r.Id, Facts: MarketImpactAgent.ReadFacts(r.DataJson))).Where(x => x.Facts is not null).ToList();
+        var repeats = facts.Where(x => x.Facts!.RepeatOf is { Length: > 1 })
+            .GroupBy(x => x.Facts!.RepeatOf!.TrimStart('t', 'T'), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(x => Publisher(x.Facts!.Source)).ToList(), StringComparer.Ordinal);
+
+        var events = new List<IraEvent>();
+        foreach (var (id, f) in facts.Where(x => x.Facts!.Impact >= minImpact && x.Facts.RepeatOf is null))
+        {
+            string key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (marks.NewsTallied.ContainsKey(key) || !repeats.TryGetValue(key, out var others)) continue;
+            var publishers = new[] { Publisher(f!.Source) }.Concat(others).Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (publishers.Count < alerts.NewsTallyAt) continue;
+            marks.NewsTallied[key] = nowUtc;
+            events.Add(new IraEvent(NewsKind, $"newsTally:{key}", nowUtc, IraAlertText.NewsTally(f, publishers)));
+        }
+
+        return events;
+    }
+
+    /// <summary>The publisher of a feed the recorder names "Publisher · Section": "CNBC · World markets" is CNBC.</summary>
+    public static string Publisher(string source) => source.Split(" · ", 2)[0].Trim();
+
+    public async Task<IraMausam> MausamAsync(DateTime nowUtc, DateTime sinceUtc, CancellationToken cancellationToken)
+    {
+        var day = IstTime.DateOf(nowUtc);
+        var forecasts = await db.Forecasts.AsNoTracking()
+            .Where(f => f.SessionDate == day && f.Underlying == ForecastUnderlyings.Nifty && f.IssuedUtc <= nowUtc
+                        && (f.Target == ForecastTargets.Range || f.Target == ForecastTargets.Trend))
+            .Select(f => new { f.Target, f.ModelKey, f.PredictionJson, f.BaselineJson })
+            .ToListAsync(cancellationToken);
+        // The range model with India VIX when there is one: it reads more than the plain one does.
+        var range = forecasts.Where(f => f.Target == ForecastTargets.Range).OrderByDescending(f => f.ModelKey.StartsWith("range.har-vix", StringComparison.Ordinal)).FirstOrDefault();
+        var trend = forecasts.FirstOrDefault(f => f.Target == ForecastTargets.Trend);
+
+        var events = new List<(string, string)>();
+        if (factors is not null)
+        {
+            try
+            {
+                events = (await factors.EventsAsync(day, day, cancellationToken)).Events
+                    .OrderByDescending(e => e.Importance).ThenBy(e => e.TimeIst)
+                    .Select(e => (e.TimeIst ?? string.Empty, e.Title)).Take(3).ToList();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                // The card goes without its events rather than not at all.
+            }
+        }
+
+        int minImpact = Math.Clamp((settings?.CurrentValue ?? new AiSettings()).Voice.Alerts.NewsMinImpact, 1, 3);
+        var night = (await db.AiReports.AsNoTracking()
+                .Where(r => r.AgentKey == AiCatalog.MarketImpact && r.Status == AiReportStatus.Ok && r.UpdatedUtc >= sinceUtc && r.UpdatedUtc <= nowUtc)
+                .Select(r => r.DataJson)
+                .ToListAsync(cancellationToken))
+            .Select(MarketImpactAgent.ReadFacts)
+            .Where(f => f is { RepeatOf: null } && f.Impact >= minImpact && f.FirstSeenUtc is DateTime seen && seen >= sinceUtc)
+            .OrderByDescending(f => f!.Impact).ThenByDescending(f => f!.FirstSeenUtc)
+            .ToList();
+
+        return new IraMausam(
+            Number(range?.PredictionJson, "median"), Number(range?.BaselineJson, "median"),
+            (double?)Number(trend?.PredictionJson, "p"), (double?)Number(trend?.BaselineJson, "p"),
+            events, night.Count, night.FirstOrDefault()?.What);
+    }
+
+    /// <summary>A number at the top of a forecast's JSON (<c>median</c>, <c>p</c>); null when it is not there.</summary>
+    private static decimal? Number(string? json, string name) =>
+        Parse(json) is JsonObject o && o[name] is JsonValue v && v.TryGetValue(out decimal d) ? d : null;
 
     // ---------- the big news (owner, 16 Nov 2026) ----------
 

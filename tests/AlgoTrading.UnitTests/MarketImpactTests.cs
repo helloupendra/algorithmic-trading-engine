@@ -107,6 +107,92 @@ public sealed class MarketImpactTests
         Assert.Equal((1, string.Empty), (MarketImpactAgent.ReadFacts(data)!.Impact, MarketImpactAgent.ReadFacts(data)!.What));
     }
 
+    [Fact]
+    public void The_stocks_and_sectors_named_are_kept_when_listed_and_of_a_known_effect()
+    {
+        var record = Big();
+        record["stocks"] = JsonNode.Parse("""[{"symbol":"NSE:ONGC-EQ","effect":"down"},{"symbol":"indigo","effect":"up"},{"symbol":"MADEUP","effect":"up"},{"symbol":"BPCL","effect":"sideways"}]""");
+        record["sectors"] = JsonNode.Parse("""[{"name":"Aviation","effect":"up"},{"name":"weather","effect":"down"},{"name":"oil-gas","effect":"down"}]""");
+        var listed = new HashSet<string>(["ONGC", "INDIGO", "BPCL"], StringComparer.Ordinal);
+
+        var (status, _, body, data, error) = MarketImpactAgent.Check(record, Text, NoneTold, "Reuters", "Oil tumbles", Seen, listed);
+
+        Assert.True(status == AiReportStatus.Ok, error);
+        var f = MarketImpactAgent.ReadFacts(data)!;
+        // MADEUP is not listed, BPCL's effect is not one of up/down/mixed, "weather" is not a sector: each dropped quietly.
+        Assert.Equal([("ONGC", "down"), ("INDIGO", "up")], f.Stocks);
+        Assert.Equal([("aviation", "up"), ("oil-gas", "down")], f.Sectors);
+        Assert.Contains("Asar: ONGC down, INDIGO up, aviation up, oil-gas down", body);
+        Assert.Contains("Stocks: ONGC neeche, INDIGO upar. Sector: aviation upar, oil-gas neeche.", IraAlertText.News(f, new IraMarketNow(null, null)));
+    }
+
+    [Fact]
+    public void A_small_item_may_repeat_a_told_story_and_a_name_it_was_not_shown_is_dropped()
+    {
+        var told = new HashSet<string>(["t9"], StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("t9", MarketImpactAgent.ReadFacts(Check(new JsonObject { ["id"] = "n1", ["impact"] = 1, ["repeatOf"] = "t9" }, told).Data)!.RepeatOf);
+        var unknown = Check(new JsonObject { ["id"] = "n1", ["impact"] = 0, ["repeatOf"] = "t5" }, told);
+        Assert.Equal(AiReportStatus.Ok, unknown.Status);
+        Assert.Null(MarketImpactAgent.ReadFacts(unknown.Data)!.RepeatOf);
+    }
+
+    [Fact]
+    public async Task A_story_four_publishers_carry_gets_one_tally_update_feeds_of_one_publisher_counting_once()
+    {
+        var now = Seen.AddMinutes(30);
+        using var db = NewDb();
+        Report(db, 1, now.AddMinutes(-25), Big());
+        var told = new[] { "t1" };
+        foreach (var (id, source) in new[] { (2L, "CNBC · World markets"), (3L, "CNBC · Asia"), (4L, "Mint · Markets"), (5L, "Al Jazeera") })
+        {
+            ReportFrom(db, id, now.AddMinutes(-10), new JsonObject { ["id"] = "n1", ["impact"] = 1, ["repeatOf"] = "t1" }, source, told);
+        }
+
+        await db.SaveChangesAsync();
+        var marks = new IraMarks();
+        var desk = Desk(db, null);
+
+        // Reuters, CNBC, Mint: three publishers (CNBC's two feeds count once). Not yet.
+        db.AiReports.Remove(await db.AiReports.SingleAsync(r => r.Id == 5));
+        await db.SaveChangesAsync();
+        Assert.DoesNotContain(await desk.EventsAsync(marks, now, CancellationToken.None), e => e.Key.StartsWith("newsTally:"));
+
+        // Al Jazeera makes four: one update, then never again.
+        ReportFrom(db, 6, now.AddMinutes(-5), new JsonObject { ["id"] = "n1", ["impact"] = 1, ["repeatOf"] = "t1" }, "Al Jazeera", told);
+        await db.SaveChangesAsync();
+        var tally = Assert.Single(await desk.EventsAsync(marks, now.AddMinutes(1), CancellationToken.None), e => e.Key == "newsTally:1");
+        Assert.Equal(IraDesk.NewsKind, tally.Kind);
+        Assert.Equal("Update: yeh khabar ab 4 jagah hai (Reuters, CNBC, Mint, Al Jazeera): Iran ne peace talks ka ishaara diya, Brent $6 gira. " +
+                     "Jitni zyaada jagah, utni badi khabar.", tally.Text);
+        Assert.DoesNotContain(await desk.EventsAsync(marks, now.AddMinutes(2), CancellationToken.None), e => e.Key.StartsWith("newsTally:"));
+    }
+
+    [Fact]
+    public async Task The_mausam_card_reads_the_day_s_forecasts_events_and_the_night_s_big_news()
+    {
+        // Tuesday 3 Nov 2026, 09:05 IST.
+        var now = new DateTime(2026, 11, 3, 3, 35, 0, DateTimeKind.Utc);
+        var since = new DateTime(2026, 11, 2, 10, 0, 0, DateTimeKind.Utc);
+        using var db = NewDb();
+        db.Forecasts.AddRange(
+            new Forecast { ModelKey = "range.har-vix", Target = "range", Underlying = "NIFTY", SessionDate = new DateOnly(2026, 11, 3), IssuedUtc = now.AddMinutes(-15),
+                PredictionJson = """{"median":1.42,"low80":0.9,"high80":2.1}""", BaselineJson = """{"median":1.10}""" },
+            new Forecast { ModelKey = "trend.logit", Target = "trend", Underlying = "NIFTY", SessionDate = new DateOnly(2026, 11, 3), IssuedUtc = now.AddMinutes(-15),
+                PredictionJson = """{"p":0.38}""", BaselineJson = """{"p":0.30}""" });
+        Report(db, 1, now.AddHours(-3), Big(), firstSeen: now.AddHours(-3));
+        Report(db, 2, now.AddHours(-2), Big(repeatOf: "t1"), firstSeen: now.AddHours(-2), told: ["t1"]);
+        await db.SaveChangesAsync();
+
+        var m = await Desk(db, null).MausamAsync(now, since, CancellationToken.None);
+        string card = IraAlertText.Mausam(m, new DateOnly(2026, 11, 3));
+
+        Assert.Equal((1.42m, 1.10m, 1), (m.RangeMedian!.Value, m.RangeBaseline!.Value, m.BigNews));
+        Assert.StartsWith("Aaj ka mausam (Tue 3 Nov): TEZ. NIFTY ki range ka andaaza 1.42% (aam 1.10%), trend din ka chance 38% (aam 30%). " +
+                          "Strategy: TrendRider default", card);
+        Assert.Contains("Raat ki badi khabrein: 1, sabse badi: Iran ne peace talks ka ishaara diya, Brent $6 gira.", card);
+        Assert.StartsWith("Aaj ka mausam (Tue 3 Nov): PATA NAHI", IraAlertText.Mausam(m with { RangeMedian = null }, new DateOnly(2026, 11, 3)));
+    }
+
     [Theory]
     [InlineData("Rs 1,200 crore aaye", "Inflows of Rs 1200 crore", "")]
     [InlineData("NIFTY 50 aur S&P 500 gire", "Markets fall", "")]
@@ -273,6 +359,18 @@ public sealed class MarketImpactTests
     {
         var (status, title, body, data, error) = MarketImpactAgent.Check(record, Text,
             new HashSet<string>(told ?? [], StringComparer.OrdinalIgnoreCase), "Reuters", "Oil tumbles $6 as Iran signals peace talks", firstSeen ?? Seen);
+        db.AiReports.Add(new AiReport
+        {
+            Id = id, AgentKey = AiCatalog.MarketImpact, SubjectType = AiReportSubject.News, SubjectId = id.ToString(), Status = status,
+            Attempts = 1, Title = title, Body = body, DataJson = data, Error = error, CreatedUtc = atUtc, UpdatedUtc = atUtc,
+        });
+    }
+
+    /// <summary>A Market Impact report from <paramref name="source"/>, checked as the agent checks it.</summary>
+    private static void ReportFrom(TradingDbContext db, long id, DateTime atUtc, JsonObject record, string source, string[] told)
+    {
+        var (status, title, body, data, error) = MarketImpactAgent.Check(record, Text, new HashSet<string>(told, StringComparer.OrdinalIgnoreCase),
+            source, "Another publisher's headline", atUtc);
         db.AiReports.Add(new AiReport
         {
             Id = id, AgentKey = AiCatalog.MarketImpact, SubjectType = AiReportSubject.News, SubjectId = id.ToString(), Status = status,

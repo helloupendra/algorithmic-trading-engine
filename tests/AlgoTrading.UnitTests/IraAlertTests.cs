@@ -571,6 +571,26 @@ public sealed class IraAlertTests : IDisposable
         Assert.Empty(rig.Bot.TextsTo(NewsChannel));
     }
 
+    [Fact]
+    public async Task The_mausam_card_goes_once_on_a_trading_day_at_its_time_to_the_news_channel()
+    {
+        Link(Owner, "upendra");
+        var rig = Start(tweak: s => s.Voice.Alerts.MausamAt = "09:05");
+        using (var db = Db()) await IraNewsChannel.SetAsync(db, NewsChannel, "upendra", Now, CancellationToken.None);
+
+        await rig.Service.RunOnceAsync(Ist(9, 4), CancellationToken.None);
+        Assert.Empty(rig.Bot.Texts);
+
+        await rig.Service.RunOnceAsync(Ist(9, 6), CancellationToken.None);
+        var card = Assert.Single(rig.Bot.TextsTo(NewsChannel));
+        Assert.StartsWith("Aaj ka mausam (Mon 12 Oct): PATA NAHI (forecast nahi mila).", card);
+        Assert.Contains("Strategy: TrendRider default (filter D on)", card);
+        Assert.Empty(rig.Bot.TextsTo(Owner));
+
+        await rig.Service.RunOnceAsync(Ist(9, 7), CancellationToken.None);
+        Assert.Single(rig.Bot.TextsTo(NewsChannel));
+    }
+
     [Theory]
     [InlineData("/newschannel abc")]
     [InlineData("/newschannel 12345")]
@@ -808,7 +828,12 @@ public sealed class IraAlertTests : IDisposable
 
     private Rig Start(IMarketSessionService? sessions = null, Func<TradingDbContext, IIraDesk>? desk = null, Action<AiSettings>? tweak = null, Aws? aws = null)
     {
-        var options = new AiTestKit.Monitor(Settings(tweak));
+        // The mausam card is off unless a test is about it, so the briefing tests keep to their two briefings.
+        var options = new AiTestKit.Monitor(Settings(s =>
+        {
+            s.Voice.Alerts.MausamAt = string.Empty;
+            tweak?.Invoke(s);
+        }));
         var services = new ServiceCollection();
         services.AddScoped(_ => NewDb(_dbName));
         services.AddScoped(sp => desk?.Invoke(sp.GetRequiredService<TradingDbContext>()) ?? (IIraDesk)Desk(sp.GetRequiredService<TradingDbContext>()));
@@ -963,6 +988,9 @@ public sealed class IraAlertTests : IDisposable
             events.EventsAsync(marks, nowUtc, cancellationToken);
 
         public Task<IraMorning> MorningAsync(DateTime nowUtc, CancellationToken cancellationToken) => Task.FromResult(morning);
+
+        public Task<IraMausam> MausamAsync(DateTime nowUtc, DateTime sinceUtc, CancellationToken cancellationToken) =>
+            events.MausamAsync(nowUtc, sinceUtc, cancellationToken);
 
         public Task<IraClose> CloseAsync(DateTime nowUtc, CancellationToken cancellationToken) => Task.FromResult(close);
     }

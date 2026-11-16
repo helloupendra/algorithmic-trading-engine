@@ -547,6 +547,18 @@ public sealed class AiVoiceAlertsSettings
 
     /// <summary>A headline the desk first saw longer ago than this is not told, however big: it is no longer news.</summary>
     public int NewsMaxAgeMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// A told story gets one update once this many publishers carry it within six hours (owner, 16 Nov 2026: "sab ko
+    /// tally karo"): the wider it is told, the bigger it is. 0 switches the update off.
+    /// </summary>
+    public int NewsTallyAt { get; set; } = 4;
+
+    /// <summary>
+    /// The mausam card, IST (HH:mm) on NSE trading days: the day's forecast range and trend, the night's big news, the
+    /// day's events and the one tested strategy, to the news channel (or the owners while none is set). Empty: off.
+    /// </summary>
+    public string MausamAt { get; set; } = "09:05";
 }
 
 /// <summary>

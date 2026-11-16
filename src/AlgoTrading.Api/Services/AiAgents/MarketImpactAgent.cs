@@ -25,6 +25,8 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// <param name="Source">The publisher, as the recorder named it.</param>
 /// <param name="Headline">The headline as recorded.</param>
 /// <param name="FirstSeenUtc">When the desk first saw the headline.</param>
+/// <param name="Stocks">The NSE stocks it pushes, each with up, down or mixed; only symbols the master lists.</param>
+/// <param name="Sectors">The sectors it pushes, each with its effect.</param>
 public sealed record MarketImpactFacts(
     int Impact,
     string Scope,
@@ -39,7 +41,9 @@ public sealed record MarketImpactFacts(
     string Watch,
     string Source,
     string Headline,
-    DateTime? FirstSeenUtc);
+    DateTime? FirstSeenUtc,
+    IReadOnlyList<(string Name, string Effect)>? Stocks = null,
+    IReadOnlyList<(string Name, string Effect)>? Sectors = null);
 
 /// <summary>
 /// The Market Impact Analyst (owner, 16 Nov 2026: "news aayi to turant pata lage ki market pe kya asar aa sakta hai").
@@ -83,6 +87,19 @@ public sealed partial class MarketImpactAgent(
     public static readonly IReadOnlySet<string> Volatilities = new HashSet<string>(StringComparer.Ordinal) { "higher", "lower", "same" };
 
     public static readonly IReadOnlySet<string> Horizons = new HashSet<string>(StringComparer.Ordinal) { "minutes", "day", "weeks" };
+
+    /// <summary>The sectors a story may name (owner, 16 Nov 2026: "kaunse stocks pe asar padega").</summary>
+    public static readonly IReadOnlySet<string> Sectors = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "banks", "financials", "it", "oil-gas", "auto", "pharma", "fmcg", "metals", "realty", "power", "telecom", "aviation",
+        "capital-goods", "cement", "chemicals", "defence", "media",
+    };
+
+    /// <summary>How a story pushes a stock or a sector.</summary>
+    public static readonly IReadOnlySet<string> Effects = new HashSet<string>(StringComparer.Ordinal) { "up", "down", "mixed" };
+
+    /// <summary>The stocks a story names at most.</summary>
+    public const int MaxStocks = 5;
 
     /// <summary>The lowest impact that gets the full record: a 2 can move NIFTY by 0.3% to 1%.</summary>
     public const int Big = 2;
@@ -224,12 +241,25 @@ public sealed partial class MarketImpactAgent(
         var byId = NewsAnalystAgent.ReadItems(result.Text);
         bool cutOff = result.FinishReason == "length";
         var toldIds = toldLately.Select(t => t.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // The stocks the answer named, checked against the instrument master: a symbol NSE does not list is dropped.
+        var asked = (byId?.Values ?? Enumerable.Empty<JsonObject>())
+            .SelectMany(r => (r["stocks"] as JsonArray ?? []).OfType<JsonObject>())
+            .Select(o => StockSymbol(AiJson.Str(o, "symbol")))
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .Select(s => $"NSE:{s}-EQ")
+            .ToList();
+        var listed = asked.Count == 0
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : (await db.Instruments.AsNoTracking().Where(i => asked.Contains(i.Symbol)).Select(i => i.Symbol).ToListAsync(cancellationToken))
+                .Select(s => s[4..^3]).ToHashSet(StringComparer.Ordinal);
         foreach (var item in batch)
         {
             (string Status, string Title, string Body, string Data, string Error) checkedRecord;
             if (byId is not null && byId.TryGetValue(item.Id, out var record))
             {
-                checkedRecord = Check(record, item.Text, toldIds, item.Source, item.Headline, item.FirstSeenUtc);
+                checkedRecord = Check(record, item.Text, toldIds, item.Source, item.Headline, item.FirstSeenUtc, listed);
             }
             else
             {
@@ -251,8 +281,13 @@ public sealed partial class MarketImpactAgent(
     /// three Hinglish lines present and short, and every number they state found in the text. A repeat must name a
     /// story it was shown. Answers the report's status, title, body, data and the reason when it is invalid.
     /// </summary>
+    /// <param name="listedStocks">
+    /// The NSE equity symbols the instrument master lists among those the answer named; null takes any symbol of the
+    /// right shape (a test without a master). A stock the master does not list is dropped, not held against the record.
+    /// </param>
     public static (string Status, string Title, string Body, string Data, string Error) Check(
-        JsonObject record, string sourceText, IReadOnlySet<string> toldIds, string source, string headline, DateTime firstSeenUtc)
+        JsonObject record, string sourceText, IReadOnlySet<string> toldIds, string source, string headline, DateTime firstSeenUtc,
+        IReadOnlySet<string>? listedStocks = null)
     {
         var problems = new List<string>();
         double? rawImpact = Whole(record["impact"]);
@@ -268,6 +303,14 @@ public sealed partial class MarketImpactAgent(
         };
 
         string title = Clip(headline, 200);
+        if (impact is >= 0 and < Big)
+        {
+            // A small item may still be another publisher's word on a story already told: it counts in the story's
+            // tally. A name it was not shown is dropped, not held against the record: the rating is what matters.
+            string? smallRepeat = AiJson.Str(record, "repeatOf")?.Trim();
+            data["repeatOf"] = smallRepeat is not null && toldIds.Contains(smallRepeat) ? smallRepeat : null;
+        }
+
         if (impact >= Big)
         {
             string scope = Lower(AiJson.Str(record, "scope"));
@@ -311,6 +354,8 @@ public sealed partial class MarketImpactAgent(
             data["what"] = what;
             data["why"] = why;
             data["watch"] = watch;
+            data["stocks"] = Named(record["stocks"], "symbol", s => StockSymbol(s) is { } sym && (listedStocks is null || listedStocks.Contains(sym)) ? sym : null, MaxStocks);
+            data["sectors"] = Named(record["sectors"], "name", s => Sectors.Contains(Lower(s)) ? Lower(s) : null, Sectors.Count);
             if (what.Length > 0) title = Clip(what, 200);
         }
 
@@ -321,6 +366,10 @@ public sealed partial class MarketImpactAgent(
             body.Append($"\n\nNIFTY {AiJson.Str(data, "nifty")}, volatility {AiJson.Str(data, "volatility")}, {AiJson.Str(data, "horizon")}")
                 .Append($" · {string.Join(", ", AiJson.Strings(data, "channels"))}");
             if (AiJson.Str(data, "repeatOf") is string r) body.Append($" · repeat of {r}");
+            string effects = string.Join(", ", new[] { "stocks", "sectors" }
+                .SelectMany(k => (data[k] as JsonArray ?? []).OfType<JsonObject>())
+                .Select(o => $"{AiJson.Str(o, "name")} {AiJson.Str(o, "effect")}"));
+            if (effects.Length > 0) body.Append($"\n\nAsar: {effects}");
             body.Append($"\n- Kya hua: {AiJson.Str(data, "what")}\n- Kyon: {AiJson.Str(data, "why")}\n- Dekhna: {AiJson.Str(data, "watch")}");
         }
 
@@ -335,10 +384,14 @@ public sealed partial class MarketImpactAgent(
         if (AiJson.Object(dataJson ?? string.Empty) is not { } d || AiJson.Num(d, "impact") is not double impact) return null;
         DateTime? seen = DateTime.TryParse(AiJson.Str(d, "firstSeenUtc"), CultureInfo.InvariantCulture,
             DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var at) ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : null;
+        static List<(string, string)> Pairs(JsonNode? n) => (n as JsonArray ?? []).OfType<JsonObject>()
+            .Select(o => (AiJson.Str(o, "name") ?? string.Empty, AiJson.Str(o, "effect") ?? string.Empty))
+            .Where(p => p.Item1.Length > 0).ToList();
         return new MarketImpactFacts((int)impact, AiJson.Str(d, "scope") ?? string.Empty, AiJson.Strings(d, "channels").ToList(),
             AiJson.Str(d, "nifty") ?? string.Empty, AiJson.Str(d, "volatility") ?? string.Empty, AiJson.Str(d, "horizon") ?? string.Empty,
             AiJson.Num(d, "confidence"), AiJson.Str(d, "repeatOf"), AiJson.Str(d, "what") ?? string.Empty, AiJson.Str(d, "why") ?? string.Empty,
-            AiJson.Str(d, "watch") ?? string.Empty, AiJson.Str(d, "source") ?? string.Empty, AiJson.Str(d, "headline") ?? string.Empty, seen);
+            AiJson.Str(d, "watch") ?? string.Empty, AiJson.Str(d, "source") ?? string.Empty, AiJson.Str(d, "headline") ?? string.Empty, seen,
+            Pairs(d["stocks"]), Pairs(d["sectors"]));
     }
 
     /// <summary>
@@ -369,6 +422,34 @@ public sealed partial class MarketImpactAgent(
 
     [GeneratedRegex(@"\b(?:NIFTY|Nifty|nifty)\s?(?:50|100|500)\b|S&P\s?500|Nasdaq\s?100|FTSE\s?100|Nikkei\s?225|DAX\s?40|Sensex\s?30", RegexOptions.IgnoreCase)]
     private static partial Regex NamedIndex();
+
+    /// <summary>
+    /// A list of {name, effect} from the answer, kept only where <paramref name="accept"/> gives a name and the effect is
+    /// one of <see cref="Effects"/>, each name once, at most <paramref name="max"/>: <c>[{"name": "ONGC", "effect": "down"}]</c>.
+    /// </summary>
+    private static JsonArray Named(JsonNode? node, string key, Func<string, string?> accept, int max)
+    {
+        var kept = new JsonArray();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var o in (node as JsonArray ?? []).OfType<JsonObject>())
+        {
+            if (kept.Count >= max) break;
+            string effect = Lower(AiJson.Str(o, "effect"));
+            if (AiJson.Str(o, key) is not string raw || accept(raw) is not string name || !Effects.Contains(effect) || !seen.Add(name)) continue;
+            kept.Add(new JsonObject { ["name"] = name, ["effect"] = effect });
+        }
+
+        return kept;
+    }
+
+    /// <summary>"RELIANCE" from "RELIANCE", "NSE:RELIANCE-EQ" or "reliance"; null when it is not the shape of an NSE symbol.</summary>
+    public static string? StockSymbol(string? raw)
+    {
+        string s = (raw ?? string.Empty).Trim().ToUpperInvariant();
+        if (s.StartsWith("NSE:", StringComparison.Ordinal)) s = s[4..];
+        if (s.EndsWith("-EQ", StringComparison.Ordinal)) s = s[..^3];
+        return Regex.IsMatch(s, @"^[A-Z0-9&][A-Z0-9&\-]{0,19}$") ? s : null;
+    }
 
     /// <summary>
     /// A number however the node holds it: parsed from an answer (any number), built in code (an int), or written as
