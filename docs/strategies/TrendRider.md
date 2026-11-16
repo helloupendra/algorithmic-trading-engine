@@ -5,8 +5,8 @@ rule below is read from the code. Times are IST (UTC + 5:30).
 
 ## Idea
 
-Buy the at-the-money option on a day that is trending, and stay in while the
-day keeps its direction.
+Buy an option one strike in the money (`itm_steps`) on a day that is
+trending, and stay in while the day keeps its direction.
 
 The strategy came out of the Ghost research of 13 Nov 2026, which found three
 things on NIFTY:
@@ -34,7 +34,7 @@ needs a forward paper test before anyone trusts it.
 | What | Symbol(s) | Resolution | History before the first signal | Where the platform gets it |
 |------|-----------|------------|---------------------------------|----------------------------|
 | index candles | the run's spot symbol (e.g. `NSE:NIFTY50-INDEX`) | 5m | `warmup_bars` = 900 (twelve sessions). The average range needs `adr_days` (10) complete sessions before today, where complete means at least 60 of the 75 candles seen | Backtest: `candles`. Live: the platform's candle store, else broker history, replayed at start (`core/warmup_source.py`) |
-| option quotes | the ATM CE and ATM PE of the run's expiry (`atm_ce`, `atm_pe`) | latest quote | none | the runner's contract resolver. A replay prices them from `option_history_bars` or the stored option candles |
+| option quotes | the CE and PE `itm_steps` strikes in the money (1 by default; 0 is ATM) of the run's expiry (`buy_ce`, `buy_pe`) | latest quote | none | the runner's contract resolver (`get_contract_requirements`). A replay prices them from `option_history_bars` or the stored option candles |
 
 It reads no volume, no option chain and no option candles. The decision is
 made on the index alone.
@@ -105,7 +105,9 @@ is yesterday's range, $R_d$ today's range so far, and $C_y$ yesterday's close.
    $g = 100\,(O_d - C_y)/C_y$ for a call and its negative for a put
    (`gap_against`).
 
-**The contract.** The run's ATM call (or put). It must exist, be of the right
+**The contract.** The run's call (or put) `itm_steps` strikes in the money:
+with NIFTY at 22,790 and 50-point strikes, ATM is 22,800, so the call is
+22,750 and the put 22,850. It must exist, be of the right
 type, and expire today or later (`no_contract` otherwise). One leg, bought at
 market, of `lots` lots, as an `OPEN_GROUP` signal. The signal's metadata
 `trend_rider` block carries:
@@ -127,10 +129,17 @@ live runner and the replay pass the run's open groups
 run's stop-loss, the square-off, the stop button), the strategy sees the group
 gone on the next candle. It is then free to enter again, from the candle after.
 
-**What the run's risk rules add.** This strategy has no stop-loss of its own.
-Give the run one: a leg stop of 10 premium points, `{"risk": {"leg":
-{"stopLossPoints": 10}}}`, is the one the research used. Do not give it a leg
-target: the point of the strategy is to keep a trend day's whole move.
+**What the run's risk rules add.** This strategy has no stop-loss of its own,
+and **no premium stop is advised**. The first research (13 Nov) used a leg stop
+of 10 premium points, but it was checked on 5-minute replays. On 1-minute
+premiums (16 Nov) that stop cut the trend days the strategy lives on: at one
+strike ITM, Jan 2024 – Sep 2026, before costs, +₹340 a trade with it against
++₹490 without. The strategy's own exit (the day's open) is its stop. A run can
+still set `{"risk": {"leg": {"stopLossPoints": …, "targetPoints": …}}}`. The
+one pair worth a side-by-side paper test is a 30-point target with a 20-point
+stop (+₹283 a trade before costs, t 2.0). It is the best of 40 pairs tried, so
+it is not proven. Do not give it a small target: the point of the strategy is
+to keep a trend day's whole move.
 
 **What it never does.** It does not hedge, add to a position, average down,
 or carry a position overnight.
@@ -152,6 +161,7 @@ In order of precedence, the first that fires wins:
 
 | Name | Default | Meaning | Raise it | Lower it |
 |------|---------|---------|----------|----------|
+| `itm_steps` | 1 | Strikes in the money for the option bought; 0 is ATM, at most 5 | A higher delta and less time value; a dearer lot | Cheaper; more of the premium is time value |
 | `or_minutes` | 30 | Length of the opening range, from 09:15 | A later, surer break; fewer entries | Earlier breaks, more false ones |
 | `first_entry` | `"09:45"` | Earliest candle (by its start) that may enter | — | Must not be earlier than the end of the opening range |
 | `last_entry` | `"14:30"` | Latest candle that may enter | Late entries have little day left to run | — |
@@ -166,7 +176,8 @@ In order of precedence, the first that fires wins:
 ## Worked example
 
 This walkthrough comes from a replay on the owner's research stack, not the
-production database. The run was local run 34 on 13 Nov 2026, with this
+production database. It was made before spec version 2, so it bought ATM and
+used a 10-point stop. The run was local run 34 on 13 Nov 2026, with this
 setup:
 - NIFTY on the 5-minute chart, 13 Aug – 12 Nov 2026;
 - one lot (65), with `{"risk": {"leg": {"stopLossPoints": 10}}}`;
@@ -255,5 +266,5 @@ instruments: NIFTY
 default_lots: 1
 built_in_exit: true
 added: 2026-11-15
-spec_version: 1
+spec_version: 2
 ```

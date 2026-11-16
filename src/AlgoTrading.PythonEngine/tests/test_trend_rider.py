@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from strategies.base_strategy import BarFrame, OptionContract, StrategyInput
+from strategies.contract_selector import strike_for_requirement
 from strategies.directional.trend_rider import TrendRiderStrategy
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -46,8 +47,8 @@ class TrendRiderTest(unittest.TestCase):
         out, bars = [], list(history)
         for frame in today:
             bars.append(frame)
-            contracts = {"atm_ce": OptionContract("NSE:NIFTY_CE", "NIFTY", "2026-03-31", 20000, "CE"),
-                         "atm_pe": OptionContract("NSE:NIFTY_PE", "NIFTY", "2026-03-31", 20000, "PE")}
+            contracts = {"buy_ce": OptionContract("NSE:NIFTY_CE", "NIFTY", "2026-03-31", 19950, "CE"),
+                         "buy_pe": OptionContract("NSE:NIFTY_PE", "NIFTY", "2026-03-31", 20050, "PE")}
             meta = {"open_groups": groups(state) if groups else
                     ([state["position"]["group_id"]] if state["position"] else [])}
             inp = StrategyInput(mode="OfflineReplay", timestamp_utc=frame.timestamp_utc, underlying="NIFTY",
@@ -112,6 +113,24 @@ class TrendRiderTest(unittest.TestCase):
         loose = TrendRiderStrategy({"max_prev_range": 0})
         state = loose.initialize_state()
         self.assertTrue(self.run_day(loose, state, normal, self.trend_day(up=True)))
+
+    def test_buys_one_strike_in_the_money_by_default(self):
+        reqs = {r.key: r for r in TrendRiderStrategy.get_contract_requirements({})}
+        self.assertEqual(set(reqs), {"buy_ce", "buy_pe"})
+        self.assertEqual((reqs["buy_ce"].moneyness, reqs["buy_ce"].steps), ("itm", 1))
+        # CE in the money sits below the ATM strike, PE above it.
+        self.assertEqual(strike_for_requirement(reqs["buy_ce"], 20000, 50), 19950)
+        self.assertEqual(strike_for_requirement(reqs["buy_pe"], 20000, 50), 20050)
+
+    def test_itm_steps_moves_the_strike_and_zero_is_atm(self):
+        deep = {r.key: r for r in TrendRiderStrategy.get_contract_requirements({"itm_steps": 2})}
+        self.assertEqual(strike_for_requirement(deep["buy_ce"], 20000, 50), 19900)
+        self.assertEqual(strike_for_requirement(deep["buy_pe"], 20000, 50), 20100)
+        atm = {r.key: r for r in TrendRiderStrategy.get_contract_requirements({"itm_steps": 0})}
+        self.assertEqual(atm["buy_ce"].moneyness, "atm")
+        self.assertEqual(strike_for_requirement(atm["buy_pe"], 20000, 50), 20000)
+        with self.assertRaises(ValueError):
+            TrendRiderStrategy({"itm_steps": 9})
 
     def test_needs_ten_full_sessions_of_history(self):
         strategy = TrendRiderStrategy()

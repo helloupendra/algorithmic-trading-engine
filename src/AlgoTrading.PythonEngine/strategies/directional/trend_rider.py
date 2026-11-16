@@ -1,10 +1,14 @@
 """
 strategies/directional/trend_rider.py
 
-Trend Rider: buys the ATM option in the direction of a day that is trending and stays in while it
+Trend Rider: buys an option in the direction of a day that is trending and stays in while it
 does. Built from the Ghost research of 13 Nov 2026: Ghost's own entries did no better than random
 ones, its 20-point target cut every trend day short, and most of its losses came on sideways days.
 So this strategy:
+
+  - buys the strike `itm_steps` strikes in the money (1 by default; 0 is ATM): on recorded
+    premiums (Jan 2024 - Sep 2026) every step deeper paid more a trade, as less of the premium is
+    time value;
 
   - enters when a closed 5-minute candle breaks the first `or_minutes` range and sits on the same
     side of the day's open (CE above it, PE below), between `first_entry` and `last_entry`;
@@ -12,13 +16,16 @@ So this strategy:
     `skip_after_wide` x the average range of the last `adr_days` sessions), a break while today's
     range is still below `min_range_frac` of that average, a gap of more than
     `max_gap_against_pct` against the trade and, when `max_prev_range` is set, any day whose
-    previous session was not narrower than that fraction;
+    previous session was not narrower than that fraction. That last filter keeps it out of
+    every day of a fast, wide-range market (it took no trade in the 28 Oct - 12 Nov 2026 rally);
+    `max_prev_range: 0` turns it off;
   - has no target: it closes when a candle closes back across the day's open;
   - after an exit, enters again in the same direction only on a new day high (CE) or low (PE),
     up to `max_entries` a day, one position at a time.
 
-The stop-loss is the run's own: risk.leg.stopLossPoints (10 in the research). The run's
-end-of-day square-off closes what is still open.
+No premium stop-loss is advised: on 1-minute premiums a 10-point stop cut the trend days it
+lives on (research of 13-16 Nov 2026). A run can still set risk.leg.stopLossPoints and
+targetPoints. The run's end-of-day square-off closes what is still open.
 """
 
 from __future__ import annotations
@@ -26,7 +33,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from strategies.base_strategy import BarFrame, BaseStrategy, DataRequirement, StrategyInput, StrategySignal
+from strategies.base_strategy import (BarFrame, BaseStrategy, ContractRequirement, DataRequirement, StrategyInput,
+                                      StrategySignal)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 BAR_MINUTES = 5
@@ -48,24 +56,28 @@ def _compact(stamp: Any) -> str:
 
 
 class TrendRiderStrategy(BaseStrategy):
-    """Buys the trend day's ATM option on an opening-range break, holds while the day's open holds."""
+    """Buys the trend day's option on an opening-range break, holds while the day's open holds."""
 
     name = "TrendRider"
     requires_position_sync = True
     description = (
-        "Directional option buying for trend days. On the 5-minute NIFTY chart it buys the ATM call when a "
-        "candle closes above the first 30 minutes' range and above the day's open, or the ATM put on the "
-        "mirror break, and holds with no target until a candle closes back across the day's open. It skips "
-        "days likely to go sideways (after a wide day, before the range expands, against the gap, and by "
-        "default unless yesterday was narrow) and re-enters only on a new day extreme, at most 3 times a day. "
-        "Set the run's leg stop-loss (10 premium points in the research). Research on recorded premiums "
-        "(Jan 2024 - Nov 2026, 1-minute, costs included) was slightly positive in each period but rests on a "
-        "few big days and a sensitive filter; validate on paper before trusting it."
+        "Directional option buying for trend days. On the 5-minute NIFTY chart it buys a call one strike in "
+        "the money when a candle closes above the first 30 minutes' range and above the day's open, or the "
+        "put on the mirror break, and holds with no target until a candle closes back across the day's open. "
+        "It skips days likely to go sideways (after a wide day, before the range expands, against the gap, "
+        "and by default unless yesterday was narrow; set max_prev_range to 0 to also trade fast, wide-range "
+        "markets such as the Nov 2026 rally) and re-enters only on a new day extreme, at most 3 times a day. "
+        "No premium stop-loss is advised: a 10-point stop cut the trend days it lives on. Research on recorded "
+        "premiums (Jan 2024 - Sep 2026, 1-minute) was positive in each period but not proven (t below 1) and "
+        "rests on a few big days; validate on paper before trusting it."
     )
     category = "Directional"
-    legs_summary = "Buy ATM CE on an up-trend day, or Buy ATM PE on a down-trend day; one position at a time"
+    legs_summary = ("Buy CE 1 strike ITM on an up-trend day, or Buy PE 1 strike ITM on a down-trend day "
+                    "(itm_steps); one position at a time")
     default_lots = 1
     default_params: Dict[str, Any] = {
+        # Strikes in the money for the option bought; 0 is ATM.
+        "itm_steps": 1,
         "or_minutes": 30,
         "first_entry": "09:45",
         "last_entry": "14:30",
@@ -92,16 +104,31 @@ class TrendRiderStrategy(BaseStrategy):
             self.min_range_frac = float(p["min_range_frac"])
             self.max_gap_against_pct = float(p["max_gap_against_pct"])
             self.max_prev_range = float(p["max_prev_range"])
+            self.itm_steps = int(p["itm_steps"])
         except (TypeError, ValueError) as exc:
             raise ValueError(f"TrendRider parameters: {exc}") from exc
         self.first_entry, self.last_entry = str(p["first_entry"]), str(p["last_entry"])
         if self.or_bars < 1 or self.max_entries < 1 or self.adr_days < 1:
             raise ValueError("or_minutes must be at least 5, max_entries and adr_days at least 1")
+        if not 0 <= self.itm_steps <= 5:
+            raise ValueError("itm_steps must be between 0 (ATM) and 5")
         self.lots = self.lots_from(params, self.default_lots)
 
     @classmethod
     def get_data_requirements(cls) -> List[DataRequirement]:
         return [DataRequirement(symbol_type="index", resolution="5m")]
+
+    @classmethod
+    def get_contract_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[ContractRequirement]:
+        """The call and the put `itm_steps` strikes in the money (0: ATM), read as buy_ce / buy_pe."""
+        raw = (params or {}).get("itm_steps", cls.default_params["itm_steps"])
+        try:
+            steps = int(raw)
+        except (TypeError, ValueError):
+            steps = int(cls.default_params["itm_steps"])
+        moneyness = "itm" if steps > 0 else "atm"
+        return [ContractRequirement(key="buy_ce", option_type="CE", moneyness=moneyness, steps=steps),
+                ContractRequirement(key="buy_pe", option_type="PE", moneyness=moneyness, steps=steps)]
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
@@ -244,7 +271,7 @@ class TrendRiderStrategy(BaseStrategy):
             self._skip(state, "gap_against")
             return []
 
-        contract = (inp.contracts or {}).get("atm_ce" if buy else "atm_pe")
+        contract = (inp.contracts or {}).get("buy_ce" if buy else "buy_pe")
         if (contract is None or not contract.symbol or contract.option_type.upper() != ("CE" if buy else "PE")
                 or str(contract.expiry_date)[:10] < at.date().isoformat()):
             self._skip(state, "no_contract")
