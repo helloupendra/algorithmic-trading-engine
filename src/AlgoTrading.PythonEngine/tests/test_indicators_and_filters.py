@@ -107,6 +107,91 @@ class IndicatorTests(unittest.TestCase):
         self.assertEqual(len(indicators.session_bars(yesterday + flat(4))), 4)
 
 
+class GateIndicatorTests(unittest.TestCase):
+    """The readings behind the gate's MACD, PSAR, Heikin-Ashi, Donchian, Bollinger and CPR rules."""
+
+    def test_macd_aligns_two_sma_seeded_emas_and_smooths_their_gap(self):
+        # fast 2 (k 2/3), slow 3 (k 1/2), signal 2 on 1, 2, 3, 5, 4:
+        #   EMA2 = 1.5, 2.5, 25/6, 73/18     EMA3 = 2, 3.5, 15/4   (from the 2nd and 3rd value)
+        #   MACD = 1/2, 2/3, 11/36           signal = 7/12 (the SMA seed), then 43/108
+        reading = indicators.macd([1, 2, 3, 5, 4], 2, 3, 2)
+        self.assertAlmostEqual(reading["macd"], 11 / 36)
+        self.assertAlmostEqual(reading["signal"], 43 / 108)
+        self.assertAlmostEqual(reading["histogram"], -5 / 54)
+        # slow + signal - 1 = 4 values: the signal line is just its seed.
+        self.assertAlmostEqual(indicators.macd([1, 2, 3, 5], 2, 3, 2)["histogram"], 2 / 3 - 7 / 12)
+
+    def test_macd_needs_enough_values_and_a_fast_ema_faster_than_the_slow(self):
+        self.assertIsNone(indicators.macd([1, 2, 3], 2, 3, 2))
+        self.assertIsNone(indicators.macd([float(x) for x in range(40)], 26, 12, 9))
+        self.assertIsNone(indicators.macd([float(x) for x in range(33)]))      # 12/26/9 needs 34
+
+    def test_bollinger_uses_the_population_standard_deviation(self):
+        # Mean 5, population SD exactly 2 (the textbook set), so 2 SD bands are 1 and 9.
+        reading = indicators.bollinger([2, 4, 4, 4, 5, 5, 7, 9], 8, 2.0)
+        self.assertEqual((reading["middle"], reading["upper"], reading["lower"], reading["width"]),
+                         (5.0, 9.0, 1.0, 8.0))
+        # Only the last `period` values count.
+        self.assertEqual(indicators.bollinger([100, 2, 4, 4, 4, 5, 5, 7, 9], 8, 2.0)["width"], 8.0)
+        self.assertIsNone(indicators.bollinger([1, 2, 3], 8))
+
+    def test_donchian_includes_the_last_bar(self):
+        bars = [bar(0, 9, 10, 8, 9), bar(1, 10, 12, 9, 11), bar(2, 9, 11, 7, 8)]
+        self.assertEqual(indicators.donchian(bars, 3), {"upper": 12.0, "lower": 7.0, "middle": 9.5})
+        self.assertEqual(indicators.donchian(bars, 2), {"upper": 12.0, "lower": 7.0, "middle": 9.5})
+        self.assertEqual(indicators.donchian(bars[:2], 2), {"upper": 12.0, "lower": 8.0, "middle": 10.0})
+        self.assertIsNone(indicators.donchian(bars, 4))
+
+    def test_heikin_ashi_carries_the_previous_body_midpoint(self):
+        # HA0: close (10+12+9+11)/4 = 10.5, open (10+11)/2 = 10.5
+        # HA1: open (10.5+10.5)/2 = 10.5, close (11+13+10+12)/4 = 11.5, high 13, low 10
+        bars = [bar(0, 10, 12, 9, 11), bar(1, 11, 13, 10, 12)]
+        self.assertEqual(indicators.heikin_ashi(bars), {"open": 10.5, "high": 13.0, "low": 10.0, "close": 11.5})
+        self.assertIsNone(indicators.heikin_ashi(bars[:1]))
+
+    def test_parabolic_sar_trails_a_rise_and_flips_on_a_break(self):
+        # Rising start: SAR 9 (first low), EP 12 (second high), AF 0.02.
+        #   bar 2: 9 + 0.02 x 3 = 9.06, held under the lows 10 and 9 -> 9; new high 13 -> AF 0.04
+        #   bar 3: 9 + 0.04 x 4 = 9.16 (under 11 and 10); new high 14 -> AF 0.06
+        bars = [bar(0, 10, 11, 9, 10), bar(1, 11, 12, 10, 11), bar(2, 12, 13, 11, 12), bar(3, 13, 14, 12, 13)]
+        reading = indicators.parabolic_sar(bars)
+        self.assertAlmostEqual(reading["sar"], 9.16)
+        self.assertEqual(reading["direction"], "bullish")
+        # bar 4 trades to 8, through 9.16 + 0.06 x 4.84 = 9.4504: the trend flips and the
+        # SAR jumps to the old extreme 14 (above the bar's own high 13).
+        flipped = indicators.parabolic_sar(bars + [bar(4, 13, 13, 8, 8.5)])
+        self.assertEqual(flipped, {"sar": 14.0, "direction": "bearish"})
+        self.assertIsNone(indicators.parabolic_sar(bars[:2]))
+        self.assertIsNone(indicators.parabolic_sar(bars, step=0.3, maximum=0.2))
+
+    def test_cpr_comes_from_the_previous_session(self):
+        # Yesterday: high 110, low 100, close 108 -> P 106, BC 105, TC 2 x 106 - 105 = 107.
+        yesterday = [bar(0, 104, 106, 103, 105), bar(1, 105, 110, 104, 109), bar(2, 109, 109, 100, 101),
+                     bar(3, 101, 108, 101, 108)]
+        yesterday = [bar(i, b.open, b.high, b.low, b.close, base=SESSION_OPEN_UTC - timedelta(days=1))
+                     for i, b in enumerate(yesterday)]
+        levels = indicators.cpr(yesterday + flat(3, price=200.0))   # today's own prices play no part
+        self.assertEqual((levels["high"], levels["low"], levels["close"]), (110.0, 100.0, 108.0))
+        self.assertEqual((levels["pivot"], levels["bc"], levels["tc"]), (106.0, 105.0, 107.0))
+        self.assertAlmostEqual(levels["width_percent"], 200 / 106)
+        self.assertEqual(levels["session"], "2026-09-07")
+
+    def test_cpr_swaps_tc_and_bc_when_the_close_was_low(self):
+        # Close 102 under the midpoint 105: P 104, BC 105, TC 103 -> swapped to BC 103, TC 105.
+        yesterday = [bar(0, 105, 110, 100, 102, base=SESSION_OPEN_UTC - timedelta(days=1))]
+        levels = indicators.cpr(yesterday + flat(2))
+        self.assertEqual((levels["pivot"], levels["bc"], levels["tc"]), (104.0, 103.0, 105.0))
+        self.assertAlmostEqual(levels["width_percent"], 200 / 104)
+
+    def test_cpr_takes_the_latest_earlier_session_and_none_without_one(self):
+        older = [bar(0, 500, 600, 400, 550, base=SESSION_OPEN_UTC - timedelta(days=4))]
+        friday = [bar(0, 105, 110, 100, 108, base=SESSION_OPEN_UTC - timedelta(days=3))]
+        self.assertEqual(indicators.cpr(older + friday + flat(2))["pivot"], 106.0)
+        self.assertEqual(len(indicators.previous_session_bars(older + friday + flat(2))), 1)
+        self.assertIsNone(indicators.cpr(flat(5)))
+        self.assertEqual(indicators.previous_session_bars([]), [])
+
+
 class PatternTests(unittest.TestCase):
     def test_bullish_engulfing(self):
         bars = [bar(0, 110, 111, 104, 105), bar(1, 104, 116, 103, 115)]

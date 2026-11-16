@@ -19,8 +19,35 @@ So it is configured PER RUN, in parametersJson:
       "require_vwap_side": true,
       "ema_period": 20,
       "require_ema_side": true,
+      "macd": {"fast": 12, "slow": 26, "signal": 9},
+      "psar": {"step": 0.02, "max": 0.2},
+      "heikin_ashi": true,
+      "donchian_side": 20,
+      "bollinger_expanding": {"period": 20, "stdev": 2, "lookback": 3},
+      "cpr_max_width_pct": 0.25,
+      "cpr_side": true,
+      "rsi_side": 50,
+      "breadth_above_vwap_pct": 60,
+      "heavyweights_min": 4,
       "require_pattern": "auto"
     }
+
+Most indicator rules block a signal that fights their reading: a MACD histogram
+on the other side of zero, a close on the wrong side of the Parabolic SAR, of
+the previous N bars' Donchian midline or of the previous session's central
+pivot range (above TC for bullish, below BC for bearish), a Heikin-Ashi candle
+of the other colour, or RSI past a symmetric level (50: bullish needs RSI >= 50,
+bearish <= 50; 40: bullish >= 40, bearish <= 60). Two read the regime and block
+either direction: Bollinger bands no wider than `lookback` bars ago, and a CPR
+wider than its ceiling (a narrow CPR tends to come before a trending day).
+
+Two read the index's stocks rather than the index, from `metadata.breadth`
+({"above_vwap_pct", "heavy_up", "heavy_down", "heavy_total"}), which the caller
+fills from the constituents' bars: a bullish signal needs at least
+`breadth_above_vwap_pct` % of the stocks above their session VWAP (a bearish one
+at most 100 minus it), and at least `heavyweights_min` of the heavyweights on its
+side of their VWAP. A run without breadth data is not blocked by them.
+`true` takes an indicator's textbook settings, the ones shown above.
 
 The same function runs in the live runner and in the replay, so a filter can be
 measured before it is trusted: run the backtest with the block and without it
@@ -116,6 +143,19 @@ class FilterConfig:
     against_return_percent: Optional[float] = None
     vote_min_against: Optional[int] = None
 
+    # Indicator readings. All but the two regime rules (Bollinger width, CPR
+    # width) block only a signal that fights them.
+    macd: Optional[Tuple[int, int, int]] = None                 # (fast, slow, signal)
+    psar: Optional[Tuple[float, float]] = None                  # (step, max)
+    heikin_ashi: bool = False
+    donchian_side: Optional[int] = None                         # bars before the signal bar
+    bollinger_expanding: Optional[Tuple[int, float, int]] = None  # (period, stdev, lookback)
+    cpr_max_width_pct: Optional[float] = None
+    cpr_side: bool = False
+    rsi_side: Optional[float] = None                            # bullish needs RSI >= it, bearish <= 100 - it
+    breadth_above_vwap_pct: Optional[float] = None              # metadata.breadth: share of stocks above VWAP
+    heavyweights_min: Optional[int] = None                      # metadata.breadth: heavyweights on the signal's side
+
     @property
     def needs_vix(self) -> bool:
         """True when a rule reads INDIA VIX, so the caller knows to load that series."""
@@ -141,6 +181,9 @@ class FilterConfig:
             self.max_move_from_open_percent is not None, self.opening_range_minutes,
             self.against_return_bars and self.against_return_percent is not None,
             self.vote_min_against,
+            self.macd, self.psar, self.heikin_ashi, self.donchian_side, self.bollinger_expanding,
+            self.cpr_max_width_pct is not None, self.cpr_side, self.rsi_side is not None,
+            self.breadth_above_vwap_pct is not None, self.heavyweights_min is not None,
         ])
 
 
@@ -224,6 +267,16 @@ def parse_filters(run_params: Optional[Dict[str, Any]]) -> Optional[FilterConfig
         against_return_bars=_as_int(raw.get("against_return_bars")),
         against_return_percent=_as_float(raw.get("against_return_percent")),
         vote_min_against=_as_int(raw.get("vote_min_against")),
+        macd=_macd(raw.get("macd")),
+        psar=_psar(raw.get("psar")),
+        heikin_ashi=bool(raw.get("heikin_ashi")),
+        donchian_side=_period("donchian_side", raw.get("donchian_side")),
+        bollinger_expanding=_bollinger(raw.get("bollinger_expanding")),
+        cpr_max_width_pct=_as_float(raw.get("cpr_max_width_pct")),
+        cpr_side=bool(raw.get("cpr_side")),
+        rsi_side=_as_float(raw.get("rsi_side")),
+        breadth_above_vwap_pct=_as_float(raw.get("breadth_above_vwap_pct")),
+        heavyweights_min=_as_int(raw.get("heavyweights_min")),
     )
     return config if config.any_rule else None
 
@@ -262,6 +315,68 @@ def _supertrend(raw: Any) -> Optional[tuple]:
         period, multiple = _as_int(raw.get("period"), 10), _as_float(raw.get("multiple"))
         return (period or 10, multiple or 3.0)
     return (10, 3.0) if raw is True else None
+
+
+def _ignored(key: str, raw: Any, why: str) -> None:
+    """Says so when a rule was asked for but cannot be read: a run must not believe it is filtered."""
+    print(f"[FILTER] ignoring {key}={raw!r}: {why}", flush=True)
+
+
+def _period(key: str, raw: Any) -> Optional[int]:
+    """A positive whole number of bars. `true` is not a period, so it is refused rather than read as 1."""
+    if raw is None or raw is False:
+        return None
+    value = None if isinstance(raw, bool) else _as_int(raw)
+    if value is None or value < 1:
+        _ignored(key, raw, "it needs a whole number of bars, 1 or more")
+        return None
+    return value
+
+
+def _macd(raw: Any) -> Optional[Tuple[int, int, int]]:
+    """`true` or {"fast", "slow", "signal"}, each defaulting to 12/26/9."""
+    if raw is None or raw is False:
+        return None
+    if raw is True:
+        return (12, 26, 9)
+    if isinstance(raw, dict):
+        fast, slow, signal = (_as_int(raw.get("fast", 12)), _as_int(raw.get("slow", 26)),
+                              _as_int(raw.get("signal", 9)))
+        if fast is not None and slow is not None and signal is not None and 0 < fast < slow and signal > 0:
+            return (fast, slow, signal)
+    _ignored("macd", raw, 'it takes true or {"fast", "slow", "signal"} with 0 < fast < slow')
+    return None
+
+
+def _psar(raw: Any) -> Optional[Tuple[float, float]]:
+    """`true` or {"step", "max"}, defaulting to Wilder's 0.02 and 0.2."""
+    if raw is None or raw is False:
+        return None
+    if raw is True:
+        return (0.02, 0.2)
+    if isinstance(raw, dict):
+        step, maximum = _as_float(raw.get("step", 0.02)), _as_float(raw.get("max", 0.2))
+        if step is not None and maximum is not None and 0 < step <= maximum:
+            return (step, maximum)
+    _ignored("psar", raw, 'it takes true or {"step", "max"} with 0 < step <= max')
+    return None
+
+
+def _bollinger(raw: Any) -> Optional[Tuple[int, float, int]]:
+    """`true` or {"period", "stdev", "lookback"}, defaulting to 20 bars, 2 SD, 3 bars back."""
+    if raw is None or raw is False:
+        return None
+    if raw is True:
+        return (20, 2.0, 3)
+    if isinstance(raw, dict):
+        period, stdev = _as_int(raw.get("period", 20)), _as_float(raw.get("stdev", 2.0))
+        lookback = _as_int(raw.get("lookback", 3))
+        if period is not None and period >= 2 and stdev is not None and stdev > 0 \
+                and lookback is not None and lookback >= 1:
+            return (period, stdev, lookback)
+    _ignored("bollinger_expanding", raw,
+             'it takes true or {"period", "stdev", "lookback"} with period >= 2, stdev > 0, lookback >= 1')
+    return None
 
 
 # --------------------------------------------------------------- direction --
@@ -360,6 +475,8 @@ def evaluate(
                  _rule_volume, _rule_atr, _rule_candle_body,
                  _rule_vwap, _rule_ema, _rule_ema_order, _rule_supertrend, _rule_adx,
                  _rule_open_move, _rule_opening_range, _rule_recent_return, _rule_vote,
+                 _rule_macd, _rule_psar, _rule_heikin_ashi, _rule_donchian, _rule_bollinger,
+                 _rule_cpr, _rule_rsi_side, _rule_breadth, _rule_heavyweights,
                  _rule_rsi, _rule_rsi_cross, _rule_pattern):
         verdict = rule(config, bars, last, direction, details, context)
         if verdict is not None:
@@ -437,7 +554,9 @@ def _context(config, inp, newest_bar_is_forming: bool) -> Dict[str, Any]:
             break
     if newest_bar_is_forming and vix:
         vix = vix[:-1]
-    return {"expiry_date": str(metadata.get("expiry_date") or "")[:10], "vix": vix}
+    breadth = metadata.get("breadth")
+    return {"expiry_date": str(metadata.get("expiry_date") or "")[:10], "vix": vix,
+            "breadth": breadth if isinstance(breadth, dict) else None}
 
 
 def _against(direction: Optional[str], view: Optional[str]) -> bool:
@@ -700,6 +819,182 @@ def _rule_vote(config, bars, last, direction, details, context) -> Optional[Filt
         return FilterVerdict(False, "vote_min_against",
                              f"{len(against)} of {len(readable)} trend readings are against this "
                              f"{direction} signal ({', '.join(against)})", {})
+    return None
+
+
+#: Differences smaller than this, in price points, are floating-point noise and
+#: not a reading: a perfectly steady trend leaves a MACD histogram of -1.8e-15.
+NOISE = 1e-6
+
+
+def _side_of(value: float, level: float) -> Optional[str]:
+    """The view a value takes of a level: above is bullish, below bearish, on it (within NOISE) none."""
+    return "bullish" if value > level + NOISE else "bearish" if value < level - NOISE else None
+
+
+def _rule_macd(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    if not config.macd or direction is None:
+        return None
+    fast, slow, signal = config.macd
+    reading = indicators.macd(indicators.closes(bars), fast, slow, signal)
+    if reading is None:
+        return None
+    histogram = reading["histogram"]
+    details["macd_histogram"] = round(histogram, 4)
+    if _against(direction, _side_of(histogram, 0.0)):
+        return FilterVerdict(False, "macd",
+                             f"MACD({fast},{slow},{signal}) histogram {histogram:.2f} is against this "
+                             f"{direction} signal", {})
+    return None
+
+
+def _rule_psar(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    if not config.psar or direction is None:
+        return None
+    step, maximum = config.psar
+    reading = indicators.parabolic_sar(bars, step, maximum)
+    if reading is None:
+        return None
+    sar, close = float(reading["sar"]), float(last.close)
+    details["psar"] = round(sar, 2)
+    view = _side_of(close, sar)
+    if _against(direction, view):
+        return FilterVerdict(False, "psar",
+                             f"close {close:.2f} is {'below' if view == 'bearish' else 'above'} the Parabolic "
+                             f"SAR({step:g},{maximum:g}) {sar:.2f}, against this {direction} signal", {})
+    return None
+
+
+def _rule_heikin_ashi(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    if not config.heikin_ashi or direction is None:
+        return None
+    ha = indicators.heikin_ashi(bars)
+    if ha is None:
+        return None
+    view = _side_of(ha["close"], ha["open"])
+    colour = {"bullish": "green", "bearish": "red"}.get(view or "", "flat")
+    details["heikin_ashi"] = colour
+    if _against(direction, view):
+        return FilterVerdict(False, "heikin_ashi",
+                             f"the last Heikin-Ashi candle is {colour} (open {ha['open']:.2f}, "
+                             f"close {ha['close']:.2f}), against this {direction} signal", {})
+    return None
+
+
+def _rule_donchian(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    """The signal bar against the channel of the bars before it, so it cannot set its own midline."""
+    if not config.donchian_side or direction is None:
+        return None
+    channel = indicators.donchian(bars[:-1], config.donchian_side)
+    if channel is None:
+        return None
+    close, middle = float(last.close), channel["middle"]
+    details["donchian_middle"] = round(middle, 2)
+    view = _side_of(close, middle)
+    if _against(direction, view):
+        return FilterVerdict(False, "donchian_side",
+                             f"close {close:.2f} is {'below' if view == 'bearish' else 'above'} {middle:.2f}, "
+                             f"the midline of the previous {config.donchian_side} bars' range "
+                             f"{channel['lower']:.2f}-{channel['upper']:.2f}, against this {direction} signal", {})
+    return None
+
+
+def _rule_bollinger(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    """Either direction: a breakout into bands that are not widening is a range, not a move."""
+    if not config.bollinger_expanding:
+        return None
+    period, stdev, lookback = config.bollinger_expanding
+    values = indicators.closes(bars)
+    now = indicators.bollinger(values, period, stdev)
+    before = indicators.bollinger(values[:-lookback], period, stdev)
+    if now is None or before is None:
+        return None
+    details["bollinger_width"] = round(now["width"], 2)
+    details["bollinger_width_before"] = round(before["width"], 2)
+    if now["width"] <= before["width"] + NOISE:
+        return FilterVerdict(False, "bollinger_expanding",
+                             f"Bollinger({period},{stdev:g}) width {now['width']:.2f} is not above its "
+                             f"{before['width']:.2f} of {lookback} bars ago; the bands are not expanding", {})
+    return None
+
+
+def _rule_cpr(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    if config.cpr_max_width_pct is None and not config.cpr_side:
+        return None
+    levels = indicators.cpr(bars)
+    if levels is None:
+        return None
+    pivot, bc, tc, width = levels["pivot"], levels["bc"], levels["tc"], levels["width_percent"]
+    details["cpr"] = {"pivot": round(pivot, 2), "bc": round(bc, 2), "tc": round(tc, 2),
+                      "width_percent": round(width, 4), "from_session": levels["session"]}
+    if config.cpr_max_width_pct is not None and width > config.cpr_max_width_pct:
+        return FilterVerdict(False, "cpr_max_width_pct",
+                             f"today's CPR is {width:.3f}% wide (BC {bc:.2f} to TC {tc:.2f}, pivot {pivot:.2f}, "
+                             f"from {levels['session']}), above the {config.cpr_max_width_pct}% ceiling", {})
+    if config.cpr_side and direction is not None:
+        close = float(last.close)
+        if direction == "bullish" and not close > tc:
+            return FilterVerdict(False, "cpr_side",
+                                 f"bullish signal with close {close:.2f} not above the CPR top (TC) {tc:.2f}", {})
+        if direction == "bearish" and not close < bc:
+            return FilterVerdict(False, "cpr_side",
+                                 f"bearish signal with close {close:.2f} not below the CPR bottom (BC) {bc:.2f}", {})
+    return None
+
+
+def _rule_rsi_side(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    """min_rsi/max_rsi apply one floor and ceiling to every signal; this mirrors the level by direction."""
+    if config.rsi_side is None or direction is None:
+        return None
+    value = indicators.rsi(indicators.closes(bars), config.rsi_period)
+    if value is None:
+        return None
+    details["rsi"] = round(value, 1)
+    floor, ceiling = config.rsi_side, 100.0 - config.rsi_side
+    if direction == "bullish" and value < floor:
+        return FilterVerdict(False, "rsi_side",
+                             f"RSI({config.rsi_period}) {value:.1f} is below {floor:g}, against this bullish signal", {})
+    if direction == "bearish" and value > ceiling:
+        return FilterVerdict(False, "rsi_side",
+                             f"RSI({config.rsi_period}) {value:.1f} is above {ceiling:g}, against this bearish signal", {})
+    return None
+
+
+def _rule_breadth(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    """The index's stocks must lean the signal's way: a share of them above their own session VWAP."""
+    breadth = context.get("breadth")
+    if config.breadth_above_vwap_pct is None or direction is None or not breadth:
+        return None
+    pct = _as_float(breadth.get("above_vwap_pct"))
+    if pct is None:
+        return None
+    details["breadth_above_vwap_pct"] = round(pct, 1)
+    need = config.breadth_above_vwap_pct
+    if direction == "bullish" and pct < need:
+        return FilterVerdict(False, "breadth_above_vwap_pct",
+                             f"only {pct:.0f}% of the stocks are above their VWAP; a bullish signal needs {need:g}%", {})
+    if direction == "bearish" and pct > 100.0 - need:
+        return FilterVerdict(False, "breadth_above_vwap_pct",
+                             f"{pct:.0f}% of the stocks are above their VWAP; a bearish signal needs at most {100.0 - need:g}%", {})
+    return None
+
+
+def _rule_heavyweights(config, bars, last, direction, details, context) -> Optional[FilterVerdict]:
+    """The biggest stocks move the index: enough of them must be on the signal's side of their VWAP."""
+    breadth = context.get("breadth")
+    if config.heavyweights_min is None or direction is None or not breadth:
+        return None
+    key = "heavy_up" if direction == "bullish" else "heavy_down"
+    count = _as_int(breadth.get(key))
+    if count is None:
+        return None
+    total = _as_int(breadth.get("heavy_total"))
+    details[key] = count
+    if count < config.heavyweights_min:
+        side = "above" if direction == "bullish" else "below"
+        return FilterVerdict(False, "heavyweights_min",
+                             f"{count}{f' of {total}' if total else ''} heavyweights are {side} their VWAP; "
+                             f"a {direction} signal needs {config.heavyweights_min}", {})
     return None
 
 

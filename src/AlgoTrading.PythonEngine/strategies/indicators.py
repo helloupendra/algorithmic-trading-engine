@@ -85,6 +85,28 @@ def session_bars(bars: Sequence[Any], upto_index: int = -1) -> List[Any]:
     return [b for b in bars[:end] if session_date(b) == day]
 
 
+def previous_session_bars(bars: Sequence[Any]) -> List[Any]:
+    """
+    The bars of the last session before the last bar's own, or [] when the
+    series holds none.
+
+    Any earlier date counts as complete because it is over; whether the series
+    began at that session's open is the caller's history, not something the
+    bars can tell (the warm-ups load 15+ calendar days, so it does).
+    """
+    if not bars:
+        return []
+    dates = [session_date(b) for b in bars]
+    today = dates[-1]
+    if today is None:
+        return []
+    earlier = [d for d in dates if d is not None and d < today]
+    if not earlier:
+        return []
+    previous = max(earlier)
+    return [b for b, d in zip(bars, dates) if d == previous]
+
+
 def closes(bars: Sequence[Any]) -> List[float]:
     return [float(b.close) for b in bars]
 
@@ -114,6 +136,51 @@ def ema(values: Sequence[float], period: int) -> Optional[float]:
     for v in values[period:]:
         value = v * multiplier + value * (1.0 - multiplier)
     return value
+
+
+def _ema_series(values: Sequence[float], period: int) -> List[float]:
+    """The EMA at every value from the `period`-th on, seeded as :func:`ema` is."""
+    if period < 1 or len(values) < period:
+        return []
+    multiplier = 2.0 / (period + 1.0)
+    out = [sum(values[:period]) / float(period)]
+    for v in values[period:]:
+        out.append(v * multiplier + out[-1] * (1.0 - multiplier))
+    return out
+
+
+def macd(values: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Optional[Dict[str, float]]:
+    """
+    MACD at the last value: {"macd", "signal", "histogram"}.
+
+    The MACD line is EMA(fast) - EMA(slow), the signal line an EMA(signal) of
+    that line, the histogram their difference. Every EMA is SMA-seeded like
+    :func:`ema`, so the signal line exists only once `signal` MACD values do:
+    `slow + signal - 1` values in all, None before.
+    """
+    if fast < 1 or signal < 1 or slow <= fast or len(values) < slow + signal - 1:
+        return None
+    slow_line = _ema_series(values, slow)
+    fast_line = _ema_series(values, fast)[slow - fast:]   # aligned to the slow EMA's first value
+    macd_line = [f - s for f, s in zip(fast_line, slow_line)]
+    signal_line = _ema_series(macd_line, signal)
+    return {"macd": macd_line[-1], "signal": signal_line[-1], "histogram": macd_line[-1] - signal_line[-1]}
+
+
+def bollinger(values: Sequence[float], period: int = 20, stdev: float = 2.0) -> Optional[Dict[str, float]]:
+    """
+    Bollinger bands at the last value: {"middle", "upper", "lower", "width"}.
+
+    The middle is the SMA, the bands `stdev` population standard deviations
+    either side (Bollinger's own definition, not the sample one), and the width
+    is upper - lower in price points.
+    """
+    if period < 2 or len(values) < period:
+        return None
+    window = [float(v) for v in values[-period:]]
+    middle = sum(window) / float(period)
+    spread = stdev * (sum((v - middle) ** 2 for v in window) / float(period)) ** 0.5
+    return {"middle": middle, "upper": middle + spread, "lower": middle - spread, "width": 2.0 * spread}
 
 
 def vwap(bars: Sequence[Any]) -> Optional[float]:
@@ -213,6 +280,45 @@ def supertrend(bars: Sequence[Any], period: int = 10, multiple: float = 3.0) -> 
     return {"direction": direction, "level": round(lower if direction == "bullish" else upper, 2)}
 
 
+def parabolic_sar(bars: Sequence[Any], step: float = 0.02, maximum: float = 0.2) -> Optional[Dict[str, Any]]:
+    """
+    Wilder's Parabolic SAR on the last bar: {"sar", "direction"}.
+
+    The first two closes pick the opening trend (SAR at the first bar's low and
+    the extreme point at the second bar's high when rising, the mirror when
+    falling). Each bar the SAR moves `af` of the way to the extreme point, never
+    inside the two bars before it; `af` grows by `step` with every new extreme,
+    up to `maximum`. A bar that trades through the SAR reverses the trend and
+    the SAR jumps to the old extreme point, held outside the reversal bar and
+    the one before it (TA-Lib's guard), so a close is always on the trend's side.
+    """
+    if step <= 0 or maximum < step or len(bars) < 3:
+        return None
+    highs = [float(b.high) for b in bars]
+    lows = [float(b.low) for b in bars]
+    rising = float(bars[1].close) >= float(bars[0].close)
+    sar = lows[0] if rising else highs[0]
+    extreme = highs[1] if rising else lows[1]
+    af = step
+    for i in range(2, len(bars)):
+        sar = sar + af * (extreme - sar)
+        if rising:
+            sar = min(sar, lows[i - 1], lows[i - 2])
+            if lows[i] < sar:
+                rising, sar = False, max(extreme, highs[i], highs[i - 1])
+                extreme, af = lows[i], step
+            elif highs[i] > extreme:
+                extreme, af = highs[i], min(af + step, maximum)
+        else:
+            sar = max(sar, highs[i - 1], highs[i - 2])
+            if highs[i] > sar:
+                rising, sar = True, min(extreme, lows[i], lows[i - 1])
+                extreme, af = highs[i], step
+            elif lows[i] < extreme:
+                extreme, af = lows[i], min(af + step, maximum)
+    return {"sar": sar, "direction": "bullish" if rising else "bearish"}
+
+
 def adx(bars: Sequence[Any], period: int = 14) -> Optional[Dict[str, float]]:
     """
     Wilder's ADX with both directional indicators: {"adx", "plus_di", "minus_di"}.
@@ -259,6 +365,30 @@ def adx(bars: Sequence[Any], period: int = 14) -> Optional[Dict[str, float]]:
     }
 
 
+def heikin_ashi(bars: Sequence[Any]) -> Optional[Dict[str, float]]:
+    """
+    The last Heikin-Ashi candle: {"open", "high", "low", "close"}.
+
+    HA close is the bar's OHLC average; HA open is the midpoint of the previous
+    HA candle's body, seeded with the first bar's own (open + close) / 2. At
+    least two bars, so the open is a real carried value rather than the seed.
+    """
+    if len(bars) < 2:
+        return None
+    ha_open = (float(bars[0].open) + float(bars[0].close)) / 2.0
+    ha_close = (float(bars[0].open) + float(bars[0].high) + float(bars[0].low) + float(bars[0].close)) / 4.0
+    for bar in bars[1:]:
+        ha_open = (ha_open + ha_close) / 2.0
+        ha_close = (float(bar.open) + float(bar.high) + float(bar.low) + float(bar.close)) / 4.0
+    last = bars[-1]
+    return {
+        "open": ha_open,
+        "high": max(float(last.high), ha_open, ha_close),
+        "low": min(float(last.low), ha_open, ha_close),
+        "close": ha_close,
+    }
+
+
 def opening_range(bars: Sequence[Any], minutes: int = 15) -> Optional[Dict[str, float]]:
     """The session's first `minutes` as {"high", "low"}; None before it is complete."""
     session = session_bars(bars)
@@ -272,6 +402,21 @@ def opening_range(bars: Sequence[Any], minutes: int = 15) -> Optional[Dict[str, 
     if not inside or (ist_of(session[-1]) or first) < end:
         return None
     return {"high": max(float(b.high) for b in inside), "low": min(float(b.low) for b in inside)}
+
+
+def donchian(bars: Sequence[Any], period: int = 20) -> Optional[Dict[str, float]]:
+    """
+    The Donchian channel of the last `period` bars: {"upper", "lower", "middle"}.
+
+    The current bar is included like everywhere in this file; a rule asking
+    whether price broke the channel of the bars BEFORE it passes `bars[:-1]`.
+    """
+    if period < 1 or len(bars) < period:
+        return None
+    window = bars[-period:]
+    upper = max(float(b.high) for b in window)
+    lower = min(float(b.low) for b in window)
+    return {"upper": upper, "lower": lower, "middle": (upper + lower) / 2.0}
 
 
 def move_from_open_percent(bars: Sequence[Any]) -> Optional[float]:
@@ -301,6 +446,39 @@ def gap_percent(bars: Sequence[Any]) -> Optional[float]:
         return None
     previous_close = float(bars[first_index - 1].close)
     return None if previous_close == 0 else 100.0 * (float(session[0].open) - previous_close) / previous_close
+
+
+def cpr(bars: Sequence[Any]) -> Optional[Dict[str, Any]]:
+    """
+    Today's central pivot range, from the previous session's high, low and close:
+    {"pivot", "bc", "tc", "width_percent", "high", "low", "close", "session"}.
+
+    P = (H + L + C) / 3, BC = (H + L) / 2, TC = 2P - BC, with TC and BC swapped
+    when the close sat below the range's midpoint so that TC is always the top.
+    The width, as a percentage of the pivot, is the comparable form: a narrow
+    CPR tends to come before a trending day, a wide one before a range.
+
+    The close is the previous session's last bar, which can differ by a few
+    points from the exchange's official close (a closing-auction average).
+    None when the series holds no earlier session.
+    """
+    previous = previous_session_bars(bars)
+    if not previous:
+        return None
+    high = max(float(b.high) for b in previous)
+    low = min(float(b.low) for b in previous)
+    close = float(previous[-1].close)
+    pivot = (high + low + close) / 3.0
+    if pivot <= 0:
+        return None
+    bc = (high + low) / 2.0
+    tc = 2.0 * pivot - bc
+    if tc < bc:
+        tc, bc = bc, tc
+    return {
+        "pivot": pivot, "bc": bc, "tc": tc, "width_percent": 100.0 * (tc - bc) / pivot,
+        "high": high, "low": low, "close": close, "session": session_date(previous[-1]),
+    }
 
 
 def rsi(values: Sequence[float], period: int = 14) -> Optional[float]:
