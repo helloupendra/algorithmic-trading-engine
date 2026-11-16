@@ -699,7 +699,7 @@ public class AiController : ControllerBase
         if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam
             or AiCatalog.AiTrader or AiCatalog.AiTraderReflect or AiCatalog.ExecutionReporter
             or AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst or AiCatalog.FundamentalAnalyst
-            or AiCatalog.DataCurator or AiCatalog.ComplianceTriage or AiCatalog.StrategyResearcher))
+            or AiCatalog.DataCurator or AiCatalog.ComplianceTriage or AiCatalog.StrategyResearcher or AiCatalog.MarketImpact))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }

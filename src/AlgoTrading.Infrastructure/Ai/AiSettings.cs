@@ -103,6 +103,18 @@ public sealed class AiSettings
     /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
     public int NewsLookbackHours { get; set; } = 24;
 
+    /// <summary>Minutes between the Market Impact Analyst's looks at the newest headlines (it runs around the clock).</summary>
+    public int MarketImpactEveryMinutes { get; set; } = 2;
+
+    /// <summary>Headlines in one Market Impact Analyst call: most get a one-word answer, the big ones three short lines.</summary>
+    public int MarketImpactBatchSize { get; set; } = 10;
+
+    /// <summary>Batches it may read in one turn while full ones keep coming (1 to 4), so a busy hour does not pile up.</summary>
+    public int MarketImpactBatchesPerTurn { get; set; } = 3;
+
+    /// <summary>How far back, by when the desk first saw them, it rates headlines it has not read: news, not history.</summary>
+    public int MarketImpactLookbackMinutes { get; set; } = 120;
+
     /// <summary>Minutes between the Fundamental Analyst's polls for new results filings.</summary>
     public int FundamentalEveryMinutes { get; set; } = 10;
 
@@ -203,7 +215,7 @@ public sealed class AiSettings
         $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}," +
         $"{AiCatalog.TechnicalAnalyst},{AiCatalog.OptionsAnalyst},{AiCatalog.MacroAnalyst},{AiCatalog.FundamentalAnalyst}," +
         $"{AiCatalog.Validator},{AiCatalog.RiskMemo},{AiCatalog.ExecutionReporter}," +
-        $"{AiCatalog.DataCurator},{AiCatalog.StrategyResearcher},{AiCatalog.ComplianceTriage}";
+        $"{AiCatalog.DataCurator},{AiCatalog.StrategyResearcher},{AiCatalog.ComplianceTriage},{AiCatalog.MarketImpact}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;
@@ -523,6 +535,18 @@ public sealed class AiVoiceAlertsSettings
 
     /// <summary>Event messages one owner gets in an hour at most; past it they fold into one "and N more" line. Briefings are not counted.</summary>
     public int MaxPerHour { get; set; } = 8;
+
+    /// <summary>
+    /// Tell the owners the market news the Market Impact Analyst rated big, around the clock, in Hinglish (owner, 16 Nov
+    /// 2026). Off, the agent still rates every headline and nothing is told.
+    /// </summary>
+    public bool News { get; set; } = true;
+
+    /// <summary>The lowest impact (0 to 3) that is told: 2 can move NIFTY by 0.3% to 1%, 3 by about 1% or more.</summary>
+    public int NewsMinImpact { get; set; } = 2;
+
+    /// <summary>A headline the desk first saw longer ago than this is not told, however big: it is no longer news.</summary>
+    public int NewsMaxAgeMinutes { get; set; } = 60;
 }
 
 /// <summary>

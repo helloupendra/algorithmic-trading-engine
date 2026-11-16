@@ -270,6 +270,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.AiReportWriter>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.TradeReviewerAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.IncidentExplainerAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.NewsAnalystAgent>();
+// The big news, rated every two minutes around the clock; Ira tells the owner (16 Nov 2026).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.MarketImpactAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantCheckAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantExamAgent>();
 // The Phase 4 agents that word what code measured: the data checks (night and 08:00), the week's circulars

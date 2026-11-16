@@ -3,18 +3,25 @@ using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Api.Services.Today;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Api.Services.AiVoice;
 
 /// <summary>Something Ira tells the owners first: what it was, when it happened, and the words.</summary>
-/// <param name="Kind"><c>ai-trader</c>, <c>risk</c>, <c>incident</c> or <c>compliance</c>.</param>
-/// <param name="Key">The record it came from: <c>decision:118</c>, <c>signal:40512</c>, <c>incident:206</c>, <c>compliance:3</c>.</param>
+/// <param name="Kind"><c>ai-trader</c>, <c>risk</c>, <c>incident</c>, <c>compliance</c> or <c>news</c>.</param>
+/// <param name="Key">The record it came from: <c>decision:118</c>, <c>signal:40512</c>, <c>incident:206</c>, <c>compliance:3</c>, <c>news:9012</c>.</param>
 public sealed record IraEvent(string Kind, string Key, DateTime AtUtc, string Text);
+
+/// <summary>The market as a news alert states it: today's change of NIFTY and of crude oil, each only while it is live.</summary>
+/// <param name="NiftyPercent">NIFTY 50's change on the day, in per cent; null when its quote is not fresh.</param>
+/// <param name="CrudePercent">MCX crude oil's change on the day; null when not fresh.</param>
+public sealed record IraMarketNow(decimal? NiftyPercent, decimal? CrudePercent);
 
 /// <summary>The morning briefing's facts; a null part is missing and said so.</summary>
 /// <param name="Technical">Each index the Technical Analyst graded, "bullish B"; null with no report today.</param>
@@ -83,7 +90,13 @@ public interface IIraDesk
 /// and older history is not.
 /// </para>
 /// </remarks>
-public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today = null, DeskPlanBuilder? plan = null) : IIraDesk
+public sealed class IraDesk(
+    TradingDbContext db,
+    RunPnl pnl,
+    TodayBuilder? today = null,
+    DeskPlanBuilder? plan = null,
+    IMarketPulseService? pulse = null,
+    IOptionsMonitor<AiSettings>? settings = null) : IIraDesk
 {
     /// <summary>Rows read from a source in one pass at most; the rest wait for the next minute.</summary>
     public const int Batch = 200;
@@ -92,6 +105,10 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
     public const string RiskKind = "risk";
     public const string IncidentKind = "incident";
     public const string ComplianceKind = "compliance";
+    public const string NewsKind = "news";
+
+    /// <summary>A quote older than this is not "now": the market is closed, or the feed has stopped.</summary>
+    public static readonly TimeSpan QuoteFresh = TimeSpan.FromMinutes(15);
 
     private const string CloseGroup = "CLOSE_GROUP";
 
@@ -104,12 +121,14 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
         long signals = await db.SimulationSignals.MaxAsync(s => (long?)s.Id, cancellationToken) ?? 0;
         long incidents = await db.Incidents.MaxAsync(i => (long?)i.Id, cancellationToken) ?? 0;
         long compliance = await db.ComplianceFollowUps.MaxAsync(f => (long?)f.Id, cancellationToken) ?? 0;
+        long news = await db.AiReports.Where(r => r.AgentKey == AiCatalog.MarketImpact).MaxAsync(r => (long?)r.Id, cancellationToken) ?? 0;
         return new IraMarks
         {
             Decisions = IraCursor.At(decisions),
             Signals = IraCursor.At(signals),
             Incidents = IraCursor.At(incidents),
             Compliance = IraCursor.At(compliance),
+            News = IraCursor.At(news),
         };
     }
 
@@ -121,7 +140,74 @@ public sealed class IraDesk(TradingDbContext db, RunPnl pnl, TodayBuilder? today
         events.AddRange(await RiskAsync(marks.Signals, fresh, cancellationToken));
         events.AddRange(await IncidentsAsync(marks.Incidents, fresh, cancellationToken));
         events.AddRange(await ComplianceAsync(marks.Compliance, fresh, cancellationToken));
+        events.AddRange(await NewsAsync(marks.News, nowUtc, fresh, cancellationToken));
         return events.OrderBy(e => e.AtUtc).ThenBy(e => e.Key, StringComparer.Ordinal).ToList();
+    }
+
+    // ---------- the big news (owner, 16 Nov 2026) ----------
+
+    /// <summary>
+    /// Each Market Impact record rated <see cref="AiVoiceAlertsSettings.NewsMinImpact"/> or more, not a repeat of a
+    /// story already told, about a headline first seen within <see cref="AiVoiceAlertsSettings.NewsMaxAgeMinutes"/>:
+    /// told once, any hour of any day, with NIFTY's and crude's change now when they are live. A try that failed and
+    /// may still be retried is waited for; an invalid record is never told.
+    /// </summary>
+    private async Task<List<IraEvent>> NewsAsync(IraCursor cursor, DateTime nowUtc, DateTime fresh, CancellationToken cancellationToken)
+    {
+        var all = settings?.CurrentValue ?? new AiSettings();
+        var alerts = all.Voice.Alerts;
+        int minImpact = Math.Clamp(alerts.NewsMinImpact, 1, 3);
+        var oldest = nowUtc.AddMinutes(-Math.Max(1, alerts.NewsMaxAgeMinutes));
+
+        long newest = await db.AiReports.Where(r => r.AgentKey == AiCatalog.MarketImpact).MaxAsync(r => (long?)r.Id, cancellationToken) ?? 0;
+        var rows = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.MarketImpact && r.Id > cursor.Through)
+            .OrderBy(r => r.Id)
+            .Take(Batch)
+            .Select(r => new { r.Id, r.Status, r.Attempts, r.UpdatedUtc, r.DataJson })
+            .ToListAsync(cancellationToken);
+
+        var facts = rows.ToDictionary(r => r.Id, r => r.Status == AiReportStatus.Ok ? MarketImpactAgent.ReadFacts(r.DataJson) : null);
+        IraVerdict Judge(long id, string status, int attempts, DateTime updatedUtc)
+        {
+            if (!alerts.News) return IraVerdict.Skip;
+            if (status == AiReportStatus.Failed)
+            {
+                return attempts < Math.Max(1, all.MaxReportAttempts) && Utc(updatedUtc) >= oldest ? IraVerdict.Wait : IraVerdict.Skip;
+            }
+
+            return status == AiReportStatus.Ok && facts[id] is { } f && f.Impact >= minImpact && f.RepeatOf is null
+                   && f.FirstSeenUtc is DateTime seen && seen >= oldest && Utc(updatedUtc) >= fresh
+                ? IraVerdict.Tell
+                : IraVerdict.Skip;
+        }
+
+        var tell = cursor.Pass(rows.Select(r => (r.Id, Judge(r.Id, r.Status, r.Attempts, r.UpdatedUtc))).ToList(), rows.Count == Batch, newest);
+        var told = rows.Where(r => tell.Contains(r.Id)).ToList();
+        if (told.Count == 0) return [];
+
+        var market = await MarketNowAsync(nowUtc, cancellationToken);
+        return told.Select(r => new IraEvent(NewsKind, $"news:{r.Id}", Utc(r.UpdatedUtc), IraAlertText.News(facts[r.Id]!, market))).ToList();
+    }
+
+    /// <summary>NIFTY's and crude's change on the day from the Market pulse, each only while its quote is fresh.</summary>
+    private async Task<IraMarketNow> MarketNowAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        if (pulse is null) return new IraMarketNow(null, null);
+        try
+        {
+            var items = (await pulse.GetAsync(cancellationToken)).Groups.SelectMany(g => g.Items).ToList();
+            decimal? Live(Func<AlgoTrading.Contracts.MarketData.MarketPulseItem, bool> which) =>
+                items.FirstOrDefault(which) is { ChangePercent: decimal pct, UpdatedUtc: DateTime at } && nowUtc - Utc(at) <= QuoteFresh ? pct : null;
+            return new IraMarketNow(
+                Live(i => i.Symbol == "NSE:NIFTY50-INDEX" || i.Name == "NIFTY 50"),
+                Live(i => i.Name == "Crude oil"));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The news is told without the market's numbers rather than not at all.
+            return new IraMarketNow(null, null);
+        }
     }
 
     // ---------- the AI Trader ----------

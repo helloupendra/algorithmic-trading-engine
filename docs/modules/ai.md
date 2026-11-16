@@ -19,7 +19,9 @@ All fifteen agents are built (owner, 10 Oct 2026: every AI agent built and on):
 - three from Phase 4 that word what code measured, on from the start: the **[Data Curator](#data-curator)**, the
   **[Compliance Triage](#compliance-triage)** and the **[Strategy Researcher](#strategy-researcher)**;
 - the [AI Trader](ai_trader.md), and from 10 Oct the three checks around its live paper orders: the **Validator**, the
-  **Risk Memo** and the **Execution Reporter** ([below](#the-checks-around-the-ai-trader)).
+  **Risk Memo** and the **Execution Reporter** ([below](#the-checks-around-the-ai-trader));
+- from 16 Nov the sixteenth, the **[Market Impact Analyst](#market-impact-analyst)**: every new headline rated for how
+  much it can move NIFTY, around the clock, the big ones told by Ira in Hinglish.
 
 None is left planned. The page still shows each agent's phase, so it reads as the whole plan and not just
 what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
@@ -694,6 +696,45 @@ the code handed over:
   keeps both and says it was clamped); one or more facts cited, each an id that was handed over; no number in the
   reason or the risks that the facts do not state (its own size modifier may be said in words).
 
+### Market Impact Analyst
+
+Added 16 Nov 2026. The owner wanted to know at once when news comes, how much it can move the market, and what the
+world's markets mean for India's.
+
+- **Reads** (`MarketImpactAgent`): the headlines the desk first saw in the last `Ai:MarketImpactLookbackMinutes`
+  (120) that it has not read yet, newest first, `Ai:MarketImpactBatchSize` (10) to a call. Up to
+  `Ai:MarketImpactBatchesPerTurn` (3) calls a turn while full batches keep coming. A headline published over a day ago
+  is history, whatever the recorder saw. It also reads the stories it rated 2 or more in the last six hours (up to 12),
+  so it can name one an item repeats.
+- **When**: every `Ai:MarketImpactEveryMinutes` (2), around the clock. On from the start; the switch on AI → Agents
+  turns it off. Analyst tier.
+- **Writes**: one report per headline (subject type `news`).
+  - **Impact 0 to 3:**
+    - 3: NIFTY by about 1% or more, or a changed day.
+    - 2: NIFTY by 0.3% to 1%, a heavyweight or a sector.
+    - 1: small.
+    - 0: none.
+  - **For a 2 or a 3, also:**
+    - the scope (global, india, sector, company);
+    - the channels (oil, rates-dollar, rupee, fii-flows, global-risk, india-policy, geopolitics, sector, company, other);
+    - which way NIFTY is pushed (up, down, mixed, unclear);
+    - the day's swing (higher, lower, same);
+    - the horizon (minutes, day, weeks);
+    - a confidence;
+    - three Hinglish lines: what (kya hua), why (India aur NIFTY pe asar kyon), watch (aage kya dekhna hai).
+- **Checked** (`MarketImpactAgent.Check`):
+  - the impact is a whole number from 0 to 3, written as a number or as text;
+  - for a 2 or a 3, every field is from its list;
+  - each line is present and at most 160 characters;
+  - every number a line states is in the headline or its summary. Grouping commas are ignored. Index names with
+    digits (NIFTY 50, S&P 500) and a number straight after letters (Q2, FY27) are not stated numbers;
+  - `repeatOf` names one of the stories the model was shown.
+
+  An invalid record is never told.
+- **Told** by Ira, any hour ([Ira speaks first](#ira-speaks-first)).
+- **Chat**: on AI → Assistant. It reads `get_news`, `get_quotes` and `get_forecasts`, and answers in Hinglish when
+  spoken to in Hinglish.
+
 ### Fundamental Analyst
 
 - **Reads** (`FundamentalAnalystAgent`): the corporate filings recorder's rows (`corporate_announcements`) of the last
@@ -1335,6 +1376,7 @@ the desk's.
 | Risk rules closed a group | A live run's `CLOSE_GROUP` signed `risk-guard` whose reason is a group rule's. A leg's own stop is not told. | "Risk rules closed group G1 of Fulcrum on BANKNIFTY in coderforchange's account: its group target was hit. The run is ₹1,240 up after charges so far." |
 | A Sentinel incident | An incident at `high` or `critical` when Ira first sees it: its title and the first line of its summary. One that opens at medium and rises later is not told. A reopened one keeps its row and is not told again. | "Sentinel opened a critical incident: Dhan feed silent. No tick for 5 minutes since 10:52 IST." |
 | A circular applies | A `compliance_follow_ups` row with an alert ([the Compliance Triage's alert](#compliance-triage)), once per circular: its source, title and the dates it takes effect. A row made by Mark handled before any alert is not told. | "A SEBI circular applies to the desk: Review of certain aspects of the Closing Auction Session, market timings and settlement methodology for derivatives contracts. It takes effect on 7 December 2026 and 8 February 2027. What changes is on the Desk System channel." |
+| Big market news | Any hour of any day (owner, 16 Nov 2026). An `ok` [Market Impact](#market-impact-analyst) record rated `NewsMinImpact` (2) or more, not a repeat of a story already told, about a headline first seen within `NewsMaxAgeMinutes` (60). In Hinglish. NIFTY's and MCX crude's change on the day are added only while their quotes are under 15 minutes old. A failed try that may still be retried holds the mark; an invalid record is never told. `Ai:Voice:Alerts:News` false stops these alone. | "Bahut badi khabar, asar 3/3 (Reuters, 10:05 IST): Iran ne peace talks ka ishaara diya, Brent $6 gira. NIFTY pe asar: upar, din zyaada hil sakta hai. Abhi aaj: NIFTY +0.62%, crude -3.10%. Kyon: … Dekhna: …" |
 
 The other wordings: "The AI Trader exited 2 lots of NIFTY 25100 CE at ₹88.50. Its reason: …", "The AI Trader started
 Ghost Tangent Crossings on BANKNIFTY with 1 lot, run 512. Its reason: …", "The AI Trader stopped run 512, Ghost Tangent

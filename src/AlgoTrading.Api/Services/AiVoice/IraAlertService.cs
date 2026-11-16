@@ -34,6 +34,12 @@ public sealed class IraMarks
     /// <summary>The circulars the Compliance Triage found apply (<c>compliance_follow_ups</c> with an alert).</summary>
     public IraCursor Compliance { get; set; } = new();
 
+    /// <summary>
+    /// The Market Impact Analyst's records (<c>ai_reports</c> of <c>market-impact</c>): the big news. A marks row from
+    /// before 16 Nov 2026 has none and starts at nothing read, which the freshness rule keeps from telling history.
+    /// </summary>
+    public IraCursor News { get; set; } = new();
+
     /// <summary>The IST day (yyyy-MM-dd) the last morning briefing went.</summary>
     public string? Morning { get; set; }
 

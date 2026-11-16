@@ -25,7 +25,7 @@ public class AiSettingsTests
 
         Assert.All(state.Tiers, t => Assert.Equal(t.Def.DefaultChain, t.Chain));
         Assert.All(state.Tiers, t => Assert.False(t.Overridden));
-        Assert.Equal(15, state.Agents.Count);
+        Assert.Equal(16, state.Agents.Count);
         Assert.Equal("on", state.Agent(AiCatalog.DeskAssistant)!.Status);
         // The scheduled agents call the provider by themselves: off until the owner turns them on.
         string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader];
@@ -34,7 +34,9 @@ public class AiSettingsTests
         // AI Trader's placements (they call a model only when it places), and the three that read only what code measured.
         string[] onByDefault = [AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
             AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter,
-            AiCatalog.DataCurator, AiCatalog.StrategyResearcher, AiCatalog.ComplianceTriage];
+            AiCatalog.DataCurator, AiCatalog.StrategyResearcher, AiCatalog.ComplianceTriage,
+            // The big news (owner, 16 Nov 2026): rated and told from the start.
+            AiCatalog.MarketImpact];
         Assert.All(onByDefault, key => Assert.Equal("on", state.Agent(key)!.Status));
         Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !onByDefault.Contains(a.Def.Key)),
             a => Assert.Equal("planned", a.Status));
@@ -134,9 +136,9 @@ public class AiSettingsTests
     }
 
     [Fact]
-    public void The_catalog_numbers_fifteen_agents_once_each_and_builds_the_phase_three_four_the_desk_analysts_and_the_ai_trader()
+    public void The_catalog_numbers_sixteen_agents_once_each_and_builds_the_phase_three_four_the_desk_analysts_the_ai_trader_and_market_impact()
     {
-        Assert.Equal(Enumerable.Range(1, 15), AiCatalog.Agents.Select(a => a.Number));
+        Assert.Equal(Enumerable.Range(1, 16), AiCatalog.Agents.Select(a => a.Number));
         Assert.Equal(AiCatalog.Agents.Count, AiCatalog.Agents.Select(a => a.Key).Distinct().Count());
         Assert.Equal(
             new[]
@@ -144,7 +146,7 @@ public class AiSettingsTests
                 AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
                 AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
                 AiCatalog.DataCurator, AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.StrategyResearcher,
-                AiCatalog.ComplianceTriage, AiCatalog.ExecutionReporter, AiCatalog.AiTrader,
+                AiCatalog.ComplianceTriage, AiCatalog.ExecutionReporter, AiCatalog.AiTrader, AiCatalog.MarketImpact,
             },
             AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
         Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));

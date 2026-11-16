@@ -236,9 +236,9 @@ public class AiControllerTests
         Assert.Equal(6, overview.Today.AvgSeconds);
         Assert.Equal(10, overview.Today.P95Seconds);
         Assert.True(overview.Provider.KeyConfigured);
-        // Built: all fifteen. The analysts, the checks around the AI Trader and the three offline agents start on (owner,
-        // 10 Oct 2026: every agent built and on); four scheduled agents start off.
-        Assert.Equal(new AiAgentCounts(15, 15, 11, 4, 0), overview.Agents);
+        // Built: all sixteen. The analysts, the checks around the AI Trader and the three offline agents start on (owner,
+        // 10 Oct 2026: every agent built and on), and the Market Impact Analyst (16 Nov); four scheduled agents start off.
+        Assert.Equal(new AiAgentCounts(16, 16, 12, 4, 0), overview.Agents);
         Assert.Equal(4, overview.Tiers.Count);
     }
 
