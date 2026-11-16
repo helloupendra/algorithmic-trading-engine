@@ -9,6 +9,7 @@ with every other vendor.
 """
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 
@@ -20,6 +21,39 @@ from core.live.vendor_feed import FeedEvent, VendorFeed
 
 #: How often to ask the API for a replacement while a rejected token stands.
 TOKEN_REPLACEMENT_POLL_SECONDS = 10
+
+#: Symbols one FYERS data socket may carry on the account's plan. Asking for
+#: more is not trimmed by FYERS: the whole subscription is refused (code 51001,
+#: "You requested more than your Standard plan's 100-symbol limit"), the socket
+#: stays open and silent, and the watchdog reconnects into the same refusal
+#: every two minutes — the dead feed of 16 Nov 2026, 229 symbols asked. The
+#: Standard plan allows 100, Prime 5,000; set FYERS_MAX_SYMBOLS to the plan's.
+DEFAULT_MAX_SYMBOLS = 100
+
+
+def _max_symbols_from_env() -> int:
+    raw = os.environ.get("FYERS_MAX_SYMBOLS", "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_MAX_SYMBOLS
+    except ValueError:
+        value = DEFAULT_MAX_SYMBOLS
+    return value if value > 0 else DEFAULT_MAX_SYMBOLS
+
+
+def _priority(symbol: str) -> int:
+    """
+    Which symbols keep their place when not all fit: spot indices first (every
+    strategy and the morning check read them), then futures, then NIFTY's own
+    contracts, then the rest. Within a rank the caller's order is kept.
+    """
+    name = str(symbol).upper()
+    if name.endswith("-INDEX"):
+        return 0
+    if name.endswith("FUT"):
+        return 1
+    if name.startswith("NSE:NIFTY") and not name.startswith(("NSE:NIFTYBANK", "NSE:NIFTYNXT")):
+        return 2
+    return 3
 
 
 def is_token_rejection(message) -> bool:
@@ -117,14 +151,18 @@ class FyersFeed(VendorFeed):
     # carry over unchanged.
     source_name = SOURCE_NAME
     lock_key = "fyers:live:ingestor:lock"
-    max_symbols = 200
+    max_symbols = DEFAULT_MAX_SYMBOLS
     ready_event = FeedEvent.CONNECTED
 
-    def __init__(self, http=None, api_base_url: str | None = None, verify_ssl: bool | str | None = None):
+    def __init__(self, http=None, api_base_url: str | None = None, verify_ssl: bool | str | None = None,
+                 max_symbols: int | None = None):
         self._api = (api_base_url or API_BASE_URL).rstrip("/")
         self._verify = tls_verify(VERIFY_SSL if verify_ssl is None else verify_ssl)
         self._http = http or build_session(base_url=self._api, verify_ssl=self._verify)
         self._socket = None
+        self.max_symbols = max_symbols if max_symbols and max_symbols > 0 else _max_symbols_from_env()
+        #: What is on the wire now: the plan's limit counts these.
+        self._subscribed: set[str] = set()
 
     @classmethod
     def from_env(cls):
@@ -183,6 +221,8 @@ class FyersFeed(VendorFeed):
 
         # The SDK keeps a singleton; a rebuild must not inherit the dead one.
         data_ws.FyersDataSocket._instance = None
+        # A new socket carries nothing yet.
+        self._subscribed = set()
         self._socket = data_ws.FyersDataSocket(
             access_token=f"{require_app_id()}:{credentials}",
             log_path=FYERS_LOG_PATH,
@@ -205,12 +245,33 @@ class FyersFeed(VendorFeed):
             self._socket = None
 
     def subscribe(self, symbols):
-        if not symbols:
+        """
+        Subscribe what fits under the plan's limit and return those. FYERS
+        refuses a request that would take the socket past the limit outright,
+        so the rest is left out here: indices, futures and NIFTY's contracts
+        first (`_priority`), the runner's order within each.
+        """
+        if not symbols or self._socket is None:
             return []
-        if self._socket is None:
+        wanted, seen = [], set(self._subscribed)
+        for symbol in symbols:
+            name = str(symbol or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                wanted.append(name)
+        wanted.sort(key=_priority)
+        room = max(self.max_symbols - len(self._subscribed), 0)
+        if len(wanted) > room:
+            left_out = wanted[room:]
+            shown = ", ".join(left_out[:8]) + (f" (+{len(left_out) - 8} more)" if len(left_out) > 8 else "")
+            print(f"[fyers] only {room} of {len(wanted)} symbol(s) fit under the {self.max_symbols}-symbol limit "
+                  f"(FYERS_MAX_SYMBOLS); left out: {shown}", flush=True)
+            wanted = wanted[:room]
+        if not wanted:
             return []
-        self._socket.subscribe(symbols=list(symbols), data_type=DEFAULT_DATA_TYPE)
-        return list(symbols)
+        self._socket.subscribe(symbols=wanted, data_type=DEFAULT_DATA_TYPE)
+        self._subscribed.update(wanted)
+        return wanted
 
     def unsubscribe(self, symbols):
         """
@@ -223,10 +284,12 @@ class FyersFeed(VendorFeed):
             return False
         try:
             self._socket.unsubscribe(symbols=list(symbols), data_type=DEFAULT_DATA_TYPE)
+            self._subscribed.difference_update(str(s).strip() for s in symbols)
             return True
         except TypeError:
             try:
                 self._socket.unsubscribe(symbols=list(symbols))
+                self._subscribed.difference_update(str(s).strip() for s in symbols)
                 return True
             except Exception as ex:
                 print(f"[fyers] UNSUBSCRIBE FAILED: {ex}", flush=True)
