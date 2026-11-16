@@ -84,6 +84,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 | `levels` | `"prev_day"` | `prev_day`: yesterday's high/low; `opening_range`: TrendRider's entry | — | — |
 | `first_entry` | `"09:15"` | Earliest candle (by its start) that may enter | Later entries | — |
 | `min_range_frac` | 0 | TrendRider's "today's range so far" filter; off in V2 | Waits for a wider day before entering | — |
+| `max_prev_range` | 0 | TrendRider's "yesterday must have been narrow" filter (filter D); off in V2 since 17 Nov 2026 | Trades only after quiet days, and misses trending stretches | — |
 | `index_stop_adr` | 0.5 | Index move against the entry, × ADR, that sells; 0 turns it off | Fewer stops, bigger losses | Tighter; more whipsaw exits |
 | `trail_arm_adr` | 0.5 | Move in favour, × ADR, after which the trail is live; 0 turns it off | Protects only bigger runs | Protects smaller runs, sells more trends early |
 | `trail_giveback_adr` | 0.35 | Give-back from the best, × ADR, that sells once armed | Holds through deeper pullbacks | Sells sooner |
@@ -91,8 +92,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 
 ## Worked example
 
-NIFTY, ADR 300 points; yesterday's high 25,200, low 25,000 (a 200-point day, 0.67 × ADR: narrow enough for
-`max_prev_range`). Today opens at 25,180.
+NIFTY, ADR 300 points; yesterday's high 25,200, low 25,000. Today opens at 25,180.
 
 - 09:25 candle closes at 25,215: above yesterday's high and the open. **Buy the call** one strike in the
   money. The entry spot is 25,215. (TrendRider could not have bought before 09:45.)
@@ -111,8 +111,11 @@ NIFTY, ADR 300 points; yesterday's high 25,200, low 25,000 (a 200-point day, 0.6
   premium against the position before the index stop is reached.
 - In a replay the exits are checked once a candle, so a replay stop can fill up to a candle's move past
   its level; live checks every tick.
-- The other day filters stay on. They keep the strategy out of fast, wide-range markets (TrendRider took no
-  trade in the 28 Oct – 12 Nov 2026 rally); turning them off is a separate test.
+- **Filter D is off (17 Nov 2026).** TrendRider's "yesterday must have been narrow" filter kept V2 out of every day
+  of the 29 Oct – 12 Nov 2026 rally. With it off, V2 made money in each of three periods of Sep 2024 – Sep 2026 and
+  of the untouched Aug 2020 – Aug 2024, but traded about three times as often and fell further from its peak. It
+  missed the research's pre-set bar on one count (its worst day, by a small margin) and was switched on by the
+  owner's decision. The after-a-wide-day and gap-against filters stay on.
 - A one-hour special session (Muhurat trading) counts as a full day in the ADR and as "yesterday".
 
 ## Facts (machine-readable)

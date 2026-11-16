@@ -16,8 +16,9 @@ Trend Rider V2: TrendRider with the three changes the owner asked for on 16-17 N
 
 Both exits are checked on every call, which live is every tick (the spot), so they act within seconds;
 TrendRider's own exit (a candle closing back across the day's open) and the run's square-off still
-apply. Everything else is TrendRider's, except that the "today's range is still small" filter is off by default
-(`min_range_frac` 0): the day filters, one position at a time, re-entry only on a new
+apply. Everything else is TrendRider's, except that two of its day filters are off by default: "today's range is
+still small" (`min_range_frac` 0) and "yesterday must have been narrow" (`max_prev_range` 0). The rest are kept: the
+after-a-wide-day and gap-against filters, one position at a time, re-entry only on a new
 day extreme, up to `max_entries` a day. Setting `index_stop_adr` or `trail_arm_adr` to 0 turns that exit
 off.
 
@@ -52,6 +53,10 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
         # low is already a range. Of the three combinations replayed for the desk (16-17 Nov 2026), this one had the
         # smallest deepest fall, the rule chosen before the replay.
         "min_range_frac": 0.0,
+        # TrendRider's "yesterday must have been narrow" filter (filter D) is off: it kept V2 out of every day of the
+        # 29 Oct - 12 Nov 2026 rally (run #965). Off, V2 was positive in all six periods of Sep 2024 - Sep 2026 and of
+        # the untouched Aug 2020 - Aug 2024 (lab L8, 17 Nov), with ~3x the trades. On by the owner's word, 17 Nov.
+        "max_prev_range": 0.0,
         "index_stop_adr": 0.5,         # 0 turns the index stop off
         "trail_arm_adr": 0.5,          # 0 turns the trailing exit off
         "trail_giveback_adr": 0.35,

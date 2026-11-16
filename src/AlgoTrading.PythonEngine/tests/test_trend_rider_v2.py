@@ -111,6 +111,29 @@ class TrendRiderV2Test(unittest.TestCase):
         self.assertEqual(sig[0].metadata["trend_rider"]["entry_spot"], frame.close)
         self.assertEqual(state["position"]["adr"], sig[0].metadata["trend_rider"]["adr"])
 
+    def wide_history(self):
+        """Eleven sessions of 100 points each: yesterday was as wide as any day, so filter D would refuse."""
+        self.bars = []
+        for day in self.days[:11]:
+            self.bars += flat_day(day, 20000, 100)
+
+    def test_trades_after_a_wide_day_too(self):
+        # Filter D (max_prev_range) is off in V2: a wide yesterday does not keep it out of a trend day.
+        self.wide_history()
+        strategy = TrendRiderV2Strategy()
+        state = strategy.initialize_state()
+        _, sig, _ = self.until_entry(strategy, state)
+        self.assertEqual(sig[0].signal_type, "OPEN_GROUP")
+        self.assertNotIn("yesterday_not_narrow", state["skipped"])
+
+    def test_filter_d_can_still_be_switched_on(self):
+        self.wide_history()
+        strategy = TrendRiderV2Strategy({"max_prev_range": 0.7})
+        state = strategy.initialize_state()
+        with self.assertRaises(AssertionError):           # until_entry fails: no entry all day
+            self.until_entry(strategy, state)
+        self.assertIn("yesterday_not_narrow", state["skipped"])
+
     def test_bad_parameters_are_refused(self):
         for bad in ({"levels": "weekly"}, {"index_stop_adr": -1}, {"trail_arm_adr": 0.5, "trail_giveback_adr": 0},
                     {"index_stop_adr": "x"}):
