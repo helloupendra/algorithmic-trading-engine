@@ -27,15 +27,22 @@ class ParseTest(unittest.TestCase):
             self.assertIsNone(IndexExitRules.parse(raw), raw)
 
     def test_the_catalogue_defaults_round_trip_as_the_console_sends_them(self):
+        """The console sends the catalogue's defaults back: objects as JSON text, null as the text "null"."""
         import json
         from strategies.directional.trend_rider_v2 import TrendRiderV2Strategy
+        stop_and_trail = {"stop_adr": 0.5, "trail_arm_adr": 0.5, "trail_giveback_adr": 0.35}
         for cls in (TrendRiderStrategy, TrendRiderV2Strategy):
             defaults = json.loads(json.dumps(cls.default_params))
-            as_text = {k: ("null" if v is None else v) for k, v in defaults.items()}
+            as_text = {k: ("null" if v is None else json.dumps(v) if isinstance(v, dict) else v) for k, v in defaults.items()}
             for params in (defaults, as_text):
                 strategy = cls(params)
                 self.assertEqual(strategy.bar_minutes, 5)
-            self.assertEqual(cls(as_text).index_exits is None, cls is TrendRiderStrategy)
+                self.assertEqual(strategy.index_exits.describe(), stop_and_trail, cls.__name__)
+        # "null" (or None) switches TrendRider's default stop and trail off.
+        for off in ("null", None):
+            self.assertIsNone(TrendRiderStrategy({"index_exits": off}).index_exits)
+        # V2's own stop stays its own: index_stop_adr is not overridden by a default.
+        self.assertEqual(TrendRiderV2Strategy({"index_stop_adr": 0.4}).index_exits.stop_adr, 0.4)
 
     def test_dict_json_and_shorthands(self):
         rules = IndexExitRules.parse('{"stop_adr": 0.5, "supertrend": true, "chandelier": [22, 3], "psar": {"step": 0.01}}')

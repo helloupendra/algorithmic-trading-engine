@@ -57,6 +57,9 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
         # 29 Oct - 12 Nov 2026 rally (run #965). Off, V2 was positive in all six periods of Sep 2024 - Sep 2026 and of
         # the untouched Aug 2020 - Aug 2024 (lab L8, 17 Nov), with ~3x the trades. On by the owner's word, 17 Nov.
         "max_prev_range": 0.0,
+        # V2's stop and trail are its own three parameters below; "index_exits" only adds rules on top (TrendRider's
+        # default stop and trail would otherwise override a changed index_stop_adr).
+        "index_exits": None,
         "index_stop_adr": 0.5,         # 0 turns the index stop off
         "trail_arm_adr": 0.5,          # 0 turns the trailing exit off
         "trail_giveback_adr": 0.35,

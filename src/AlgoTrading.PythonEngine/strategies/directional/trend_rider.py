@@ -103,8 +103,11 @@ class TrendRiderStrategy(BaseStrategy):
         "max_prev_range": 0.7,
         # The candle the rules read: 1m, 2m, 3m, 5m, 10m or 15m.
         "timeframe": "5m",
-        # Exits on the index (strategies/index_exits.py): none by default.
-        "index_exits": None,
+        # Exits on the index (strategies/index_exits.py). Since 17 Nov 2026, on the owner's word: sell when the index
+        # moves 0.5 x ADR against the entry, and once 0.5 x ADR in favour, on a 0.35 x ADR give-back from its best.
+        # Replayed minute by minute, TrendRider with these made more than without in Sep 2024 - Sep 2026 and in the
+        # untouched Aug 2020 - Aug 2024, with a smaller worst day in both (research lab, 17 Nov). None turns them off.
+        "index_exits": {"stop_adr": 0.5, "trail_arm_adr": 0.5, "trail_giveback_adr": 0.35},
     }
     # Twelve sessions of 5-minute candles: the average range needs ten complete ones before today.
     warmup_bars = 75 * 12

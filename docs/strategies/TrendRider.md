@@ -129,8 +129,15 @@ live runner and the replay pass the run's open groups
 run's stop-loss, the square-off, the stop button), the strategy sees the group
 gone on the next candle. It is then free to enter again, from the candle after.
 
-**What the run's risk rules add.** This strategy has no stop-loss of its own,
-and **no premium stop is advised**. The first research (13 Nov) used a leg stop
+**Its own stop and trail (since 17 Nov 2026).** By default (`index_exits`)
+the position is sold when NIFTY moves 0.5 × ADR against the entry, and, once
+NIFTY is 0.5 × ADR in favour, when it gives back 0.35 × ADR from its best.
+Both are measured on the index and checked on every tick. Replayed minute by
+minute, these made more than the strategy without them on Sep 2024 – Sep 2026
+and on the untouched Aug 2020 – Aug 2024, with a smaller worst day in both.
+`"index_exits": null` switches them off.
+
+**What the run's risk rules add.** **No premium stop is advised**. The first research (13 Nov) used a leg stop
 of 10 premium points, but it was checked on 5-minute replays. On 1-minute
 premiums (16 Nov) that stop cut the trend days the strategy lives on: at one
 strike ITM, Jan 2024 – Sep 2026, before costs, +₹340 a trade with it against
@@ -152,10 +159,12 @@ In order of precedence, the first that fires wins:
    - Live, the API guard sweeps every three seconds.
    - The replay checks them on every bar. That is coarser, so a 10-point leg
      stop has filled as far as 19 points away in a 5-minute replay.
-2. **The day's open gives way:** a call closes when a candle closes below
+2. **The index stop and trail** (`index_exits`, on every tick): NIFTY 0.5 × ADR
+   against the entry; or, once 0.5 × ADR in favour, a 0.35 × ADR give-back.
+3. **The day's open gives way:** a call closes when a candle closes below
    $O_d$, a put when one closes above it. The reason names both prices.
-3. **End of day:** 15:15 in a replay, the market close live.
-4. **The run's stop button**, which flattens everything.
+4. **End of day:** 15:15 in a replay, the market close live.
+5. **The run's stop button**, which flattens everything.
 
 ## Parameters
 
@@ -172,7 +181,7 @@ In order of precedence, the first that fires wins:
 | `max_gap_against_pct` | 0.2 | Largest gap against the trade, in % | Fights bigger gaps | Refuses smaller ones |
 | `max_prev_range` | 0.7 | Trade only after a session narrower than this × the average; 0 turns the rule off | Trades more days (see Limitations: worse) | Fewer days |
 | `timeframe` | `"5m"` | The candle every rule reads: `1m`, `2m`, `3m`, `5m`, `10m` or `15m`. `or_minutes` must be a whole number of candles; live, the API builds any of them from 1-minute bars | Fewer, slower signals | More, noisier signals |
-| `index_exits` | none | Exits on the index, from `strategies/index_exits.py`: `stop_adr`, `trail_arm_adr` + `trail_giveback_adr`, `supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`. Stop, trail and time act on every tick; the candle rules on closed candles | — | — |
+| `index_exits` | stop 0.5, trail 0.5 / 0.35 | Exits on the index, from `strategies/index_exits.py`: `stop_adr`, `trail_arm_adr` + `trail_giveback_adr`, `supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`. Stop, trail and time act on every tick; the candle rules on closed candles | — | — |
 | `lots` | 1 (`default_lots`) | Lots per leg | — | — |
 
 ## Worked example

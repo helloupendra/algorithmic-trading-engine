@@ -89,7 +89,8 @@ class TrendRiderTest(unittest.TestCase):
         self.assertEqual(fired[0][1][0].legs[0]["symbol"], "NSE:NIFTY_PE")
 
     def test_closes_when_nifty_closes_back_across_the_open(self):
-        strategy = TrendRiderStrategy()
+        # The open-cross exit on its own: the default index stop (0.5 x ADR) would sell this drop first.
+        strategy = TrendRiderStrategy({"index_exits": None})
         state = strategy.initialize_state()
         prices = [(20000, 20010, 19990, 20000)] * 6 + [(20000, 20062, 19998, 20060)] * 2 + [(20060, 20061, 19985, 19990)]
         fired = self.run_day(strategy, state, self.history(), session(self.days[11], prices))
