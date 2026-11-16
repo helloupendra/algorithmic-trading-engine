@@ -301,6 +301,12 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
                 <Link className="btn" to="/research/backtests/new">
                   Backtest… <IconArrowRight style={{ width: 12, height: 12 }} />
                 </Link>
+                {spec.data?.explainerUrl && (
+                  <a className="btn" href={spec.data.explainerUrl} target="_blank" rel="noopener noreferrer"
+                     title="How this strategy works, with charts and test results (private page)">
+                    Explained ↗
+                  </a>
+                )}
               </>
             )}
           </div>

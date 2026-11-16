@@ -27,6 +27,8 @@ export interface StrategySpec {
   updatedUtc: string | null
   /** Parsed yaml facts block; null without a spec or without a block. */
   facts: SpecFacts | null
+  /** The strategy's private explainer page; set by the server for admins only, null otherwise. */
+  explainerUrl: string | null
 }
 
 /**
@@ -69,6 +71,7 @@ function normalizeSpec(raw: Partial<StrategySpec> & { name: string }): StrategyS
     path: raw.path ?? `docs/strategies/${raw.name}.md`,
     updatedUtc: raw.updatedUtc ?? null,
     facts: raw.facts && typeof raw.facts === 'object' ? raw.facts : null,
+    explainerUrl: typeof raw.explainerUrl === 'string' && /^https?:\/\//.test(raw.explainerUrl) ? raw.explainerUrl : null,
   }
 }
 

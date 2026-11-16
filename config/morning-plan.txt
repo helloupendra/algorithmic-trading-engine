@@ -24,14 +24,16 @@
 # the box's CPU. From 16 Nov only admin trades the plan: 10 runs.
 #
 # 2026-11-17: on the owner's word (16 Nov night), admin runs only Ghost, Ghost V2,
-# TrendRider and Crude; ChainFlowBuy and SmcStructureBreak are off, and no other
-# account runs anything. Still 10 runs. TrendRider has no leg target ("-"): it holds a
-# trend until a candle closes back across the day's open or 15:15, and the job's
-# 20-point default would close its big days in the first minutes.
+# TrendRider, TrendRider V2 and Crude; ChainFlowBuy and SmcStructureBreak are off, and
+# no other account runs anything. 13 runs. TrendRider and V2 have no leg target ("-"):
+# they hold a trend to their own exits or 15:15, and the job's 20-point default would
+# close their big days in the first minutes. V2 (earlier entry, index stop, index
+# trail) was added the same night, at the owner's request to watch it live.
 
 accounts: admin
 
 GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
 TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
+TrendRiderV2             BANKNIFTY,NIFTY,SENSEX  2  -
 CrudeMomentum            CRUDEOIL                2  -

@@ -33,17 +33,20 @@ public class StrategySpecsController : ControllerBase
     private readonly StrategyCatalogService _catalog;
     private readonly IStrategyAccessService _strategyAccess;
     private readonly IWebHostEnvironment _env;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<StrategySpecsController> _logger;
 
     public StrategySpecsController(
         StrategyCatalogService catalog,
         IStrategyAccessService strategyAccess,
         IWebHostEnvironment env,
+        IConfiguration configuration,
         ILogger<StrategySpecsController> logger)
     {
         _catalog = catalog;
         _strategyAccess = strategyAccess;
         _env = env;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -92,11 +95,12 @@ public class StrategySpecsController : ControllerBase
         var entry = await _catalog.FindAsync(id, cancellationToken);
         if (entry is null) return NotFound(new { message = $"Strategy {id} not found." });
 
+        var explainer = ExplainerUrl(entry.Name);
         var file = SpecFile(entry.Name);
-        if (file is null) return Ok(Missing(entry.Name));
+        if (file is null) return Ok(Missing(entry.Name, explainer));
 
         var markdown = await ReadSpecAsync(file, cancellationToken);
-        if (markdown is null) return Ok(Missing(entry.Name));
+        if (markdown is null) return Ok(Missing(entry.Name, explainer));
 
         return Ok(new StrategySpecResponse
         {
@@ -105,8 +109,23 @@ public class StrategySpecsController : ControllerBase
             Markdown = markdown,
             Path = RelativePath(entry.Name),
             UpdatedUtc = System.IO.File.GetLastWriteTimeUtc(file),
-            Facts = ParseFacts(markdown)
+            Facts = ParseFacts(markdown),
+            ExplainerUrl = explainer
         });
+    }
+
+    /// <summary>
+    /// The strategy's private explainer page, for an admin: <c>StrategyExplainers:&lt;Name&gt;</c> from the
+    /// server's configuration, when it is an absolute http(s) URL. The address stays out of the repo (the
+    /// repo is public) and out of a trader's answer.
+    /// </summary>
+    private string? ExplainerUrl(string name)
+    {
+        if (!User.IsInRole(UserRoles.Admin)) return null;
+        var url = _configuration[$"StrategyExplainers:{name}"]?.Trim();
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? uri.ToString()
+            : null;
     }
 
     // ------------------------------------------------------------------
@@ -170,14 +189,15 @@ public class StrategySpecsController : ControllerBase
 
     private static string RelativePath(string name) => $"{SpecsFolder}/{name}.md";
 
-    private static StrategySpecResponse Missing(string name) => new()
+    private static StrategySpecResponse Missing(string name, string? explainerUrl = null) => new()
     {
         Name = name,
         HasSpec = false,
         Markdown = null,
         Path = RelativePath(name),
         UpdatedUtc = null,
-        Facts = null
+        Facts = null,
+        ExplainerUrl = explainerUrl
     };
 
     /// <summary>

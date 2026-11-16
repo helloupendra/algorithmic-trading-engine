@@ -35,4 +35,12 @@ public class StrategySpecResponse
     /// or no facts block.
     /// </summary>
     public Dictionary<string, string>? Facts { get; set; }
+
+    /// <summary>
+    /// A link to the strategy's private explainer page (a password page under /r/), for admins only; null
+    /// for everyone else and for a strategy without one. Read from the server's configuration
+    /// (<c>StrategyExplainers:&lt;Name&gt;</c>, e.g. the .env line <c>StrategyExplainers__TrendRider=https://…</c>),
+    /// never from the repo, so the private page's address is not published with the code.
+    /// </summary>
+    public string? ExplainerUrl { get; set; }
 }

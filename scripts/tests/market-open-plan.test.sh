@@ -38,20 +38,21 @@ count() {  # account -> runs the plan starts for it
 # Fulcrum came off the plan on 10 Oct: the owner stopped it on 1 Oct, and its line kept deploying it.
 # coderforchange came off on 15 Nov: its runs loaded the box's CPU; admin alone trades the plan.
 check "the plan's accounts are admin alone"         "admin" "$(grep -i '^[[:space:]]*accounts:' config/morning-plan.txt | head -1 | cut -d: -f2- | xargs)"
-check "admin gets 10 runs"                          "10" "$(count admin)"
+check "admin gets 13 runs"                          "13" "$(count admin)"
 
 echo "the tally's expected runs (expected_runs), from the same parser"
 eval "$(sed -n '/^expected_runs() {/,/^}/p' scripts/market-open.sh)"
 ACCOUNTS="$(grep -i '^[[:space:]]*accounts:' config/morning-plan.txt | head -1 | cut -d: -f2-)" LOTS_DEFAULT=2 LEG_TARGET_PTS=20
 EXPECTED="$(expected_runs)"
-check "10 planned runs in all"                      "10" "$(printf '%s\n' "$EXPECTED" | grep -c .)"
+check "13 planned runs in all"                      "13" "$(printf '%s\n' "$EXPECTED" | grep -c .)"
 check "one line per account, strategy, underlying"  "0"  "$(printf '%s\n' "$EXPECTED" | grep -vc '^[^|]*|[^|]*|[^|]*$')"
 check "no Fulcrum in any account (stopped 1 Oct)"   "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '|Fulcrum|')"
 check "no run for coderforchange (off 15 Nov)"      "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '^coderforchange|')"
 check "crude in admin"                              "1"  "$(printf '%s\n' "$EXPECTED" | grep -c '^admin|CrudeMomentum|CRUDEOIL$')"
-# 17 Nov, the owner: admin runs Ghost, Ghost V2, TrendRider and Crude, nothing else.
-check "only the four strategies the owner named"    "CrudeMomentum GhostTangentCrossings GhostTangentCrossingsV2 TrendRider" \
+# 17 Nov, the owner: admin runs Ghost, Ghost V2, TrendRider, TrendRider V2 and Crude, nothing else.
+check "only the strategies the owner named"         "CrudeMomentum GhostTangentCrossings GhostTangentCrossingsV2 TrendRider TrendRiderV2" \
   "$(printf '%s\n' "$EXPECTED" | cut -d'|' -f2 | sort -u | xargs)"
 check "TrendRider has no leg target"                "-" "$(parse_plan_line "$(grep '^TrendRider ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
+check "TrendRiderV2 has no leg target"              "-" "$(parse_plan_line "$(grep '^TrendRiderV2 ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
 
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
