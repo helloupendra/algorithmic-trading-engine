@@ -8,7 +8,13 @@ import { IconCalendar } from './icons'
  * A native <input type="date"> shows the browser's locale — mm/dd/yyyy on a
  * phone or a Chrome set to en-US — and nothing in HTML or CSS overrides that.
  * So the visible control is a text input with a dd/mm/yyyy mask, and the
- * native input is kept only for its picker, opened from the calendar button.
+ * native input is kept only for its picker. It lies, invisible, over the
+ * calendar button: a tap on a phone lands on the native input itself, which is
+ * the one thing iOS Safari and Android browsers open their picker for (they
+ * refuse showPicker() on a hidden input, so the calendar did not open on a
+ * phone until 16 Nov 2026). A mouse click on it asks for showPicker(), as
+ * desktop browsers do not open a date input's picker on a click otherwise; the
+ * button underneath still opens it from the keyboard.
  *
  * Semantics mirror the native control so the pages around it did not change:
  * `value` and `onChange` speak yyyy-MM-dd; any complete real date is passed
@@ -105,6 +111,15 @@ export function DateField({
         min={min}
         max={max}
         disabled={disabled}
+        onClick={(e) => {
+          // A phone opens its picker on the tap itself; a desktop browser needs asking. Already open, or not
+          // supported: the tap has done what it can.
+          try {
+            e.currentTarget.showPicker?.()
+          } catch {
+            /* nothing more to do */
+          }
+        }}
         onChange={(e) => {
           onChange(e.target.value)
           setText(isoToDmy(e.target.value))

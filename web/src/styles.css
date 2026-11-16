@@ -2461,7 +2461,16 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Full-width in a form column; the small toolbar variant keeps its own width. */
 .datefield > .field__input:not(.field__input--sm) { width: 100%; }
 .datefield > .field__input[aria-invalid='true'] { border-color: var(--neg); }
-.datefield__native { position: absolute; right: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+/* The native date input lies, invisible, right over the calendar button, so a tap on a phone lands on it and opens
+   the phone's own picker. Kept 1 px with no pointer events until 16 Nov 2026, it relied on showPicker() alone, which
+   iOS Safari and some Android browsers refuse for a hidden input: the calendar would not open on a phone. 16 px text
+   keeps iOS from zooming when it is focused. */
+.datefield__native {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%); z-index: 1;
+  width: 26px; height: 26px; margin: 0; padding: 0; border: 0;
+  opacity: 0; cursor: pointer; font-size: 16px; -webkit-appearance: none; appearance: none;
+}
+.datefield--disabled .datefield__native { pointer-events: none; cursor: default; }
 .datefield__btn {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   display: inline-flex; align-items: center; justify-content: center;
