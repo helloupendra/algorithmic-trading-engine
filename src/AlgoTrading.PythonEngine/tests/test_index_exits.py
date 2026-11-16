@@ -22,8 +22,20 @@ def bars_from(closes, step_minutes=5, spread=2.0):
 
 class ParseTest(unittest.TestCase):
     def test_nothing_set_is_none(self):
-        for raw in (None, "", {}, {"stop_adr": 0}):
-            self.assertIsNone(IndexExitRules.parse(raw))
+        # "null" is what the console's parameter grid sends back for the catalogue's null default.
+        for raw in (None, "", {}, {"stop_adr": 0}, "null", " NULL ", "None", "{}", False, "false"):
+            self.assertIsNone(IndexExitRules.parse(raw), raw)
+
+    def test_the_catalogue_defaults_round_trip_as_the_console_sends_them(self):
+        import json
+        from strategies.directional.trend_rider_v2 import TrendRiderV2Strategy
+        for cls in (TrendRiderStrategy, TrendRiderV2Strategy):
+            defaults = json.loads(json.dumps(cls.default_params))
+            as_text = {k: ("null" if v is None else v) for k, v in defaults.items()}
+            for params in (defaults, as_text):
+                strategy = cls(params)
+                self.assertEqual(strategy.bar_minutes, 5)
+            self.assertEqual(cls(as_text).index_exits is None, cls is TrendRiderStrategy)
 
     def test_dict_json_and_shorthands(self):
         rules = IndexExitRules.parse('{"stop_adr": 0.5, "supertrend": true, "chandelier": [22, 3], "psar": {"step": 0.01}}')

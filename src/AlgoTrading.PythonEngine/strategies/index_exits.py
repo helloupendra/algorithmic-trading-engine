@@ -89,14 +89,23 @@ class IndexExitRules:
     # ------------------------------------------------------------- parsing --
     @classmethod
     def parse(cls, raw: Any) -> Optional["IndexExitRules"]:
-        """The rules from a parameter value (dict or JSON text); None when nothing is set."""
-        if raw is None or raw == "" or raw == {}:
-            return None
+        """
+        The rules from a parameter value (dict or JSON text); None when nothing is set.
+
+        "Nothing set" has many spellings: the catalogue's default is null, and the console's parameter grid
+        sends an untouched null back as the text "null" (17 Nov 2026: every console backtest of TrendRider V2
+        failed on it). None, "", "null", "none", false and an empty object all mean no index exits.
+        """
         if isinstance(raw, str):
+            text = raw.strip()
+            if text.lower() in ("", "null", "none", "false", "{}"):
+                return None
             try:
-                raw = json.loads(raw)
+                raw = json.loads(text)
             except ValueError as ex:
                 raise ValueError("index_exits must be an object or JSON text") from ex
+        if raw is None or raw is False or raw == {}:
+            return None
         if not isinstance(raw, dict):
             raise ValueError("index_exits must be an object")
         known = {"stop_adr", "trail_arm_adr", "trail_giveback_adr", "supertrend", "ema_close", "psar",
