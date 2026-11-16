@@ -141,6 +141,41 @@ public static class IraAlertPrefs
 }
 
 /// <summary>
+/// The Telegram channel the big-news alerts go to (owner, 16 Nov 2026: a "News Alert" channel of their own), kept in
+/// <c>system_settings</c> (<c>ai.voice.alerts.newsChannel</c>: the chat id, its title in the reason) and set by a
+/// linked owner with <c>/newschannel</c>. While one is set the news goes there, text and voice, and not to the owners'
+/// private chats; with none, to the owners as before.
+/// </summary>
+public static class IraNewsChannel
+{
+    public const string Key = AiSettingsStore.Prefix + "voice.alerts.newsChannel";
+
+    /// <summary>The channel's chat id; null when none is set or the row cannot be read.</summary>
+    public static async Task<long?> ReadAsync(TradingDbContext db, CancellationToken cancellationToken)
+    {
+        string? value = await db.SystemSettings.AsNoTracking().Where(s => s.Key == Key).Select(s => s.Value).FirstOrDefaultAsync(cancellationToken);
+        return long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long id) && id != 0 ? id : null;
+    }
+
+    /// <summary>Sets the channel, or with a null <paramref name="chatId"/> takes it away (the news goes to the owners again).</summary>
+    public static async Task SetAsync(TradingDbContext db, long? chatId, string by, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == Key, cancellationToken);
+        if (row is null)
+        {
+            row = new SystemSetting { Key = Key, CreatedUtc = nowUtc };
+            db.SystemSettings.Add(row);
+        }
+
+        row.Value = chatId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        row.UpdatedBy = by;
+        row.Reason = chatId is null ? "News alerts back to the owners' chats, with /newschannel off" : "Set from Telegram with /newschannel";
+        row.UpdatedUtc = nowUtc;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+}
+
+/// <summary>
 /// Ira speaks first (step 3a, 11 Oct 2026): when something matters, a short message and the same words as a voice
 /// note go to each linked owner's private chat on Telegram, without being asked.
 /// </summary>
@@ -239,8 +274,16 @@ public sealed class IraAlertService(
         }
     }
 
-    /// <summary>One message to one owner, as it will be sent.</summary>
-    private sealed record Outgoing(TelegramOwner Owner, string Kind, string Text);
+    /// <summary>Who a message to the news channel is for, in the log and on the voice's call.</summary>
+    public const string NewsChannelWho = "news-channel";
+
+    /// <summary>One message to one chat (an owner's, or the news channel), as it will be sent; <paramref name="Who"/> names it in the log.</summary>
+    private sealed record Outgoing(long Chat, string Who, string Kind, string Text)
+    {
+        public Outgoing(TelegramOwner owner, string kind, string text) : this(owner.TelegramUserId, owner.ConsoleUser, kind, text)
+        {
+        }
+    }
 
     /// <summary>One minute's pass: the events since the marks, the briefings due, each owner's cap, then the sending. Public for tests.</summary>
     public async Task RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
@@ -262,10 +305,18 @@ public sealed class IraAlertService(
             var off = await IraAlertPrefs.OffAsync(db, cancellationToken);
             var listening = owners.Where(o => !off.Contains(o.TelegramUserId)).ToList();
             foreach (string gone in marks.Owners.Keys.Where(k => owners.All(o => Id(o) != k)).ToList()) marks.Owners.Remove(gone);
+            long? newsChannel = await IraNewsChannel.ReadAsync(db, cancellationToken);
 
             // Events, oldest first, each owner within his hour's cap; past it, folded into the next message he gets.
             foreach (var e in events)
             {
+                // The big news has a channel of its own once one is set: all of it goes there, nothing to the owners' chats.
+                if (e.Kind == IraDesk.NewsKind && newsChannel is long channel)
+                {
+                    outbox.Add(new Outgoing(channel, NewsChannelWho, e.Kind, e.Text));
+                    continue;
+                }
+
                 foreach (var owner in listening)
                 {
                     var hour = HourOf(marks, owner, nowUtc);
@@ -350,10 +401,10 @@ public sealed class IraAlertService(
         var spoken = new Dictionary<string, byte[]?>(StringComparer.Ordinal);
         foreach (var m in outbox)
         {
-            long chat = m.Owner.TelegramUserId;
+            long chat = m.Chat;
             if (!await telegram.SendAlertTextAsync(chat, m.Text, cancellationToken))
             {
-                logger.LogInformation("Ira: a {Kind} alert to {User} was not delivered", m.Kind, m.Owner.ConsoleUser);
+                logger.LogInformation("Ira: a {Kind} alert to {User} was not delivered", m.Kind, m.Who);
                 continue;
             }
 
@@ -364,13 +415,13 @@ public sealed class IraAlertService(
             }
 
             bool voiced = mp3 is not null && await telegram.SendAlertVoiceAsync(chat, mp3, cancellationToken);
-            logger.LogInformation("Ira: told {User} ({Kind}, {How}): {Text}", m.Owner.ConsoleUser, m.Kind, voiced ? "text and voice" : "text only", m.Text);
+            logger.LogInformation("Ira: told {User} ({Kind}, {How}): {Text}", m.Who, m.Kind, voiced ? "text and voice" : "text only", m.Text);
         }
     }
 
     private async Task<byte[]?> SpeakAsync(Outgoing m, CancellationToken cancellationToken)
     {
-        var caller = new VoiceCaller(AiVoiceService.Alert, m.Owner.ConsoleUser, null, $"tg-{m.Owner.TelegramUserId.ToString(CultureInfo.InvariantCulture)}");
+        var caller = new VoiceCaller(AiVoiceService.Alert, m.Who, null, $"tg-{m.Chat.ToString(CultureInfo.InvariantCulture)}");
         VoiceSpeech speech;
         try
         {

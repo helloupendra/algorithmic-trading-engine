@@ -273,7 +273,8 @@ public sealed class TelegramAssistant(
         string name = message["from"]?["username"]?.GetValue<string>() is { Length: > 0 } handle ? "@" + handle
             : message["from"]?["first_name"]?.GetValue<string>() ?? userId.ToString(CultureInfo.InvariantCulture);
         var audio = TelegramAudio.Of(message);
-        if (userId == 0 || (text.Length == 0 && audio is null)) return;
+        var forwarded = ForwardedChannel(message);
+        if (userId == 0 || (text.Length == 0 && audio is null && forwarded is null)) return;
 
         var owners = await OwnersAsync(cancellationToken);
         var owner = owners.FirstOrDefault(o => o.TelegramUserId == userId);
@@ -297,6 +298,13 @@ public sealed class TelegramAssistant(
         {
             // Strangers get one line to /start and nothing else; a stranger's voice note gets nothing at all.
             if (text.StartsWith("/start", StringComparison.OrdinalIgnoreCase)) await SendAsync(chatId, "This bot is private.", cancellationToken);
+            return;
+        }
+
+        // A post forwarded from a channel: the owner is finding the channel's id, to send the news there.
+        if (forwarded is { } channel)
+        {
+            await SendAsync(chatId, NewsChannelFound(channel.Id, channel.Title), cancellationToken);
             return;
         }
 
@@ -517,6 +525,12 @@ public sealed class TelegramAssistant(
         if (IsCommand(text, "/alerts"))
         {
             await SendAsync(chatId, await AlertsAsync(owner, AfterCommand(text, "/alerts").ToLowerInvariant(), cancellationToken), cancellationToken);
+            return;
+        }
+
+        if (IsCommand(text, "/newschannel"))
+        {
+            await SendAsync(chatId, await NewsChannelAsync(owner, AfterCommand(text, "/newschannel").ToLowerInvariant(), cancellationToken), cancellationToken);
             return;
         }
 
@@ -784,6 +798,65 @@ public sealed class TelegramAssistant(
 
         string said = on ? IraAlertText.AlertsOn(s) : IraAlertText.AlertsOff;
         return on && !s.Enabled ? said + IraAlertText.DeskOff : said;
+    }
+
+    /// <summary>The words posted in a channel when it becomes the news channel: the test that the bot may post there.</summary>
+    public const string NewsChannelHello =
+        "Yahan OpenFNO ke news alerts aayenge: badi khabar, Indian market pe uska asar, aur NIFTY ka haal. Hinglish mein, text aur awaaz.";
+
+    /// <summary>What the bot says to a channel post forwarded to it: the channel's id, and the command that sends the news there.</summary>
+    public static string NewsChannelFound(long id, string? title) =>
+        $"Yeh channel{(string.IsNullOrWhiteSpace(title) ? string.Empty : $" \"{title.Trim()}\"")} hai, ID {id.ToString(CultureInfo.InvariantCulture)}. " +
+        $"News alerts yahan bhejne ke liye likho: /newschannel {id.ToString(CultureInfo.InvariantCulture)} (pehle is bot ko channel ka admin banao, post karne ki ijaazat ke saath).";
+
+    /// <summary>
+    /// <c>/newschannel &lt;id&gt;</c>, <c>/newschannel off</c> or <c>/newschannel</c>: where the big-news alerts go
+    /// (<see cref="IraNewsChannel"/>). A channel is set only after the bot has posted in it, so a channel it cannot post
+    /// to is never chosen.
+    /// </summary>
+    private async Task<string> NewsChannelAsync(TelegramOwner owner, string argument, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var now = _time.GetUtcNow().UtcDateTime;
+        switch (argument)
+        {
+            case "":
+                return await IraNewsChannel.ReadAsync(db, cancellationToken) is long current
+                    ? $"News alerts abhi channel {current.ToString(CultureInfo.InvariantCulture)} mein jaate hain, text aur awaaz. /newschannel off se wapas aapke chat mein."
+                    : "News alerts abhi aapke is chat mein aate hain. Channel mein bhejne ke liye: bot ko channel ka admin banao, channel ki koi post mujhe forward karo, phir jo command main bataun woh bhejo.";
+            case "off":
+                await IraNewsChannel.SetAsync(db, null, owner.ConsoleUser, now, cancellationToken);
+                logger.LogInformation("Telegram assistant: {User} sent the news alerts back to the owners' chats", owner.ConsoleUser);
+                return "Theek hai: news alerts ab aapke is chat mein aayenge.";
+        }
+
+        if (!long.TryParse(argument, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long channel) || channel >= 0)
+        {
+            return "Channel ka ID minus se shuru hota hai, jaise /newschannel -1001234567890. Channel ki koi post mujhe forward karo, main ID bata dunga.";
+        }
+
+        if (!await SendAlertTextAsync(channel, NewsChannelHello, cancellationToken))
+        {
+            return $"Main channel {channel.ToString(CultureInfo.InvariantCulture)} mein post nahi kar paaya. Bot ko channel ka admin banao, post karne ki ijaazat ke saath, phir dobara bhejo.";
+        }
+
+        await IraNewsChannel.SetAsync(db, channel, owner.ConsoleUser, now, cancellationToken);
+        logger.LogInformation("Telegram assistant: {User} set the news channel to {Channel}", owner.ConsoleUser, channel);
+        return "Ho gaya: ab se badi khabar ke alerts us channel mein jaayenge, text aur awaaz, din ho ya raat. /newschannel off se wapas aapke chat mein.";
+    }
+
+    /// <summary>
+    /// The channel a forwarded post came from: Bot API 7's <c>forward_origin</c> of type channel, or the older
+    /// <c>forward_from_chat</c>; null for anything else.
+    /// </summary>
+    public static (long Id, string? Title)? ForwardedChannel(JsonObject message)
+    {
+        JsonNode? chat = message["forward_origin"] is JsonObject origin && origin["type"]?.GetValue<string>() == "channel"
+            ? origin["chat"]
+            : message["forward_from_chat"];
+        if (chat is not JsonObject c || c["type"]?.GetValue<string>() != "channel") return null;
+        return c["id"] is JsonValue v && v.TryGetValue(out long id) ? (id, c["title"]?.GetValue<string>()) : null;
     }
 
     /// <summary>What follows a command: "/trader why?" and "/trader@bot why?" both give "why?".</summary>

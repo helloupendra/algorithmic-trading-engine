@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTelegram;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Api.Services.AiVoice;
@@ -503,6 +504,103 @@ public sealed class IraAlertTests : IDisposable
         ], rig.Bot.TextsTo(Owner));
     }
 
+    // ======================================================== the news channel (16 Nov 2026)
+
+    private const long NewsChannel = -1001234567890;
+
+    [Fact]
+    public async Task A_channel_post_forwarded_by_an_owner_gets_the_channel_s_id_and_the_command_back()
+    {
+        Link(Owner, "upendra");
+        var rig = Start();
+        var forwarded = Message(Owner, "Hello channel");
+        forwarded["forward_origin"] = JsonNode.Parse($$"""{"type":"channel","chat":{"id":{{NewsChannel}},"title":"News Alert","type":"channel"},"message_id":3}""");
+
+        await rig.Telegram.HandleAsync(forwarded, CancellationToken.None);
+
+        Assert.Equal([TelegramAssistant.NewsChannelFound(NewsChannel, "News Alert")], rig.Bot.TextsTo(Owner));
+        Assert.Contains("/newschannel -1001234567890", rig.Bot.TextsTo(Owner)[0]);
+        Assert.Contains("\"News Alert\"", rig.Bot.TextsTo(Owner)[0]);
+    }
+
+    [Fact]
+    public async Task The_news_goes_to_the_channel_once_the_bot_has_posted_there_and_back_to_the_owners_with_off()
+    {
+        Link(Owner, "upendra");
+        var rig = Start();
+        // The first pass sets the marks at the newest rows, so the stories after it are told.
+        await rig.Service.RunOnceAsync(Now.AddMinutes(-5), CancellationToken.None);
+        rig.Bot.Refused.Add(NewsChannel);
+
+        // The bot is not an admin yet: nothing is set.
+        await rig.Telegram.HandleAsync(Message(Owner, $"/newschannel {NewsChannel}"), CancellationToken.None);
+        Assert.Contains("post nahi kar paaya", rig.Bot.TextsTo(Owner).Last());
+        using (var db = Db()) Assert.Null(await IraNewsChannel.ReadAsync(db, CancellationToken.None));
+
+        rig.Bot.Refused.Clear();
+        await rig.Telegram.HandleAsync(Message(Owner, $"/newschannel {NewsChannel}"), CancellationToken.None);
+        Assert.Equal([TelegramAssistant.NewsChannelHello], rig.Bot.TextsTo(NewsChannel));
+        Assert.StartsWith("Ho gaya", rig.Bot.TextsTo(Owner).Last());
+        using (var db = Db()) Assert.Equal(NewsChannel, await IraNewsChannel.ReadAsync(db, CancellationToken.None));
+
+        // A big story: the channel gets it, text then voice; the owner's chat does not.
+        rig.Bot.Clear();
+        using (var db = Db())
+        {
+            NewsReport(db, Now.AddMinutes(-1));
+            db.SaveChanges();
+        }
+
+        await rig.Service.RunOnceAsync(Now, CancellationToken.None);
+        var story = Assert.Single(rig.Bot.TextsTo(NewsChannel));
+        Assert.StartsWith("Bahut badi khabar, asar 3/3 (Reuters, 10:57 IST): Iran ne peace talks ka ishaara diya.", story);
+        Assert.Equal([$"text:{NewsChannel}", $"voice:{NewsChannel}"], rig.Bot.Order);
+        Assert.Empty(rig.Bot.TextsTo(Owner));
+
+        // Off: the next story goes to the owner again.
+        await rig.Telegram.HandleAsync(Message(Owner, "/newschannel off"), CancellationToken.None);
+        rig.Bot.Clear();
+        using (var db = Db())
+        {
+            NewsReport(db, Now.AddMinutes(1));
+            db.SaveChanges();
+        }
+
+        await rig.Service.RunOnceAsync(Now.AddMinutes(2), CancellationToken.None);
+        Assert.Single(rig.Bot.TextsTo(Owner));
+        Assert.Empty(rig.Bot.TextsTo(NewsChannel));
+    }
+
+    [Theory]
+    [InlineData("/newschannel abc")]
+    [InlineData("/newschannel 12345")]
+    public async Task A_channel_id_that_is_not_one_is_explained_and_nothing_is_posted(string text)
+    {
+        Link(Owner, "upendra");
+        var rig = Start();
+
+        await rig.Telegram.HandleAsync(Message(Owner, text), CancellationToken.None);
+
+        Assert.Contains("minus se shuru", Assert.Single(rig.Bot.TextsTo(Owner)));
+        Assert.Single(rig.Bot.Texts);
+    }
+
+    /// <summary>A Market Impact record of a big story first seen three minutes before <paramref name="atUtc"/>.</summary>
+    private static void NewsReport(TradingDbContext db, DateTime atUtc)
+    {
+        var record = JsonNode.Parse("""
+            {"id":"n1","impact":3,"scope":"global","channels":["oil"],"nifty":"up","volatility":"higher","horizon":"day","confidence":0.7,
+             "repeatOf":null,"what":"Iran ne peace talks ka ishaara diya.","why":"Sasta tel India ke liye achha.","watch":"Deal sign hoti hai ya nahi."}
+            """)!.AsObject();
+        var (status, title, body, data, error) = MarketImpactAgent.Check(record, "Iran signals peace talks", new HashSet<string>(), "Reuters",
+            "Iran signals peace talks", Now.AddMinutes(-3));
+        db.AiReports.Add(new AiReport
+        {
+            AgentKey = AiCatalog.MarketImpact, SubjectType = AiReportSubject.News, SubjectId = Guid.NewGuid().ToString("N"), Status = status,
+            Attempts = 1, Title = title, Body = body, DataJson = data, Error = error, CreatedUtc = atUtc, UpdatedUtc = atUtc,
+        });
+    }
+
     // ======================================================== /alerts
 
     [Fact]
@@ -946,6 +1044,9 @@ public sealed class IraAlertTests : IDisposable
 
         public List<string> Order { get; } = [];
 
+        /// <summary>Chats the bot may not post to (not an admin of the channel): sendMessage answers 403.</summary>
+        public HashSet<long> Refused { get; } = [];
+
         public List<string> TextsTo(long chat)
         {
             lock (_gate) return Texts.Where(t => t.Chat == chat).Select(t => t.Text).ToList();
@@ -989,6 +1090,14 @@ public sealed class IraAlertTests : IDisposable
             {
                 var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
                 long chat = body["chat_id"]!.GetValue<long>();
+                if (Refused.Contains(chat))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.Forbidden)
+                    {
+                        Content = new StringContent("""{"ok":false,"error_code":403,"description":"Forbidden: bot is not a member of the channel chat"}""", Encoding.UTF8, "application/json"),
+                    };
+                }
+
                 lock (_gate)
                 {
                     Texts.Add((chat, body["text"]!.GetValue<string>()));
