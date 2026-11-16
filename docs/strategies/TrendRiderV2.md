@@ -42,8 +42,11 @@ With `levels: "prev_day"` (the default), on a closed candle:
 
 Everything else is TrendRider's, unchanged: one position at a time; after an exit, a new entry in the
 same direction only on a new day high (call) or low (put); at most `max_entries` a day; and the day
-filters (`skip_after_wide`, `max_prev_range`, `min_range_frac`, `max_gap_against_pct`), with the
-day's open, yesterday's session and the ADR computed as TrendRider computes them.
+filters `skip_after_wide`, `max_prev_range` and `max_gap_against_pct`, with the day's open, yesterday's
+session and the ADR computed as TrendRider computes them. TrendRider's fourth filter, "today's range is
+still below 0.4 × ADR" (`min_range_frac`), is **off** by default: a close beyond yesterday's high or low
+is already a range. Of the three combinations replayed for the desk, this one had the smallest deepest
+fall, which was the rule chosen before the replay.
 
 With `levels: "opening_range"` the entry is TrendRider's own (a break of the first `or_minutes`), and
 V2 adds only the two exits.
@@ -80,6 +83,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 |------|---------|---------|----------|----------|
 | `levels` | `"prev_day"` | `prev_day`: yesterday's high/low; `opening_range`: TrendRider's entry | — | — |
 | `first_entry` | `"09:15"` | Earliest candle (by its start) that may enter | Later entries | — |
+| `min_range_frac` | 0 | TrendRider's "today's range so far" filter; off in V2 | Waits for a wider day before entering | — |
 | `index_stop_adr` | 0.5 | Index move against the entry, × ADR, that sells; 0 turns it off | Fewer stops, bigger losses | Tighter; more whipsaw exits |
 | `trail_arm_adr` | 0.5 | Move in favour, × ADR, after which the trail is live; 0 turns it off | Protects only bigger runs | Protects smaller runs, sells more trends early |
 | `trail_giveback_adr` | 0.35 | Give-back from the best, × ADR, that sells once armed | Holds through deeper pullbacks | Sells sooner |
@@ -89,8 +93,8 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 NIFTY, ADR 300 points; yesterday's high 25,200, low 25,000 (a 200-point day, 0.67 × ADR: narrow enough for
 `max_prev_range`). Today opens at 25,180.
 
-- 09:25 candle closes at 25,215: above yesterday's high and the open, and the day's range has reached
-  0.4 × 300 = 120 points. **Buy the call** one strike in the money. The entry spot is 25,215.
+- 09:25 candle closes at 25,215: above yesterday's high and the open. **Buy the call** one strike in the
+  money. The entry spot is 25,215. (TrendRider could not have bought before 09:45.)
 - The index stop is at 25,215 − 0.5 × 300 = **25,065**.
 - By 11:40 NIFTY reaches 25,420: +205 points, above the 150-point arming level, so the trail is live.
 - At 13:05 NIFTY trades 25,315, a give-back of 105 = 0.35 × 300. **Sell**, keeping +100 index points,
@@ -106,7 +110,7 @@ NIFTY, ADR 300 points; yesterday's high 25,200, low 25,000 (a 200-point day, 0.6
   premium against the position before the index stop is reached.
 - In a replay the exits are checked once a candle, so a replay stop can fill up to a candle's move past
   its level; live checks every tick.
-- The day filters stay on. They keep the strategy out of fast, wide-range markets (TrendRider took no
+- The other day filters stay on. They keep the strategy out of fast, wide-range markets (TrendRider took no
   trade in the 28 Oct – 12 Nov 2026 rally); turning them off is a separate test.
 - A one-hour special session (Muhurat trading) counts as a full day in the ADR and as "yesterday".
 
