@@ -407,7 +407,7 @@ namespace AlgoTrading.Infrastructure.Services
             return string.Empty;
         }
 
-        private static (string underlying, decimal? strike, string optionType) ParseDerivativeFields(
+        internal static (string underlying, decimal? strike, string optionType) ParseDerivativeFields(
             string fullSymbol,
             string description)
         {
@@ -427,7 +427,17 @@ namespace AlgoTrading.Infrastructure.Services
 
             decimal? strike = null;
 
+            // The FYERS grammar first: a weekly symbol puts the expiry day straight
+            // before the strike (NIFTY 26 7 07 24350 CE), so "the last four to six
+            // digits" read the day's last digit into the strike (724350).
             if (optionType == "CE" || optionType == "PE")
+            {
+                var grammar = UnderlyingCatalog.ParseOptionSymbol(fullSymbol);
+                if (grammar is not null && grammar.Strike > 0)
+                    strike = grammar.Strike;
+            }
+
+            if (strike == null && (optionType == "CE" || optionType == "PE"))
             {
                 var descParts = description.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (descParts.Length >= 2)

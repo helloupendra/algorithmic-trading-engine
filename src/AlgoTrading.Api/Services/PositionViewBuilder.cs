@@ -517,7 +517,11 @@ public sealed class PositionViewBuilder
             ? inst!.Underlying.Trim().ToUpperInvariant()
             : parsed?.Underlying ?? UnderlyingCatalog.InferUnderlying(symbol);
 
-        var strike = inst?.StrikePrice is > 0 ? inst.StrikePrice : parsed?.Strike;
+        // The symbol's own grammar wins for the strike when it reads: the master's
+        // stored strike was wrong for weekly contracts imported before 16 Nov 2026
+        // (the importer read NIFTY2670724350CE as 724350), and expired rows are
+        // never imported again to be corrected.
+        var strike = parsed?.Strike is > 0 ? parsed.Strike : inst?.StrikePrice is > 0 ? inst.StrikePrice : null;
         var optionType = !string.IsNullOrWhiteSpace(inst?.OptionType)
             ? inst!.OptionType.Trim().ToUpperInvariant()
             : parsed?.OptionType ?? string.Empty;
