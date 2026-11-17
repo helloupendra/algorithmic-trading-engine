@@ -289,7 +289,15 @@ public sealed class IraAlertService(
         public Outgoing(TelegramOwner owner, string kind, string text) : this(owner.TelegramUserId, owner.ConsoleUser, kind, text)
         {
         }
+
+        /// <summary>The words spoken when they differ from the text (the close: every run in the text, best and worst aloud).</summary>
+        public string? Voice { get; init; }
+
+        public string Spoken => Voice ?? Text;
     }
+
+    /// <summary>The close's two forms: the full text, and the short words spoken after it.</summary>
+    private sealed record CloseWords(string Text, string Voice);
 
     /// <summary>One minute's pass: the events since the marks, the briefings due, each owner's cap, then the sending. Public for tests.</summary>
     public async Task RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
@@ -368,10 +376,12 @@ public sealed class IraAlertService(
                     var closeDue = IstTime.FromIst(day.ToDateTime(At(alerts.CloseAt, new TimeOnly(15, 40))));
                     if (session.SessionCloseUtc + AfterClose > closeDue) closeDue = session.SessionCloseUtc + AfterClose;
                     if (marks.Close != dayText && nowUtc >= closeDue && nowUtc < closeDue + BriefingWindow
-                        && await BriefingAsync("close", () => desk.CloseAsync(nowUtc, cancellationToken), IraAlertText.Close, cancellationToken) is { } closing)
+                        && await BriefingAsync("close", () => desk.CloseAsync(nowUtc, cancellationToken),
+                            c => new CloseWords(IraAlertText.CloseDetail(c), IraAlertText.Close(c)), cancellationToken) is { } closing)
                     {
                         marks.Close = dayText;
-                        outbox.AddRange(listening.Select(o => new Outgoing(o, "close", Fold(closing, HourOf(marks, o, nowUtc)))));
+                        outbox.AddRange(listening.Select(o => new Outgoing(o, "close",
+                            Fold(closing.Text, HourOf(marks, o, nowUtc), IraAlertText.MaxDetailChars)) { Voice = closing.Voice }));
                     }
                 }
             }
@@ -407,7 +417,8 @@ public sealed class IraAlertService(
     /// A briefing's words, or null when its facts could not be read: logged at Information and tried again next minute
     /// while its window lasts, and the events of the pass still go.
     /// </summary>
-    private async Task<string?> BriefingAsync<T>(string kind, Func<Task<T>> facts, Func<T, string> words, CancellationToken cancellationToken)
+    private async Task<TWords?> BriefingAsync<T, TWords>(string kind, Func<Task<T>> facts, Func<T, TWords> words, CancellationToken cancellationToken)
+        where TWords : class
     {
         try
         {
@@ -443,10 +454,10 @@ public sealed class IraAlertService(
                 continue;
             }
 
-            if (!spoken.TryGetValue(m.Text, out var mp3))
+            if (!spoken.TryGetValue(m.Spoken, out var mp3))
             {
                 mp3 = await SpeakAsync(m, cancellationToken);
-                spoken[m.Text] = mp3;
+                spoken[m.Spoken] = mp3;
             }
 
             bool voiced = mp3 is not null && await telegram.SendAlertVoiceAsync(chat, mp3, cancellationToken);
@@ -460,7 +471,7 @@ public sealed class IraAlertService(
         VoiceSpeech speech;
         try
         {
-            speech = await voice.SpeakAsync(m.Text, caller, cancellationToken);
+            speech = await voice.SpeakAsync(m.Spoken, caller, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -499,10 +510,10 @@ public sealed class IraAlertService(
     }
 
     /// <summary><paramref name="text"/> with what was folded for this owner, which is then cleared.</summary>
-    private static string Fold(string text, IraOwnerHour hour)
+    private static string Fold(string text, IraOwnerHour hour, int max = IraAlertText.MaxChars)
     {
         if (hour.Folded == 0) return text;
-        string folded = IraAlertText.WithFolded(text, hour.Folded, hour.FoldedSinceUtc);
+        string folded = IraAlertText.WithFolded(text, hour.Folded, hour.FoldedSinceUtc, max);
         hour.Folded = 0;
         hour.FoldedSinceUtc = null;
         return folded;

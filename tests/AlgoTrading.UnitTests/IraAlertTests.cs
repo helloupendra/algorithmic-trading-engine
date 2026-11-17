@@ -326,7 +326,7 @@ public sealed class IraAlertTests : IDisposable
         string text = IraAlertText.Close(await new IraDesk(db, new RunPnl(db, Lots, new RunCharges(db, Lots)), today).CloseAsync(at, CancellationToken.None));
 
         Assert.Equal(
-            "The market has closed. Day net after charges: admin ₹81,804 down, coderforchange ₹1,200 up. Best run: Ghost on NIFTY for admin, ₹5,000 up. " +
+            "The market has closed. Day P&L, no charges: admin ₹81,804 down, coderforchange ₹1,200 up. Best run: Ghost on NIFTY for admin, ₹5,000 up. " +
             "Worst run: Fulcrum on BANKNIFTY for admin, ₹86,804 down. The AI Trader was off.",
             text);
     }
@@ -338,7 +338,7 @@ public sealed class IraAlertTests : IDisposable
         IraClose Day(IraTraderDay? trader) => new([new IraAccountNet("admin", 2500.4m)], run, run, 1, trader);
 
         Assert.Equal(
-            "The market has closed. Day net after charges: admin ₹2,500 up. The only run: Ghost on NIFTY for admin, ₹2,500 up. The AI Trader acted twice; its book is ₹1,240 up after charges.",
+            "The market has closed. Day P&L, no charges: admin ₹2,500 up. The only run: Ghost on NIFTY for admin, ₹2,500 up. The AI Trader acted twice; its book is ₹1,240 up after charges.",
             IraAlertText.Close(Day(new IraTraderDay(AiTraderModes.Live, 2, 1, 1240.4m))));
         Assert.EndsWith("The AI Trader made no trade.", IraAlertText.Close(Day(new IraTraderDay(AiTraderModes.Live, 0, 0, 0m))));
         Assert.EndsWith("The AI Trader, in shadow mode, made 3 paper trades, ₹450 down after charges.",
@@ -718,7 +718,7 @@ public sealed class IraAlertTests : IDisposable
         await rig.Service.RunOnceAsync(Ist(15, 39), CancellationToken.None);
         await rig.Service.RunOnceAsync(Ist(15, 40), CancellationToken.None);
         await rig.Service.RunOnceAsync(Ist(15, 41), CancellationToken.None);
-        Assert.Equal([MorningText, ClosingText], rig.Bot.TextsTo(Owner));
+        Assert.Equal([MorningText, ClosingDetail], rig.Bot.TextsTo(Owner));
 
         // Saturday 17 Oct, and Tuesday 20 Oct, a holiday in the calendar: nothing.
         foreach (var day in new[] { new DateOnly(2026, 10, 17), new DateOnly(2026, 10, 18), new DateOnly(2026, 10, 20) })
@@ -808,23 +808,77 @@ public sealed class IraAlertTests : IDisposable
         "Options: NIFTY range-bound, BANKNIFTY bearish, SENSEX neutral. Morning plan: 13 of 13 runs started for admin, 10 of 10 for coderforchange.";
 
     private static readonly IraClose Closing = new(
-        [new IraAccountNet("admin", -12340m), new IraAccountNet("coderforchange", 2100m)],
+        [new IraAccountNet("admin", -12340m) { Open = -2000m }, new IraAccountNet("coderforchange", 2100m)],
         new IraRunNet(2, "GhostTangentCrossings", "NIFTY", "admin", 5000m),
-        new IraRunNet(1, "Fulcrum", "BANKNIFTY", "admin", -17340m),
+        new IraRunNet(1, "Fulcrum", "BANKNIFTY", "admin", -17340m) { Open = -2000m },
         3,
-        new IraTraderDay(AiTraderModes.Live, 2, 1, 1240m));
+        new IraTraderDay(AiTraderModes.Live, 2, 1, 1240m))
+    {
+        All =
+        [
+            new IraRunNet(2, "GhostTangentCrossings", "NIFTY", "admin", 5000m),
+            new IraRunNet(3, "GhostTangentCrossings", "NIFTY", "coderforchange", 2100m),
+            new IraRunNet(1, "Fulcrum", "BANKNIFTY", "admin", -17340m) { Open = -2000m },
+        ],
+    };
 
+    /// <summary>What is spoken: the day in one breath.</summary>
     private const string ClosingText =
-        "The market has closed. Day net after charges: admin ₹12,340 down, coderforchange ₹2,100 up. Best run: Ghost Tangent Crossings on NIFTY for admin, ₹5,000 up. " +
+        "The market has closed. Day P&L, no charges: admin ₹12,340 down, coderforchange ₹2,100 up. Best run: Ghost Tangent Crossings on NIFTY for admin, ₹5,000 up. " +
         "Worst run: Fulcrum on BANKNIFTY for admin, ₹17,340 down. The AI Trader acted twice; its book is ₹1,240 up after charges.";
+
+    /// <summary>What is written: every run (owner, 17 Nov 2026: "adha adhura msg hai").</summary>
+    private const string ClosingDetail =
+        "The market has closed. Day P&L (simple: booked + open, no charges):\n" +
+        "admin: ₹12,340 down (booked ₹10,340 down, open ₹2,000 down)\n" +
+        "coderforchange: ₹2,100 up, all booked\n\n" +
+        "Every run, best first:\n" +
+        "• GhostTangentCrossings · NIFTY (admin): ₹5,000 up, all booked\n" +
+        "• GhostTangentCrossings · NIFTY (coderforchange): ₹2,100 up, all booked\n" +
+        "• Fulcrum · BANKNIFTY (admin): ₹17,340 down (booked ₹15,340 down, open ₹2,000 down)\n\n" +
+        "The AI Trader acted twice; its book is ₹1,240 up after charges.";
 
     [Fact]
     public void The_fixture_briefings_fit_in_one_spoken_message()
     {
         Assert.Equal(MorningText, IraAlertText.Morning(Morning));
         Assert.Equal(ClosingText, IraAlertText.Close(Closing));
+        Assert.Equal(ClosingDetail, IraAlertText.CloseDetail(Closing));
         Assert.True(MorningText.Length <= IraAlertText.MaxChars);
         Assert.True(ClosingText.Length <= IraAlertText.MaxChars);
+    }
+
+    [Fact]
+    public void The_close_text_names_the_manual_book_and_counts_runs_that_do_not_fit()
+    {
+        var many = Enumerable.Range(1, 120)
+            .Select(i => new IraRunNet(i, "TrendRiderV2", "NIFTY", "admin", 1000m * i))
+            .Append(new IraRunNet(999, "Manual", "MANUAL", "admin", -84027m) { ManualBook = true })
+            .OrderByDescending(r => r.Net)
+            .ToList();
+        var close = new IraClose([new IraAccountNet("admin", 0m)], many[0], many[^1], many.Count, null) { All = many };
+
+        string text = IraAlertText.CloseDetail(close);
+
+        Assert.True(text.Length <= IraAlertText.MaxDetailChars, $"{text.Length} characters");
+        Assert.Matches(@"\n…and \d+ more runs: see Today on the console\.", text);
+        Assert.EndsWith("The AI Trader was off.", text);
+        Assert.Contains("Worst run: the manual book for admin, ₹84,027 down.", IraAlertText.Close(close));
+        Assert.Contains("• Manual book (admin): ₹84,027 down, all booked",
+            IraAlertText.CloseDetail(close with { All = [many[^1]] }));
+    }
+
+    [Fact]
+    public async Task The_close_writes_every_run_and_speaks_only_the_short_day()
+    {
+        Link(Owner, "upendra");
+        var rig = Start(desk: db => new FixedBriefings(Desk(db), Morning, Closing));
+
+        await rig.Service.RunOnceAsync(Ist(15, 40), CancellationToken.None);
+
+        Assert.Equal([ClosingDetail], rig.Bot.TextsTo(Owner));
+        Assert.Equal([ClosingText], rig.Aws.Spoken);
+        Assert.Equal(["text:5550001", "voice:5550001"], rig.Bot.Order);
     }
 
     private static DateTime Ist(int hour, int minute) => At(Day, hour, minute);

@@ -49,14 +49,32 @@ public sealed record IraIndexView(string Index, string View);
 public sealed record IraPlanAccount(string Account, int Started, int Planned);
 
 /// <summary>The close briefing's facts, as Today states them (<see cref="TodayBuilder"/>).</summary>
-/// <param name="Accounts">Each account's day net after charges, worst first.</param>
+/// <param name="Accounts">Each account's day P&amp;L, simple (booked plus open, no charges: the owner's rule), worst first.</param>
 /// <param name="Runs">How many live runs the day had.</param>
 /// <param name="Trader">The AI Trader's day; null when it was off and did not look.</param>
-public sealed record IraClose(IReadOnlyList<IraAccountNet> Accounts, IraRunNet? Best, IraRunNet? Worst, int Runs, IraTraderDay? Trader);
+public sealed record IraClose(IReadOnlyList<IraAccountNet> Accounts, IraRunNet? Best, IraRunNet? Worst, int Runs, IraTraderDay? Trader)
+{
+    /// <summary>
+    /// Every run of the day, best first. The owner, 17 Nov 2026, of a close message that named only the best and the
+    /// worst run: "adha adhura msg hai" (a half message). The text lists them all; the voice keeps to best and worst.
+    /// </summary>
+    public IReadOnlyList<IraRunNet> All { get; init; } = [];
+}
 
-public sealed record IraAccountNet(string Account, decimal Net);
+/// <summary>An account's day: <see cref="Net"/> is simple P&amp;L (booked plus open, no charges); <see cref="Open"/> its open part.</summary>
+public sealed record IraAccountNet(string Account, decimal Net)
+{
+    public decimal Open { get; init; }
+}
 
-public sealed record IraRunNet(long RunId, string Strategy, string Underlying, string Account, decimal Net);
+/// <summary>A run's day: <see cref="Net"/> is simple P&amp;L (booked plus open, no charges); <see cref="Open"/> its open part.</summary>
+public sealed record IraRunNet(long RunId, string Strategy, string Underlying, string Account, decimal Net)
+{
+    public decimal Open { get; init; }
+
+    /// <summary>The owner's manual book rather than a strategy run.</summary>
+    public bool ManualBook { get; init; }
+}
 
 /// <param name="Mode"><c>live</c> or <c>shadow</c>.</param>
 /// <param name="Placed">Decisions it carried out in its own account (live), else its shadow trades.</param>
@@ -575,18 +593,28 @@ public sealed class IraDesk(
         var trading = await today.TradingAsync(day, cancellationToken);
         var trader = await today.AiTraderAsync(day, cancellationToken);
 
-        // Today lists the runs worst first.
-        var runs = trading.Runs.Select(r => new IraRunNet(r.RunId, r.Strategy, r.Underlying, r.UserName, r.Net)).ToList();
+        // Simple P&L, booked plus open, no charges (the owner's rule): Today's net with its charges added back. Worst first.
+        var runs = trading.Runs
+            .Select(r => new IraRunNet(r.RunId, r.Strategy, r.Underlying, r.UserName, r.Net + r.Charges)
+            {
+                Open = r.Unrealized,
+                ManualBook = r.Status == "Manual book",
+            })
+            .OrderBy(r => r.Net)
+            .ToList();
         IraTraderDay? traderDay = trader is null ? null
             : trader.Mode == AiTraderModes.Live
                 ? new IraTraderDay(AiTraderModes.Live, trader.Placed, trader.Live?.Positions ?? 0, trader.Live?.Net ?? 0m)
                 : new IraTraderDay(AiTraderModes.Shadow, trader.ShadowPositions, trader.ShadowPositions, trader.ShadowNet);
         return new IraClose(
-            trading.Accounts.Select(a => new IraAccountNet(a.UserName, a.Net)).ToList(),
+            trading.Accounts.Select(a => new IraAccountNet(a.UserName, a.Net + a.Charges) { Open = a.Unrealized }).OrderBy(a => a.Net).ToList(),
             runs.Count == 0 ? null : runs[^1],
             runs.Count == 0 ? null : runs[0],
             runs.Count,
-            traderDay);
+            traderDay)
+        {
+            All = runs.OrderByDescending(r => r.Net).ThenBy(r => r.RunId).ToList(),
+        };
     }
 
     // ---------- reading ----------

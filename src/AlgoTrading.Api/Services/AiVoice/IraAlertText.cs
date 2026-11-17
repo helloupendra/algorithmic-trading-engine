@@ -138,16 +138,16 @@ public static partial class IraAlertText
     }
 
     /// <summary>
-    /// "The market has closed. Day net after charges: admin ₹12,340 down, coderforchange ₹2,100 up. Best run: Ghost on
-    /// NIFTY for admin, ₹5,000 up. Worst run: Fulcrum on BANKNIFTY for admin, ₹86,804 down. The AI Trader acted twice;
-    /// its book is ₹1,240 up after charges."
+    /// The spoken close: "The market has closed. Day P&amp;L, no charges: admin ₹12,340 down, coderforchange ₹2,100 up.
+    /// Best run: Ghost on NIFTY for admin, ₹5,000 up. Worst run: Fulcrum on BANKNIFTY for admin, ₹86,804 down. The AI
+    /// Trader acted twice; its book is ₹1,240 up after charges." The text sent with it is <see cref="CloseDetail"/>.
     /// </summary>
     public static string Close(IraClose c)
     {
         var parts = new List<string> { "The market has closed." };
         parts.Add(c.Accounts.Count == 0
             ? "No live runs today."
-            : "Day net after charges: " + string.Join(", ", c.Accounts.Select(a => $"{a.Account} {Signed(a.Net)}")) + ".");
+            : "Day P&L, no charges: " + string.Join(", ", c.Accounts.Select(a => $"{a.Account} {Signed(a.Net)}")) + ".");
         if (c.Runs == 1 && c.Best is { } only)
         {
             parts.Add($"The only run: {Run(only)}.");
@@ -161,16 +161,82 @@ public static partial class IraAlertText
         return Fit(string.Join(' ', parts));
     }
 
+    /// <summary>The longest close text: well inside Telegram's 4,096 characters, with room for the folded line.</summary>
+    public const int MaxDetailChars = 3500;
+
+    /// <summary>
+    /// The close as text, every run on its own line (owner, 17 Nov 2026: "adha adhura msg hai"):
+    /// <code>
+    /// The market has closed. Day P&amp;L (simple: booked + open, no charges):
+    /// admin: ₹11,495 up, all booked
+    ///
+    /// Every run, best first:
+    /// • TrendRiderV2 · BANKNIFTY (admin): ₹16,035 up, all booked
+    /// • TrendRiderV2 · NIFTY (admin): ₹2,912 up, all booked
+    /// • TrendRiderV2 · SENSEX (admin): ₹7,452 down, all booked
+    ///
+    /// The AI Trader was off.
+    /// </code>
+    /// More runs than fit are counted, never cut mid-line.
+    /// </summary>
+    public static string CloseDetail(IraClose c)
+    {
+        var text = new System.Text.StringBuilder("The market has closed. Day P&L (simple: booked + open, no charges):");
+        if (c.Accounts.Count == 0)
+        {
+            text.Append(" no live runs today.");
+        }
+        else
+        {
+            foreach (var a in c.Accounts) text.Append('\n').Append(a.Account).Append(": ").Append(Signed(a.Net)).Append(Split(a.Net, a.Open));
+        }
+
+        string trader = Trader(c.Trader);
+        if (c.All.Count > 0)
+        {
+            text.Append("\n\nEvery run, best first:");
+            for (int i = 0; i < c.All.Count; i++)
+            {
+                var r = c.All[i];
+                string line = $"\n• {Label(r)} ({r.Account}): {Signed(r.Net)}{Split(r.Net, r.Open)}";
+                int rest = c.All.Count - i;
+                if (text.Length + line.Length + trader.Length + 80 > MaxDetailChars)
+                {
+                    text.Append($"\n…and {rest} more run{(rest == 1 ? "" : "s")}: see Today on the console.");
+                    break;
+                }
+
+                text.Append(line);
+            }
+        }
+
+        text.Append("\n\n").Append(trader);
+        return text.ToString();
+    }
+
+    /// <summary>"TrendRiderV2 · NIFTY", or "Manual book": the names the console shows, not the spoken ones.</summary>
+    private static string Label(IraRunNet r) => r.ManualBook ? "Manual book" : $"{r.Strategy} · {r.Underlying}";
+
+    /// <summary>", all booked", ", all open", or " (booked ₹6,000 up, open ₹2,000 down)".</summary>
+    private static string Split(decimal net, decimal open)
+    {
+        decimal o = Math.Round(open, 0, MidpointRounding.AwayFromZero);
+        decimal booked = Math.Round(net - open, 0, MidpointRounding.AwayFromZero);
+        if (o == 0) return ", all booked";
+        if (booked == 0) return ", all open";
+        return $" (booked {Signed(booked)}, open {Signed(o)})";
+    }
+
     /// <summary>"And 3 more alerts since 10:05 IST: see Today on the console."</summary>
     public static string Folded(int count, DateTime sinceUtc) =>
         $"And {count} more alert{(count == 1 ? "" : "s")} since {Clock(sinceUtc)} IST: see Today on the console.";
 
-    /// <summary><paramref name="text"/> with the "and N more" line after it, the text cut to leave it room.</summary>
-    public static string WithFolded(string text, int count, DateTime? sinceUtc)
+    /// <summary><paramref name="text"/> with the "and N more" line after it, the text cut to leave it room within <paramref name="max"/>.</summary>
+    public static string WithFolded(string text, int count, DateTime? sinceUtc, int max = MaxChars)
     {
         if (count <= 0 || sinceUtc is not DateTime since) return text;
         string line = Folded(count, since);
-        return Fit(text, MaxChars - line.Length - 1) + " " + line;
+        return Fit(text, max - line.Length - 1) + " " + line;
     }
 
     // ---------- /alerts ----------
@@ -242,7 +308,9 @@ public static partial class IraAlertText
         return end > 0 ? text[..end] : Cut(text, max);
     }
 
-    private static string Run(IraRunNet r) => $"{Name(r.Strategy)} on {r.Underlying} for {r.Account}, {Signed(r.Net)}";
+    private static string Run(IraRunNet r) => r.ManualBook
+        ? $"the manual book for {r.Account}, {Signed(r.Net)}"
+        : $"{Name(r.Strategy)} on {r.Underlying} for {r.Account}, {Signed(r.Net)}";
 
     private static string Trader(IraTraderDay? t)
     {
