@@ -360,7 +360,9 @@ public class LiveActivityResponse
 
     /// <summary>
     /// The signal's raw metadata for rows the client renders itself
-    /// (RISK_UPDATED carries <c>{ risk, by }</c>); null for every other row.
+    /// (RISK_UPDATED carries <c>{ risk, by }</c>; OPEN_GROUP carries the entry's
+    /// context, such as a TrendRider entry's levels, up to 4 KB); null for every
+    /// other row.
     /// </summary>
     public string? MetadataJson { get; set; }
 }

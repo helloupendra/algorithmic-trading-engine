@@ -36,6 +36,7 @@ import {
 } from './liveMarks'
 import type { ListAsOf, RunLegs } from './liveMarks'
 import { polledDown } from './queryState'
+import type { Bar as StoryBar } from './runStory'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import { manualInstrumentQuery } from './ticket'
@@ -169,6 +170,34 @@ export function useLiveBars(symbol: string | null, take = 500) {
     structuralSharing: keepSentStamp,
     enabled: !!symbol,
     refetchInterval: POLL_SLOW,
+  })
+}
+
+/**
+ * One instrument's one-minute bars for a run's day, for the run story chart:
+ * today's live bars (every 5 s while the run is live, the latest 400 cover the
+ * session), or the stored candles of an earlier day.
+ */
+export function useRunDayBars(symbol: string | null, day: string, isToday: boolean, live: boolean) {
+  return useQuery({
+    queryKey: ['runDayBars', symbol, day, isToday],
+    queryFn: async (): Promise<StoryBar[]> => {
+      if (isToday) {
+        const rows = await api.get<LiveBar[]>(
+          `/api/LiveData/bars?${new URLSearchParams({ symbol: symbol!, take: '400' })}`,
+        )
+        return rows
+          .filter((r) => !r.resolution || r.resolution === '1m' || r.resolution === '1')
+          .map((r) => ({ t: Date.parse(r.barStartUtc), o: r.open, h: r.high, l: r.low, c: r.close }))
+      }
+      const rows = await api.get<CandleDto[]>(
+        `/api/MarketData/history/local?symbol=${encodeURIComponent(symbol!)}&resolution=1&fromDate=${day}&toDate=${day}`,
+      )
+      return rows.map((r) => ({ t: Date.parse(r.timestampUtc), o: r.open, h: r.high, l: r.low, c: r.close }))
+    },
+    enabled: !!symbol,
+    refetchInterval: live ? 5_000 : false,
+    staleTime: live ? 0 : 60_000,
   })
 }
 

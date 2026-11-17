@@ -39,6 +39,22 @@ public class StrategyController : ControllerBase
     private const string LivePaperMode = "LivePaper";
     private const int ActivityLimit = 60;
 
+    /// <summary>The longest OPEN_GROUP metadata the live view forwards (a TrendRider entry is about 0.6 KB).</summary>
+    public const int OpenMetadataLimit = 4096;
+
+    /// <summary>
+    /// The metadata an activity row carries to the client: a RISK_UPDATED row's
+    /// <c>{ risk, by }</c> for the risk chips, and an OPEN_GROUP's context (a
+    /// TrendRider entry's levels, ADR and index exits; a hand-booked entry's
+    /// note) for the run story's chart, up to <see cref="OpenMetadataLimit"/>
+    /// characters so a chatty strategy cannot bloat every poll. Null for every
+    /// other row.
+    /// </summary>
+    public static string? ActivityMetadata(string signalType, string? metadataJson) =>
+        signalType == RunRiskRules.RiskUpdatedSignalType ? metadataJson
+        : signalType == "OPEN_GROUP" && metadataJson is { Length: > 0 and <= OpenMetadataLimit } ? metadataJson
+        : null;
+
     private readonly TradingDbContext _dbContext;
     private readonly StrategyCatalogService _catalog;
     private readonly StrategyProcessRegistry _registry;
@@ -1216,8 +1232,9 @@ public class StrategyController : ControllerBase
                 Text = text,
                 GroupId = s.GroupId,
                 // RISK_UPDATED rows render client-side from { risk, by } with the
-                // same formatter as the Risk chips; Text stays as the fallback.
-                MetadataJson = s.SignalType == RunRiskRules.RiskUpdatedSignalType ? s.MetadataJson : null
+                // same formatter as the Risk chips; OPEN_GROUP rows carry the
+                // entry's context to the run story. Text stays as the fallback.
+                MetadataJson = ActivityMetadata(s.SignalType, s.MetadataJson)
             });
         }
 

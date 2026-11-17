@@ -22,6 +22,7 @@ import { IconClock } from '../../components/icons'
 import type { PaperOrderRow } from '../../lib/types'
 import { CategoryBadge, Disclosure } from './shared'
 import { RunCard } from './RunCard'
+import { RunStory } from './RunStory'
 import { RunAiReview } from '../ai/reportParts'
 
 /* ---------------------------------------------------------- order ledger */
@@ -208,6 +209,10 @@ export function LiveRunDetailPage() {
           </span>
         </div>
       )}
+
+      {/* The day as a story: the numbers, the chart with every BUY and SELL
+          boxed, the levels and exits, the positions and what the strategy said. */}
+      {view && !view.isManualBook && <RunStory view={view} runId={runId} canControl={canControl} />}
 
       {/* Only once the view is here: the subtitle above already says "Loading
           run…", and a card with nothing to go on read as a stopped run. */}

@@ -1,0 +1,211 @@
+/* The run story (RunStory.tsx): one run's day on one page. Tokens only, so it follows the theme. */
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.story__kpis {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.story__engine {
+  font-size: 0.82em;
+}
+
+.story__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .story__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- the chart and its boxed marks -------------------------------------- */
+
+.story-chart {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.story-chart__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.story-chart__links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.story-link line {
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+}
+
+.story-link circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.story-link--buy line,
+.story-link--buy circle { stroke: var(--accent); }
+.story-link--win line,
+.story-link--win circle { stroke: var(--pos); }
+.story-link--loss line,
+.story-link--loss circle { stroke: var(--neg); }
+.story-link--flat line,
+.story-link--flat circle { stroke: var(--text-3); }
+
+.story-label {
+  position: absolute;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  font-size: 11.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+  max-width: 240px;
+  z-index: 2;
+}
+
+.story-label b { font-weight: 650; }
+.story-label span { color: var(--text-2); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+
+.story-label--buy { border-color: var(--accent); }
+.story-label--buy b { color: var(--accent); }
+.story-label--win { border-color: var(--pos); }
+.story-label--win b { color: var(--pos); }
+.story-label--loss { border-color: var(--neg); }
+.story-label--loss b { color: var(--neg); }
+
+.story-chart__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--text-3);
+}
+
+/* --- legend ------------------------------------------------------------- */
+
+.story__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.story__legend li { display: inline-flex; align-items: center; gap: 6px; }
+
+.lg {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--text-3);
+}
+.lg--prev { border-top-style: dashed; border-top-width: 1px; border-color: var(--text-3); }
+.lg--open { border-top-style: dashed; border-top-width: 1px; border-color: var(--line-strong); }
+.lg--entry { border-color: var(--accent); }
+.lg--stop { border-color: var(--neg); }
+.lg--arm { border-top-style: dotted; border-color: var(--warn); }
+.lg--trail { border-color: var(--warn); }
+
+/* --- the rules panel ----------------------------------------------------- */
+
+.story__rules { display: flex; flex-direction: column; gap: 10px; }
+.story__rules .small-note { margin: 0; }
+
+.story__kv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.story__kv th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-2);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.story__kv td {
+  text-align: right;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.story__kv tr:last-child th,
+.story__kv tr:last-child td { border-bottom: 0; }
+.story__kv tr.neg th,
+.story__kv tr.neg td { color: var(--neg); }
+.story__kv tr.warn th,
+.story__kv tr.warn td { color: var(--warn); }
+
+.story__checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-3);
+}
+.story__checks li { padding: 2px 0; }
+.story__checks li.ok { color: var(--pos); font-weight: 550; }
+
+.story__side { margin: 0; }
+
+.story__plan {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.story__plan h3 { margin: 0 0 6px; font-size: 13.5px; }
+
+.story__optpnl { font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* --- timeline ------------------------------------------------------------ */
+
+.story__timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.story__timeline li {
+  display: grid;
+  grid-template-columns: 44px auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.story__time { color: var(--text-3); }
+.story__text { color: var(--text-2); }
