@@ -29,11 +29,19 @@
 # they hold a trend to their own exits or 15:15, and the job's 20-point default would
 # close their big days in the first minutes. V2 (earlier entry, index stop, index
 # trail) was added the same night, at the owner's request to watch it live.
+#
+# 2026-11-17 evening: on the owner's word ("kal sirf v2 chalega vo bhi nifty per,
+# baki sab band rahe"), from 18 Nov admin runs only TrendRider V2 on NIFTY: 1 run.
+# Ghost, Ghost V2, TrendRider, V2 on BANKNIFTY/SENSEX and CrudeMomentum are off.
+# Their old lines are kept below, commented out, so any of them comes back by
+# removing one "#".
 
 accounts: admin
 
-GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
-GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
-TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
-TrendRiderV2             BANKNIFTY,NIFTY,SENSEX  2  -
-CrudeMomentum            CRUDEOIL                2  -
+TrendRiderV2             NIFTY                   2  -
+
+# GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
+# GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
+# TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
+# TrendRiderV2             BANKNIFTY,SENSEX        2  -
+# CrudeMomentum            CRUDEOIL                2  -
