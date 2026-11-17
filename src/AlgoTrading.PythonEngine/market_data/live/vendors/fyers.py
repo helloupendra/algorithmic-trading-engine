@@ -219,6 +219,14 @@ class FyersFeed(VendorFeed):
             else:
                 on_event(FeedEvent.ERROR, str(message))
 
+        def on_open():
+            # The SDK's own reconnect (reconnect=True) opens a fresh socket and empties its
+            # symbol list without subscribing again. Ours must be emptied too, or the
+            # resubscribe that CONNECTED triggers asks for nothing: "SUBSCRIBED: 0 symbol(s),
+            # 76 declined" and no ticks for the rest of the day (17 Nov 2026, three times).
+            self._subscribed = set()
+            on_event(FeedEvent.CONNECTED, "FYERS websocket connected")
+
         # The SDK keeps a singleton; a rebuild must not inherit the dead one.
         data_ws.FyersDataSocket._instance = None
         # A new socket carries nothing yet.
@@ -229,7 +237,7 @@ class FyersFeed(VendorFeed):
             litemode=False,
             write_to_file=False,
             reconnect=True,
-            on_connect=lambda: on_event(FeedEvent.CONNECTED, "FYERS websocket connected"),
+            on_connect=on_open,
             on_close=lambda message: on_event(FeedEvent.DISCONNECTED, str(message)),
             on_error=on_error,
             on_message=on_message,

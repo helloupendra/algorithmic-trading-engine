@@ -1,9 +1,12 @@
 """FYERS: the socket asks for no more symbols than the plan allows, indices first (16 Nov 2026)."""
 
 import os
+import sys
+import types
 import unittest
 from unittest import mock
 
+from core.live.vendor_feed import FeedEvent
 from market_data.live.vendors.fyers import DEFAULT_MAX_SYMBOLS, FyersFeed
 
 
@@ -63,6 +66,42 @@ class FyersSymbolLimitTest(unittest.TestCase):
         f = feed(10)
         f.subscribe(SPOTS)
         self.assertEqual([OPTIONS[0]], f.subscribe([SPOTS[0], OPTIONS[0]]))
+
+
+class FakeSdkSocket(FakeSocket):
+    """The SDK's socket: on_connect fires on the first open and again on each of its own reconnects."""
+    _instance = None
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.on_connect = kwargs["on_connect"]
+
+    def connect(self):
+        self.on_connect()
+
+
+class FyersReconnectTest(unittest.TestCase):
+    def test_the_sdk_reconnect_subscribes_the_whole_list_again(self):
+        # 17 Nov 2026: after each SDK reconnect the feed asked for nothing ("SUBSCRIBED: 0 symbol(s),
+        # 76 declined"), because it still counted the dead socket's symbols as on the wire.
+        sdk = types.ModuleType("fyers_apiv3.FyersWebsocket")
+        sdk.data_ws = types.SimpleNamespace(FyersDataSocket=FakeSdkSocket)
+        modules = {"fyers_apiv3": types.ModuleType("fyers_apiv3"), "fyers_apiv3.FyersWebsocket": sdk}
+        modules["fyers_apiv3"].FyersWebsocket = sdk
+        f = FyersFeed(http=mock.MagicMock(), max_symbols=10)
+        taken = []
+
+        def on_event(event, detail=""):
+            if event == FeedEvent.CONNECTED:      # what the feed runner does: subscribe the whole list
+                taken.append(f.subscribe(SPOTS))
+
+        with mock.patch.dict(sys.modules, modules), \
+                mock.patch("market_data.live.vendors.fyers.require_app_id", return_value="APP"):
+            f.connect("token", on_ticks=lambda ticks: None, on_event=on_event)
+            f._socket.on_connect()                # the SDK reconnects on its own
+
+        self.assertEqual([SPOTS, SPOTS], taken)
+        self.assertEqual([SPOTS, SPOTS], f._socket.asked)
 
 
 if __name__ == "__main__":
