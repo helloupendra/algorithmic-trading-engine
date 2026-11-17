@@ -60,6 +60,12 @@ public class StrategyLiveViewResponse
     /// Who may change it is <see cref="CanControl"/>.
     /// </summary>
     public bool CanCarryForward { get; set; }
+
+    /// <summary>
+    /// The run's "carry every position" setting is on: each position it opens
+    /// starts with carry forward ticked (PUT runs/{id}/carry-forward).
+    /// </summary>
+    public bool CarryForwardAll { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? StoppedUtc { get; set; }
     public string? StopReason { get; set; }

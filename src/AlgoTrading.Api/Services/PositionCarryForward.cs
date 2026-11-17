@@ -135,6 +135,63 @@ public sealed class PositionCarryForward
     }
 
     /// <summary>
+    /// Switches the run's "carry every position" setting
+    /// (<see cref="RunCarrySetting"/>): every position the run opens from now on
+    /// starts ticked (or not), and its open positions are set to match now. The
+    /// owner, 17 Nov 2026: "agr trade carry hoga toh yeh apne ap tick ho jana
+    /// chaiye" — asked for as a run setting. Not for the manual book, whose
+    /// positions are each ticked on the ticket; not for a recap.
+    /// </summary>
+    public async Task<ChangeResult> SetRunAsync(
+        SimulationRun run,
+        bool carryForward,
+        string by,
+        CancellationToken cancellationToken)
+    {
+        if (RecapClock.IsRecap(run.ParametersJson))
+            return new ChangeResult(Outcome.Recap,
+                $"Run {run.Id} is a recap of an earlier session; its positions cannot be carried forward.");
+
+        if (IsManualBook(run))
+            return new ChangeResult(Outcome.PositionNotOpen,
+                "The manual book has no run setting: each position is ticked on its own ticket or in the table.");
+
+        if (!string.Equals(run.Status, StrategyRunControl.RunStatusRunning, StringComparison.OrdinalIgnoreCase))
+            return new ChangeResult(Outcome.RunNotRunning,
+                $"Run {run.Id} is {run.Status.ToLowerInvariant()}; nothing will carry its positions now.");
+
+        string reason = "";
+        var update = await _paperTrading.SetRunCarryForwardAsync(run.Id, carryForward, changed =>
+        {
+            reason = DescribeRunChange(carryForward, changed, by);
+            return JsonSerializer.Serialize(new { reason, by, runSetting = true, carryForward, positionsChanged = changed });
+        }, DateTime.UtcNow, cancellationToken);
+
+        return update.Outcome switch
+        {
+            CarryForwardUpdate.Changed => new ChangeResult(Outcome.Changed, reason),
+            CarryForwardUpdate.Unchanged => new ChangeResult(Outcome.Unchanged,
+                carryForward ? "Every position of this run is already carried forward." : "This run is already intraday."),
+            _ => new ChangeResult(Outcome.RunNotRunning,
+                $"Run {run.Id} is being stopped; nothing will carry its positions now.")
+        };
+    }
+
+    /// <summary>The activity line for switching the run setting.</summary>
+    public static string DescribeRunChange(bool carryForward, int positionsChanged, string by)
+    {
+        string open = positionsChanged switch
+        {
+            0 => "",
+            1 => carryForward ? "; 1 open position ticked" : "; 1 open position unticked",
+            _ => carryForward ? $"; {positionsChanged} open positions ticked" : $"; {positionsChanged} open positions unticked"
+        };
+        return carryForward
+            ? $"Carry forward for the whole run switched on by {by}: every position moves to the manual book at the close instead of being squared off{open}"
+            : $"Carry forward for the whole run switched off by {by}: positions are squared off with the run at the close{open}";
+    }
+
+    /// <summary>
     /// The activity line for a change of the tick. Says what will happen at the
     /// close, because that is the only thing the tick changes.
     /// </summary>

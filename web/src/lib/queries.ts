@@ -895,6 +895,27 @@ export function useSetCarryForward() {
 }
 
 /**
+ * Switch a run's "carry every position" setting (the owner, 17 Nov: "agr trade
+ * carry hoga toh yeh apne ap tick ho jana chaiye" — from the run's setting).
+ * On, every position the run opens starts ticked and its open ones are ticked
+ * now; off, the same unticked. One row can still be changed by hand after.
+ */
+export function useSetRunCarryForward() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, carryForward }: { runId: number; carryForward: boolean }) =>
+      api.put<{ message: string; runId: number; carryForward: boolean; changed: boolean }>(
+        `/api/Strategy/runs/${runId}/carry-forward`,
+        { carryForward },
+      ),
+    onSuccess: (_data, { runId }) => {
+      qc.invalidateQueries({ queryKey: ['strategy', 'live', runId] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
+    },
+  })
+}
+
+/**
  * Replace the risk rules of ONE running run. The guard picks the new rules up
  * on its next sweep and the run's activity gains a RISK_UPDATED row, so the
  * run's live view and the strategy list (which carries the overall

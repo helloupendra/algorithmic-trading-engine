@@ -537,6 +537,62 @@ public class StrategyController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Switches a running run's "carry every position" setting: on, each
+    /// position it opens starts with carry forward ticked and its open ones are
+    /// ticked now; off, the same unticked. One position can still be changed by
+    /// hand afterwards. Same rules as the one-position tick: an admin or the
+    /// owner, a running non-recap strategy run (not the manual book), 409
+    /// otherwise. The owner, 17 Nov 2026: "agr trade carry hoga toh yeh apne ap
+    /// tick ho jana chaiye" — "Run ki setting se".
+    /// </summary>
+    [HttpPut("runs/{runId:long}/carry-forward")]
+    public async Task<IActionResult> SetRunCarryForward(
+        long runId,
+        [FromBody] CarryForwardRequest? request,
+        [FromServices] PositionCarryForward carryForward,
+        CancellationToken cancellationToken)
+    {
+        if (request?.CarryForward is not { } carry)
+            return BadRequest(new { message = "carryForward (true or false) is required." });
+
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == runId && x.Mode == LivePaperMode, cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        var startedBy = _registry.Get(runId)?.StartedBy
+                        ?? await _dbContext.AppUsers.AsNoTracking()
+                            .Where(x => x.Id == run.UserId)
+                            .Select(x => x.UserName)
+                            .FirstOrDefaultAsync(cancellationToken);
+
+        if (!CanStop(startedBy, run.UserId))
+            return Forbid();
+
+        var userName = User.GetUserName() ?? "unknown";
+        var result = await carryForward.SetRunAsync(run, carry, userName, cancellationToken);
+
+        if (result.Outcome is not (PositionCarryForward.Outcome.Changed or PositionCarryForward.Outcome.Unchanged))
+            return Conflict(new { message = result.Message, runId });
+
+        if (result.Outcome == PositionCarryForward.Outcome.Changed)
+        {
+            HttpContext.Describe($"{result.Message} — run #{runId}.", "run", runId.ToString());
+            _logger.LogInformation("Run {RunId} ({Strategy}): {Message}", runId, run.StrategyName, result.Message);
+        }
+
+        return Ok(new
+        {
+            message = result.Message,
+            runId,
+            carryForward = carry,
+            changed = result.Outcome == PositionCarryForward.Outcome.Changed
+        });
+    }
+
     /// <summary>True for a manual book that is still open — Running, with no runner by design.</summary>
     private static bool IsOpenManualBook(SimulationRun run)
         => run.StrategyName == ManualOrdersController.BookStrategyName
@@ -1169,6 +1225,7 @@ public class StrategyController : ControllerBase
         view.IsManualBook = run.StrategyName == ManualOrdersController.BookStrategyName;
         // The same conditions PUT …/carry-forward checks; who may is CanControl.
         view.CanCarryForward = PositionCarryForward.IsChangeable(run, active: running is not null || IsOpenManualBook(run));
+        view.CarryForwardAll = RunCarrySetting.IsOn(run.ParametersJson);
 
         view.StopLoss = view.Risk.OverallStopLoss;
         view.Target = view.Risk.OverallTarget;

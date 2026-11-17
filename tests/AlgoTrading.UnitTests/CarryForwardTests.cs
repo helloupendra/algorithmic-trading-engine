@@ -186,6 +186,159 @@ public class CarryForwardTests
             new SimulationRun { Status = "Running", ParametersJson = "{\"session\":\"recap\"}" }, true));
     }
 
+    // ============================================ the run's own setting
+
+    // The owner, 17 Nov 2026: "agr trade carry hoga toh yeh apne ap tick ho
+    // jana chaiye" (if the trade is to be carried, the tick should come on by
+    // itself) — asked for as a run setting.
+
+    private static Task Open(Desk desk, long run, string group, string symbol, int lots = 1) =>
+        desk.InScope(async sp =>
+        {
+            await sp.GetRequiredService<IPaperTradingService>().CreateSignalAsync(new CreateSimulationSignalRequest
+            {
+                SimulationRunId = run,
+                StrategyName = "TrendRiderV2",
+                SignalType = "OPEN_GROUP",
+                TimestampUtc = DateTime.UtcNow,
+                GroupId = group,
+                Legs = new List<SimulationSignalLegRequest> { new() { Symbol = symbol, Side = "BUY", Quantity = lots, Price = 100m } }
+            });
+            return 0;
+        });
+
+    [Fact]
+    public async Task A_run_started_with_the_setting_opens_every_position_ticked()
+    {
+        using var desk = new Desk();
+        long run = desk.NewRun("TrendRiderV2", Desk.Owner, parameters: "{\"lots\":2,\"carry_forward_all\":true}");
+
+        var before = DateTime.UtcNow;
+        await Open(desk, run, "G1", Call);
+        await Open(desk, run, "G2", Put);
+
+        var positions = desk.Positions(run);
+        Assert.Equal(2, positions.Count);
+        Assert.All(positions, p =>
+        {
+            Assert.True(p.CarryForward);
+            Assert.True(p.CarryForwardChangedUtc >= before);
+        });
+        // A fill is not a change anyone made: no CARRY_FORWARD rows.
+        Assert.DoesNotContain(desk.Signals(run), x => x.SignalType == PaperTradingService.CarryForwardSignalType);
+    }
+
+    [Fact]
+    public async Task An_add_to_a_position_unticked_by_hand_leaves_it_unticked()
+    {
+        using var desk = new Desk();
+        long run = desk.NewRun("TrendRiderV2", Desk.Owner, parameters: "{\"carry_forward_all\":true}");
+        long leg = desk.Fill(run, "TrendRiderV2", "G1", Call, "BUY", 1, 100m, MondayMorning, carry: false);
+
+        await Open(desk, run, "G1", Call);
+
+        var position = desk.Position(leg);
+        Assert.Equal(2, position.Quantity);
+        Assert.False(position.CarryForward);
+    }
+
+    [Fact]
+    public async Task Switching_the_setting_ticks_the_open_positions_and_every_later_one()
+    {
+        using var desk = new Desk();
+        long run = desk.NewRun("TrendRiderV2", Desk.Owner, parameters: "{\"lots\":2,\"underlying\":\"NIFTY\"}");
+        long call = desk.Fill(run, "TrendRiderV2", "G1", Call, "BUY", 2, 100m, MondayMorning);
+        long put = desk.Fill(run, "TrendRiderV2", "G2", Put, "BUY", 2, 80m, MondayMorning, carry: true);
+        long closed = desk.Fill(run, "TrendRiderV2", "G0", Call, "BUY", 2, 90m, MondayMorning, status: "Closed");
+        var markAge = desk.Position(call).UpdatedUtc;
+
+        var on = Assert.IsType<OkObjectResult>(await desk.PutRunCarry(run, true, Desk.Owner, "trader"));
+        Assert.Contains("\"changed\":true", JsonSerializer.Serialize(on.Value));
+
+        Assert.True(desk.Position(call).CarryForward);
+        Assert.True(desk.Position(put).CarryForward);
+        Assert.False(desk.Position(closed).CarryForward);
+        Assert.Equal(markAge, desk.Position(call).UpdatedUtc);
+
+        // The setting is on the run, next to its other parameters.
+        string parameters = desk.Run(run).ParametersJson;
+        Assert.True(RunCarrySetting.IsOn(parameters));
+        Assert.Contains("\"underlying\":\"NIFTY\"", parameters);
+
+        var signal = desk.Signals(run).Single(x => x.SignalType == PaperTradingService.CarryForwardSignalType);
+        Assert.Equal(string.Empty, signal.GroupId);
+        Assert.Equal("trader", Read(signal.MetadataJson, "by"));
+        Assert.Equal(
+            "Carry forward for the whole run switched on by trader: every position moves to the manual book at the close instead of being squared off; 1 open position ticked",
+            Read(signal.MetadataJson, "reason"));
+
+        // The next entry opens ticked.
+        await Open(desk, run, "G3", Call);
+        Assert.True(desk.Positions(run).Single(x => x.GroupId == "G3").CarryForward);
+
+        // Asking again changes nothing and records nothing.
+        var again = Assert.IsType<OkObjectResult>(await desk.PutRunCarry(run, true, Desk.Owner, "trader"));
+        Assert.Contains("\"changed\":false", JsonSerializer.Serialize(again.Value));
+        Assert.Single(desk.Signals(run), x => x.SignalType == PaperTradingService.CarryForwardSignalType);
+
+        // Off: every open position intraday again, and the next entry too.
+        Assert.IsType<OkObjectResult>(await desk.PutRunCarry(run, false, Desk.AdminId, "admin", admin: true));
+        Assert.All(desk.Positions(run).Where(x => x.Status == "Open"), p => Assert.False(p.CarryForward));
+        Assert.False(RunCarrySetting.IsOn(desk.Run(run).ParametersJson));
+        Assert.DoesNotContain(RunCarrySetting.Key, desk.Run(run).ParametersJson);
+        await Open(desk, run, "G4", Put);
+        Assert.False(desk.Positions(run).Single(x => x.GroupId == "G4").CarryForward);
+        Assert.Equal(
+            "Carry forward for the whole run switched off by admin: positions are squared off with the run at the close; 3 open positions unticked",
+            Read(desk.Signals(run).Last(x => x.SignalType == PaperTradingService.CarryForwardSignalType).MetadataJson, "reason"));
+    }
+
+    [Fact]
+    public async Task Only_the_owner_or_an_admin_may_switch_it_and_only_on_a_running_strategy_run()
+    {
+        using var desk = new Desk();
+        long run = desk.NewRun("TrendRiderV2", Desk.Owner);
+        long leg = desk.Fill(run, "TrendRiderV2", "G1", Call, "BUY", 1, 100m, MondayMorning);
+
+        Assert.IsType<ForbidResult>(await desk.PutRunCarry(run, true, Desk.OtherTrader, "mallory"));
+        Assert.False(desk.Position(leg).CarryForward);
+        Assert.False(RunCarrySetting.IsOn(desk.Run(run).ParametersJson));
+
+        long stopped = desk.NewRun("TrendRiderV2", Desk.Owner, status: "Stopped");
+        Assert.IsType<ConflictObjectResult>(await desk.PutRunCarry(stopped, true, Desk.Owner, "trader"));
+
+        long recap = desk.NewRun("TrendRiderV2", Desk.Owner, parameters: "{\"session\":\"recap\",\"recap_date\":\"2026-09-11\"}");
+        Assert.IsType<ConflictObjectResult>(await desk.PutRunCarry(recap, true, Desk.Owner, "trader"));
+
+        long book = desk.NewBook(Desk.Owner);
+        Assert.IsType<ConflictObjectResult>(await desk.PutRunCarry(book, true, Desk.Owner, "trader"));
+
+        Assert.All(new[] { stopped, recap, book }, id => Assert.False(RunCarrySetting.IsOn(desk.Run(id).ParametersJson)));
+        Assert.DoesNotContain(desk.AllSignals(), x => x.SignalType == PaperTradingService.CarryForwardSignalType);
+    }
+
+    [Fact]
+    public void The_setting_is_read_from_the_parameters_and_never_ticks_a_replay_or_a_recap()
+    {
+        Assert.True(RunCarrySetting.IsOn("{\"carry_forward_all\":true}"));
+        Assert.True(RunCarrySetting.IsOn("{\"carry_forward_all\":\"true\"}"));
+        Assert.False(RunCarrySetting.IsOn("{\"carry_forward_all\":false}"));
+        Assert.False(RunCarrySetting.IsOn("{}"));
+        Assert.False(RunCarrySetting.IsOn(null));
+        Assert.False(RunCarrySetting.IsOn("not json"));
+
+        string on = RunCarrySetting.Rewrite("{\"lots\":2,\"risk\":{\"overall\":{\"stopLoss\":5000}}}", true);
+        Assert.True(RunCarrySetting.IsOn(on));
+        Assert.Contains("\"lots\":2", on);
+        Assert.Contains("\"stopLoss\":5000", on);
+        Assert.Equal("{\"lots\":2,\"risk\":{\"overall\":{\"stopLoss\":5000}}}", RunCarrySetting.Rewrite(on, false));
+
+        Assert.True(RunCarrySetting.TicksNewPositions(PaperTradingService.LivePaperMode, "{\"carry_forward_all\":true}"));
+        Assert.False(RunCarrySetting.TicksNewPositions(PaperTradingService.OfflineReplayMode, "{\"carry_forward_all\":true}"));
+        Assert.False(RunCarrySetting.TicksNewPositions(PaperTradingService.LivePaperMode,
+            "{\"carry_forward_all\":true,\"session\":\"recap\",\"recap_date\":\"2026-09-11\"}"));
+    }
+
     // =================================================== the manual ticket
 
     [Fact]
@@ -989,6 +1142,21 @@ public class CarryForwardTests
                     ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = User(userId, userName, admin) } }
                 };
                 return await controller.SetCarryForward(runId, positionId, new StrategyController.CarryForwardRequest(carry),
+                    sp.GetRequiredService<PositionCarryForward>(), CancellationToken.None);
+            });
+
+        public Task<IActionResult> PutRunCarry(long runId, bool carry, long userId, string userName, bool admin = false) =>
+            InScope(async sp =>
+            {
+                var controller = new StrategyController(
+                    sp.GetRequiredService<TradingDbContext>(),
+                    null!, Registry, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!,
+                    Options.Create(new StrategyRunnerOptions()),
+                    NullLogger<StrategyController>.Instance)
+                {
+                    ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = User(userId, userName, admin) } }
+                };
+                return await controller.SetRunCarryForward(runId, new StrategyController.CarryForwardRequest(carry),
                     sp.GetRequiredService<PositionCarryForward>(), CancellationToken.None);
             });
 

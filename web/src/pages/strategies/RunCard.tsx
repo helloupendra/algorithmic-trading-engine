@@ -21,6 +21,7 @@ import { Link } from 'react-router-dom'
 import {
   useClosePositions,
   useSetCarryForward,
+  useSetRunCarryForward,
   useStopStrategy,
   useRepricedRunView,
   useStrategyLive,
@@ -365,6 +366,56 @@ function GreeksCells({ p }: { p: LivePosition }) {
         )}
       </td>
     </>
+  )
+}
+
+/**
+ * The run's own carry setting (17 Nov): "agr trade carry hoga toh yeh apne ap
+ * tick ho jana chaiye" — from the run's setting. On, every position the run
+ * opens starts ticked and the open ones are ticked now; one row can still be
+ * changed by hand. Shown for a strategy run whose API knows the setting.
+ */
+function RunCarrySwitch({
+  runId,
+  on,
+  canControl,
+  canCarryForward,
+}: {
+  runId: number
+  on: boolean
+  canControl: boolean
+  canCarryForward: boolean
+}) {
+  const set = useSetRunCarryForward()
+  const disabled = !canControl || !canCarryForward || set.isPending
+  const title = !canControl
+    ? 'Only the owner of this run or an admin can change carry forward'
+    : !canCarryForward
+      ? 'This run is not live — nothing will carry its positions now'
+      : on
+        ? 'Untick to make every position of this run intraday again'
+        : 'Tick to carry every position of this run overnight: each new entry starts ticked, and the open ones are ticked now'
+  return (
+    <div className="run-carry">
+      <label className="run-carry__label" title={title}>
+        <input
+          type="checkbox"
+          className="carry-check"
+          checked={on}
+          disabled={disabled}
+          onChange={(e) => set.mutate({ runId, carryForward: e.target.checked })}
+        />
+        <span>
+          <b>Carry every position overnight</b>
+          <span className="run-carry__sub">
+            {on
+              ? 'On: each new entry is ticked by itself; at the close the ticked legs move to the manual book.'
+              : 'Off: positions are intraday unless you tick one below.'}
+          </span>
+        </span>
+      </label>
+      {set.isError && <InlineError error={set.error} />}
+    </div>
   )
 }
 
@@ -900,6 +951,15 @@ export function RunCard({
           </div>
 
           <RiskSection runId={runId} view={view} isActive={isActive} canEdit={mayControl} />
+
+          {view.carryForwardAll !== undefined && view.canCarryForward !== undefined && !view.isManualBook && (
+            <RunCarrySwitch
+              runId={runId}
+              on={view.carryForwardAll}
+              canControl={mayControl}
+              canCarryForward={view.canCarryForward}
+            />
+          )}
 
           {positions.length > 0 ? (
             <>

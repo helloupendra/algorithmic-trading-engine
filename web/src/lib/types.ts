@@ -541,6 +541,11 @@ export interface StrategyLiveView {
    * non-recap run or the open manual book. Who may is canControl.
    */
   canCarryForward?: boolean
+  /**
+   * The run's "carry every position" setting (17 Nov): each position it opens
+   * starts with carry forward ticked. Absent on an API older than 17 Nov.
+   */
+  carryForwardAll?: boolean
   runId: number | null
   underlying: string | null
   spotSymbol: string | null

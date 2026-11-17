@@ -176,6 +176,9 @@ public class PaperTradingService : IPaperTradingService
 
         bool replay = IsReplay(run.Mode);
         bool recap = !replay && RecapClock.IsRecap(run.ParametersJson);
+        // The run's "carry every position" setting, read under the gate that
+        // SetRunCarryForwardAsync also takes: a switch and a fill never cross.
+        bool carryNew = RunCarrySetting.TicksNewPositions(run.Mode, run.ParametersJson);
         var timestampUtc = request.TimestampUtc.ToUniversalTime();
         var legs = request.Legs ?? new List<SimulationSignalLegRequest>();
 
@@ -249,7 +252,7 @@ public class PaperTradingService : IPaperTradingService
             for (int i = 0; i < legs.Count; i++)
             {
                 await CreateOrderAndApplyPositionAsync(signal, legs[i], fills[i], cancellationToken,
-                    bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock, booked: bookedLegs);
+                    bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock, booked: bookedLegs, carryNew: carryNew);
             }
 
             if (saveReceipt is not null) await saveReceipt(MapSignal(signal), cancellationToken);
@@ -1280,6 +1283,64 @@ public class PaperTradingService : IPaperTradingService
         return CarryForwardUpdate.Changed;
     }
 
+    /// <remarks>
+    /// The owner, 17 Nov 2026, asked for the carry tick to come on by itself
+    /// from a run setting (<see cref="RunCarrySetting"/>). Like the one-position
+    /// tick, UpdatedUtc is left alone: it is the age of the stored mark.
+    /// </remarks>
+    public async Task<RunCarryForwardUpdate> SetRunCarryForwardAsync(
+        long simulationRunId,
+        bool carryForward,
+        Func<int, string> metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default)
+    {
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
+        var run = await _dbContext.SimulationRuns
+            .FirstOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+        if (run is null || IsClosedStatus(run.Status))
+            return new RunCarryForwardUpdate(CarryForwardUpdate.RunNotRunning, 0);
+
+        bool settingChanged = RunCarrySetting.IsOn(run.ParametersJson) != carryForward;
+        var differing = await _dbContext.PaperPositions
+            .Where(x => x.SimulationRunId == simulationRunId && x.Status == "Open" && x.Quantity > 0
+                        && x.CarryForward != carryForward)
+            .ToListAsync(cancellationToken);
+
+        if (!settingChanged && differing.Count == 0)
+            return new RunCarryForwardUpdate(CarryForwardUpdate.Unchanged, 0);
+
+        if (settingChanged)
+            run.ParametersJson = RunCarrySetting.Rewrite(run.ParametersJson, carryForward);
+
+        foreach (var position in differing)
+        {
+            position.CarryForward = carryForward;
+            position.CarryForwardChangedUtc = atUtc;
+        }
+
+        string metadata = metadataJson(differing.Count);
+        await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
+        {
+            SimulationRunId = simulationRunId,
+            StrategyName = run.StrategyName,
+            SignalType = CarryForwardSignalType,
+            TimestampUtc = atUtc,
+            GroupId = string.Empty,
+            MetadataJson = string.IsNullOrWhiteSpace(metadata) ? "{}" : metadata,
+            CreatedUtc = UtcNow
+        }, cancellationToken);
+
+        // The setting, the ticks and their audit row land together or not at all.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        Publish(run, DeskEventKinds.Carry, null, carryForward
+            ? "Carry forward on for the whole run: every position is held past the close"
+            : "Carry forward off for the whole run: intraday");
+        return new RunCarryForwardUpdate(CarryForwardUpdate.Changed, differing.Count);
+    }
+
     public async Task<int> CloseIntradayPositionsAsync(
         long simulationRunId,
         IEnumerable<long> positionIds,
@@ -1605,7 +1666,8 @@ public class PaperTradingService : IPaperTradingService
         bool bypassRiskCheck = false,
         bool reduceOnly = false,
         DateTime? atUtc = null,
-        List<BookedLeg>? booked = null)
+        List<BookedLeg>? booked = null,
+        bool carryNew = false)
     {
         string normalizedSide = ValidateLeg(leg);
 
@@ -1674,7 +1736,7 @@ public class PaperTradingService : IPaperTradingService
         await _dbContext.PaperOrders.AddAsync(order, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var (applied, closedPosition) = await ApplyPositionAsync(signal, order, cancellationToken, reduceOnly, clock);
+        var (applied, closedPosition) = await ApplyPositionAsync(signal, order, cancellationToken, reduceOnly, clock, carryNew);
         if (!applied)
         {
             // The position vanished between the lookup and the apply (closed by a
@@ -1749,14 +1811,18 @@ public class PaperTradingService : IPaperTradingService
     /// reduce; otherwise a fresh position is opened. Closed when the order took
     /// an open position to zero. Every timestamp written here is
     /// <paramref name="clock"/> (bar time for replays, the replayed session's
-    /// time for a recap).
+    /// time for a recap). A position opened here starts with carry forward
+    /// ticked when <paramref name="carryNew"/> (the run's "carry every
+    /// position" setting, <see cref="RunCarrySetting"/>); an add to an open
+    /// position keeps the tick that position has.
     /// </summary>
     private async Task<(bool Applied, bool Closed)> ApplyPositionAsync(
         SimulationSignal signal,
         PaperOrder order,
         CancellationToken cancellationToken,
         bool reduceOnly,
-        DateTime clock)
+        DateTime clock,
+        bool carryNew = false)
     {
         var existing = await FindOpenPositionAsync(signal.SimulationRunId, signal.GroupId, order.Symbol, cancellationToken);
 
@@ -1783,7 +1849,9 @@ public class PaperTradingService : IPaperTradingService
                 UnrealizedPnl = 0m,
                 Status = "Open",
                 OpenedUtc = order.FilledUtc ?? clock,
-                UpdatedUtc = clock
+                UpdatedUtc = clock,
+                CarryForward = carryNew,
+                CarryForwardChangedUtc = carryNew ? clock : null
             };
 
             await _dbContext.PaperPositions.AddAsync(pos, cancellationToken);
@@ -1869,7 +1937,9 @@ public class PaperTradingService : IPaperTradingService
                 UnrealizedPnl = 0m,
                 Status = "Open",
                 OpenedUtc = clock,
-                UpdatedUtc = clock
+                UpdatedUtc = clock,
+                CarryForward = carryNew,
+                CarryForwardChangedUtc = carryNew ? clock : null
             };
 
             await _dbContext.PaperPositions.AddAsync(newPos, cancellationToken);

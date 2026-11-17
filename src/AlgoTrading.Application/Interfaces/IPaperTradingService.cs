@@ -143,6 +143,22 @@ public interface IPaperTradingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Switches a running run's "carry every position" setting
+    /// (<c>carry_forward_all</c> in its parameters) and sets every OPEN
+    /// position of the run to the same tick, under the run's gate — the gate a
+    /// fill also holds while it reads the setting, so no position opens between
+    /// the two unticked. Records one CARRY_FORWARD signal whose metadata is
+    /// <paramref name="metadataJson"/> of the number of positions changed.
+    /// Writes nothing when the setting and every open position already agree.
+    /// </summary>
+    Task<RunCarryForwardUpdate> SetRunCarryForwardAsync(
+        long simulationRunId,
+        bool carryForward,
+        Func<int, string> metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Squares off, like <see cref="ClosePositionsAsync"/>, those of the given
     /// positions that are still open AND still intraday (carry forward not
     /// ticked) — checked under the run's gate, so a tick that lands while the

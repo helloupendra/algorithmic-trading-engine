@@ -1599,6 +1599,19 @@ a.pill:hover { border-color: var(--line-strong); }
 /* The hint under the positions table: what the ticks do in this run. */
 .carry-note { margin: 6px 2px 0; }
 
+/* The run's own carry setting (17 Nov): one tick for every position. */
+.run-carry { margin: 10px 0 8px; }
+.run-carry__label {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.run-carry__label .carry-check { margin-top: 1px; }
+.run-carry__label > span { display: flex; flex-direction: column; gap: 2px; }
+.run-carry__sub { color: var(--text-3); font-size: 12.5px; }
+
 /* The ticket's tick: the box and its label on one line, the hint under it. */
 .manual-carry {
   display: flex;

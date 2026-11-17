@@ -16,3 +16,9 @@ public enum CarryForwardUpdate
     /// <summary>The run is being stopped or has ended; nothing will carry its positions now.</summary>
     RunNotRunning
 }
+
+/// <summary>
+/// What switching a run's "carry every position" setting did: the outcome, and
+/// how many of the run's open positions had their tick changed to match.
+/// </summary>
+public sealed record RunCarryForwardUpdate(CarryForwardUpdate Outcome, int PositionsChanged);
