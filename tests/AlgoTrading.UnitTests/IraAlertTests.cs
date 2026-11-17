@@ -543,7 +543,7 @@ public sealed class IraAlertTests : IDisposable
         Assert.StartsWith("Ho gaya", rig.Bot.TextsTo(Owner).Last());
         using (var db = Db()) Assert.Equal(NewsChannel, await IraNewsChannel.ReadAsync(db, CancellationToken.None));
 
-        // A big story: the channel gets it, text then voice; the owner's chat does not.
+        // A big story: the channel gets it as text only (no voice for the news, 17 Nov); the owner's chat does not.
         rig.Bot.Clear();
         using (var db = Db())
         {
@@ -554,7 +554,8 @@ public sealed class IraAlertTests : IDisposable
         await rig.Service.RunOnceAsync(Now, CancellationToken.None);
         var story = Assert.Single(rig.Bot.TextsTo(NewsChannel));
         Assert.StartsWith("Bahut badi khabar, asar 3/3 (Reuters, 10:57 IST): Iran ne peace talks ka ishaara diya.", story);
-        Assert.Equal([$"text:{NewsChannel}", $"voice:{NewsChannel}"], rig.Bot.Order);
+        Assert.Equal([$"text:{NewsChannel}"], rig.Bot.Order);
+        Assert.Empty(rig.Aws.Spoken);
         Assert.Empty(rig.Bot.TextsTo(Owner));
 
         // Off: the next story goes to the owner again.
@@ -569,6 +570,24 @@ public sealed class IraAlertTests : IDisposable
         await rig.Service.RunOnceAsync(Now.AddMinutes(2), CancellationToken.None);
         Assert.Single(rig.Bot.TextsTo(Owner));
         Assert.Empty(rig.Bot.TextsTo(NewsChannel));
+    }
+
+    [Fact]
+    public async Task The_news_is_spoken_again_only_with_NewsVoice_on()
+    {
+        Link(Owner, "upendra");
+        var rig = Start(tweak: s => s.Voice.Alerts.NewsVoice = true);
+        using (var db = Db()) await IraNewsChannel.SetAsync(db, NewsChannel, "upendra", Now, CancellationToken.None);
+        await rig.Service.RunOnceAsync(Now.AddMinutes(-5), CancellationToken.None);
+        rig.Bot.Clear();
+        using (var db = Db())
+        {
+            NewsReport(db, Now.AddMinutes(-1));
+            db.SaveChanges();
+        }
+
+        await rig.Service.RunOnceAsync(Now, CancellationToken.None);
+        Assert.Equal([$"text:{NewsChannel}", $"voice:{NewsChannel}"], rig.Bot.Order);
     }
 
     [Fact]

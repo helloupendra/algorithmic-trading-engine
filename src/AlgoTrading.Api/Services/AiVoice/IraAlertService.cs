@@ -420,9 +420,13 @@ public sealed class IraAlertService(
         }
     }
 
-    /// <summary>The text first, then the same words as a voice note; Polly asked once per distinct message.</summary>
+    /// <summary>
+    /// The text first, then the same words as a voice note; Polly asked once per distinct message. The news and the
+    /// mausam card go as text only unless <see cref="AiVoiceAlertsSettings.NewsVoice"/> is on (owner, 17 Nov 2026).
+    /// </summary>
     private async Task SendAsync(IReadOnlyList<Outgoing> outbox, CancellationToken cancellationToken)
     {
+        bool newsVoice = settings.CurrentValue.Voice.Alerts.NewsVoice;
         var spoken = new Dictionary<string, byte[]?>(StringComparer.Ordinal);
         foreach (var m in outbox)
         {
@@ -430,6 +434,12 @@ public sealed class IraAlertService(
             if (!await telegram.SendAlertTextAsync(chat, m.Text, cancellationToken))
             {
                 logger.LogInformation("Ira: a {Kind} alert to {User} was not delivered", m.Kind, m.Who);
+                continue;
+            }
+
+            if (!newsVoice && (m.Kind == IraDesk.NewsKind || m.Kind == "mausam"))
+            {
+                logger.LogInformation("Ira: told {User} ({Kind}, {How}): {Text}", m.Who, m.Kind, "text only", m.Text);
                 continue;
             }
 

@@ -542,6 +542,12 @@ public sealed class AiVoiceAlertsSettings
     /// </summary>
     public bool News { get; set; } = true;
 
+    /// <summary>
+    /// Speak the news too: the stories, their tally update and the mausam card. Off by default, so they go as text only
+    /// (owner, 17 Nov 2026: "news ka voice band kar do"); every other alert still goes as text, then voice.
+    /// </summary>
+    public bool NewsVoice { get; set; }
+
     /// <summary>The lowest impact (0 to 3) that is told: 2 can move NIFTY by 0.3% to 1%, 3 by about 1% or more.</summary>
     public int NewsMinImpact { get; set; } = 2;
 
