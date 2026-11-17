@@ -272,6 +272,32 @@ class WatchCycleTests(unittest.TestCase):
         self.assertTrue(runner.restart_required)
         self.assertIn("connected but silent for 120s in open session", runner.watchdog_alerts.report.call_args.args[1])
 
+    def test_a_connection_carrying_none_of_the_list_is_rebuilt(self):
+        # 17 Nov 2026: "SUBSCRIBED: 0 symbol(s), 76 declined" after a reconnect, and nothing
+        # noticed for hours, because the silence rule needs a subscribed symbol to watch.
+        runner, feed = _socket_runner(subscribed=set(), declined={"NSE:NIFTY50-INDEX"})
+        feed.idle = None
+        self._one_cycle(runner, now=121.0, last_message=None)
+        self.assertTrue(runner.restart_required)
+        self.assertIn("carrying none of the 1 symbol(s)", runner.watchdog_alerts.report.call_args.args[1])
+
+    def test_an_empty_connection_gets_the_same_120s_and_only_in_session(self):
+        runner, feed = _socket_runner(subscribed=set(), declined={"NSE:NIFTY50-INDEX"})
+        feed.idle = None
+        self._one_cycle(runner, now=100.0, last_message=None)
+        self.assertFalse(runner.restart_required)
+
+        runner, feed = _socket_runner(market_open=False, subscribed=set(), declined={"NSE:NIFTY50-INDEX"})
+        feed.idle = None
+        self._one_cycle(runner, now=500.0, last_message=None)
+        self.assertFalse(runner.restart_required)
+
+    def test_an_empty_list_is_not_an_empty_connection(self):
+        runner, feed = _socket_runner(subscribed=set(), declined=set())
+        feed.idle = None
+        self._one_cycle(runner, now=500.0, last_message=None)
+        self.assertFalse(runner.restart_required)
+
     def test_a_line_with_no_frame_is_restarted_well_before_120s(self):
         runner, feed = _socket_runner()
         feed.idle = 50.0

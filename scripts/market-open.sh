@@ -154,6 +154,14 @@ plan_runs() {  # accounts default_lots default_target, the plan's lines on stdin
     done
   done
 }
+# A redeploy limited to some planned runs (MARKET_OPEN_ONLY, "account|strategy|underlying"
+# comma-separated, as scripts/session-keeper.sh passes it): exit 0 when the list names
+# this run, or when there is no list.
+only_selected() {  # "account|strategy|underlying"
+  [ -n "${MARKET_OPEN_ONLY:-}" ] || return 0
+  printf '%s\n' "$MARKET_OPEN_ONLY" | tr ',' '\n' | tr '[:upper:]' '[:lower:]' \
+    | grep -qxF "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+}
 # <<< plan-line
 
 # Every underlying the plan trades, comma-separated: the spots the feed check
@@ -676,6 +684,30 @@ else
   fyers_gate "$DHAN_PRIMARY"
 fi
 
+# --- 4b. the session keeper ----------------------------------------------------
+# Until 17 Nov 2026 nothing brought a planned run back once its feed went silent
+# or its runner exited: it stayed stopped for the rest of the day. The owner:
+# until Dhan's data plan is back, NIFTY must not stop under any condition.
+# scripts/session-keeper.sh restarts a silent or dead FYERS feed and starts again
+# a planned run that ended by itself, once this job is over, until 15:25 IST.
+# Detached, so the desk does not wait for it. MARKET_OPEN_KEEPER=0 turns it off.
+start_session_keeper() {
+  local expected
+  [ "${MARKET_OPEN_KEEPER:-1}" = 1 ] || { say "session keeper: off (MARKET_OPEN_KEEPER=0)"; return 0; }
+  expected="$(plan_runs "$ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" | cut -d'|' -f1-3)"
+  [ -n "$expected" ] || return 0
+  if command -v setsid >/dev/null 2>&1; then set -- setsid; else set --; fi
+  KEEPER_WAIT_PID="$$" KEEPER_EXPECTED="$expected" KEEPER_DAY_STATE="$DAY_STATE" \
+    KEEPER_FYERS_FEED="$([ "$DHAN_PRIMARY" = 1 ] && echo 0 || echo 1)" \
+    nohup "$@" "$REPO_ROOT/scripts/session-keeper.sh" </dev/null >/dev/null 2>&1 &
+  say "session keeper started (pid $!): it watches the feed and the plan's runs from the end of this job until 15:25 IST — logs/session-keeper.log"
+}
+if [ "$DRY_RUN" = 1 ]; then
+  say "dry run: would start the session keeper (feed and runs kept going until 15:25 IST)"
+elif [ "$REDEPLOY_ONLY" != 1 ]; then
+  start_session_keeper
+fi
+
 # --- 5. market data ----------------------------------------------------------
 
 # A dry run skips every daemon but still walks the plan below: what it is for
@@ -955,6 +987,9 @@ plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
     [ -n "$SID" ] || say "  '$NAME' is not in the catalogue — skipped"
   fi
   [ -n "$SID" ] || continue
+  # The session keeper starts again only the runs it found ended by themselves: one
+  # a person stopped stays stopped although the plan names it.
+  only_selected "$ACCOUNT|$NAME|$U" || continue
   OWNER_ID="$(owner_id "$ACCOUNT")"
   RISK_JSON="$(risk_json "$PLAN_TARGET")"
   RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
@@ -984,7 +1019,9 @@ done
 # two cannot disagree about what the plan says; scripts/lib/morning_tally.py
 # does the matching (tested in the engine's tests/test_morning_tally.py).
 expected_runs() {  # every planned run as "account|strategy|underlying", in the order they start
-  plan_runs "$ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" | cut -d'|' -f1-3
+  local key
+  plan_runs "$ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" | cut -d'|' -f1-3 \
+    | while IFS= read -r key; do only_selected "$key" && echo "$key"; done
 }
 
 EXPECTED="$(expected_runs)"

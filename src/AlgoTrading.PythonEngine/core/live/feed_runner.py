@@ -989,6 +989,17 @@ class FeedRunner:
                                                  + ("; not one message since the connect"
                                                     if self.last_message is None else "")))
                     self.restart_required = True
+            elif self.declined and self.is_market_open() is True and self.connected_at is not None \
+                    and time.monotonic() - self.connected_at > self.STALL_AFTER_SECONDS:
+                # Connected, the list wants symbols, and the vendor carries none of them. The
+                # silence check above needs a subscribed symbol to watch, so on 17 Nov 2026
+                # nothing noticed "SUBSCRIBED: 0 symbol(s), 76 declined" for hours. A fresh
+                # connection asks for the whole list again.
+                self._watchdog(watchdog_alerts.SILENT,
+                               f"connected but carrying none of the {len(self.declined)} symbol(s) asked for, "
+                               f"in open session — forcing a full reconnect.",
+                               cause_detail="0 symbol(s) subscribed")
+                self.restart_required = True
 
             if not self.restart_required:
                 self.check_frame_silence()

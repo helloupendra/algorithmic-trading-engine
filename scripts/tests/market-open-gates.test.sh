@@ -107,9 +107,10 @@ same "interleaved per strategy and underlying, accounts inner" \
   "$ORDER"
 REAL="$(grep -v '^[[:space:]]*#' config/morning-plan.txt | grep -v '^[[:space:]]*$' | grep -vi '^[[:space:]]*accounts:')"
 FIRST_TWO="$(plan_runs "admin coderforchange" 2 20 <<<"$REAL" | head -2 | cut -d'|' -f1-3 | tr '\n' ' ')"
+# From 18 Nov the plan is TrendRider V2 on NIFTY alone (the owner, 17 Nov evening).
 same "the real plan: both accounts' first run back to back" \
-  "admin|GhostTangentCrossings|BANKNIFTY coderforchange|GhostTangentCrossings|BANKNIFTY " "$FIRST_TWO"
-same "the feed check covers what the real plan trades" "BANKNIFTY,NIFTY,SENSEX,CRUDEOIL" \
+  "admin|TrendRiderV2|NIFTY coderforchange|TrendRiderV2|NIFTY " "$FIRST_TWO"
+same "the feed check covers what the real plan trades" "NIFTY" \
   "$(plan_runs "admin coderforchange" 2 20 <<<"$REAL" | cut -d'|' -f3 | awk '!seen[$0]++' | paste -sd, -)"
 
 if [ "$FAILS" = 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi

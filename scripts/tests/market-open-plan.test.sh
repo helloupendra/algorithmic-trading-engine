@@ -55,4 +55,14 @@ check "only the strategy the owner named"           "TrendRiderV2" \
 check "V2 runs on NIFTY alone"                      "admin|TrendRiderV2|NIFTY" "$(printf '%s\n' "$EXPECTED" | xargs)"
 check "TrendRiderV2 has no leg target"              "-" "$(parse_plan_line "$(grep '^TrendRiderV2 ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
 
+echo "a redeploy of some runs only (MARKET_OPEN_ONLY, as scripts/session-keeper.sh passes it)"
+selected() { only_selected "$1" && echo yes || echo no; }
+check "no list selects every run"                   "yes" "$(MARKET_OPEN_ONLY='' selected 'admin|Ghost|NIFTY')"
+check "a named run is selected, ignoring case"      "yes" "$(MARKET_OPEN_ONLY='admin|trendriderv2|nifty' selected 'admin|TrendRiderV2|NIFTY')"
+check "a run not named is not"                      "no"  "$(MARKET_OPEN_ONLY='admin|TrendRiderV2|NIFTY' selected 'admin|TrendRider|NIFTY')"
+check "names match whole, not by prefix"            "no"  "$(MARKET_OPEN_ONLY='admin|TrendRider|NIFTY' selected 'admin|TrendRiderV2|NIFTY')"
+check "a comma-separated list"                      "yes" "$(MARKET_OPEN_ONLY='admin|Ghost|NIFTY,admin|TrendRiderV2|NIFTY' selected 'admin|TrendRiderV2|NIFTY')"
+check "the tally expects only the named runs"       "admin|TrendRiderV2|NIFTY" "$(MARKET_OPEN_ONLY='admin|TrendRiderV2|NIFTY' expected_runs | xargs)"
+check "a name outside the plan selects nothing"     ""    "$(MARKET_OPEN_ONLY='admin|Ghost|NIFTY' expected_runs | xargs)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
