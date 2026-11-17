@@ -555,8 +555,9 @@ class PlanTests(unittest.TestCase):
             by_account[account] = by_account.get(account, 0) + 1
         # scripts/tests/market-open-plan.test.sh asserts the same number. coderforchange
         # came off the plan on 15 Nov 2026: its runs loaded the box's CPU. From 18 Nov admin
-        # runs only TrendRider V2 on NIFTY (the owner, 17 Nov evening): 1.
-        self.assertEqual({"admin": 1}, by_account)
+        # runs TrendRider V2 on NIFTY (the owner, 17 Nov evening), and V2BE beside it from the 18 Nov
+        # night: 2.
+        self.assertEqual({"admin": 2}, by_account)
 
 
 class SeenBeforeTests(unittest.TestCase):

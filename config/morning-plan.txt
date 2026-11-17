@@ -35,10 +35,15 @@
 # Ghost, Ghost V2, TrendRider, V2 on BANKNIFTY/SENSEX and CrudeMomentum are off.
 # Their old lines are kept below, commented out, so any of them comes back by
 # removing one "#".
+#
+# 2026-11-18 night: on the owner's word ("v2be ko bhi kal live kar do nifty per"),
+# TrendRiderV2BE (V2 with the breakeven step that passed the lab, BE25) runs on
+# NIFTY beside V2, 2 lots, no leg target: 2 runs.
 
 accounts: admin
 
 TrendRiderV2             NIFTY                   2  -
+TrendRiderV2BE           NIFTY                   2  -
 
 # GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 # GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
