@@ -242,6 +242,8 @@ export interface TradeMark {
   symbol: string
   label: string
   optionType: string | null
+  /** Bought or sold to open (the owner buys; other strategies may sell). */
+  side: 'BUY' | 'SELL'
   lots: number
   qty: number
   open: boolean
@@ -309,6 +311,7 @@ export function tradeMarks(
       symbol: first.symbol,
       label: first.contract?.label ?? first.symbol,
       optionType: first.contract?.optionType ?? null,
+      side: first.side === 'SELL' ? 'SELL' : 'BUY',
       lots: first.lots,
       qty: first.quantity,
       open,
@@ -327,6 +330,44 @@ export function tradeMarks(
     })
   }
   return out.sort((a, b) => a.entryMs - b.entryMs)
+}
+
+/** One trade as it stood at a replay's clock, priced off its option's 1-minute closes. */
+export interface TradeAt {
+  /** The entry had happened by then. */
+  bought: boolean
+  /** The exit had happened by then. */
+  sold: boolean
+  /** The option's price then: its last close before the clock, the exit once sold. */
+  price: number | null
+  pnl: number
+  pnlPercent: number | null
+}
+
+/**
+ * Where a trade stood at `cursorMs` (null = now). Before the entry nothing is
+ * at stake; once sold the P&L is the booked one; in between it is the option's
+ * last 1-minute close against the entry, times the quantity (simple P&L).
+ */
+export function tradeAt(trade: TradeMark, optionBars: ReadonlyArray<Bar>, cursorMs: number | null): TradeAt {
+  if (cursorMs == null) {
+    return { bought: true, sold: !trade.open, price: trade.open ? trade.ltp : trade.exitPrice, pnl: trade.pnl, pnlPercent: trade.pnlPercent }
+  }
+  const bought = trade.entryMs < cursorMs
+  const sold = !trade.open && trade.exitMs != null && trade.exitMs < cursorMs
+  if (!bought) {
+    let last: number | null = null
+    for (const b of optionBars) if (b.t < cursorMs) last = b.c
+    return { bought, sold: false, price: last, pnl: 0, pnlPercent: null }
+  }
+  if (sold) return { bought, sold, price: trade.exitPrice, pnl: trade.pnl, pnlPercent: trade.pnlPercent }
+  let last: number | null = null
+  for (const b of optionBars) if (b.t < cursorMs && b.t >= candleStart(trade.entryMs, 1)) last = b.c
+  const price = last ?? trade.entryPrice
+  const sign = trade.side === 'SELL' ? -1 : 1
+  const pnl = sign * (price - trade.entryPrice) * trade.qty
+  const outlay = trade.entryPrice * trade.qty
+  return { bought, sold, price, pnl, pnlPercent: outlay > 0 ? (pnl / outlay) * 100 : null }
 }
 
 /* ------------------------------------------------------------ the engine */

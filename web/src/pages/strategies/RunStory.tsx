@@ -45,6 +45,7 @@ import {
   istHm,
   mergeLevels,
   previousClose,
+  tradeAt,
   tradeMarks,
   trendRiderEntries,
   v2Check,
@@ -540,100 +541,116 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
 
       {/* ------------------------------------------------ chart and rules */}
       <div className="story__grid">
-        <Panel
-          title={`${view.underlying ?? 'Index'} · ${minutes}-minute · ${prevDay ? 'yesterday + ' : ''}${day}`}
-          actions={
-            <div className="story__controls">
-              {replay ? (
-                <>
+        <div className="story__main">
+          <Panel
+            title={`${view.underlying ?? 'Index'} · ${minutes}-minute · ${prevDay ? 'yesterday + ' : ''}${day}`}
+            actions={
+              <div className="story__controls">
+                {replay ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      onClick={() =>
+                        setReplay((r) => r && { ...r, playing: !r.playing, idx: !r.playing && r.idx >= candles.length - 1 ? 0 : r.idx })
+                      }
+                    >
+                      {replay.playing ? '❚❚ Pause' : '▶ Play'}
+                    </button>
+                    <div className="seg" role="group" aria-label="Replay speed">
+                      {[1, 2, 5, 10].map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          className={`seg__btn${replay.speed === s ? ' is-active' : ''}`}
+                          aria-pressed={replay.speed === s}
+                          onClick={() => setReplay((r) => r && { ...r, speed: s })}
+                        >
+                          {s}×
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      className="story__scrub"
+                      type="range"
+                      min={0}
+                      max={Math.max(0, candles.length - 1)}
+                      value={Math.min(replay.idx, Math.max(0, candles.length - 1))}
+                      onChange={(e) => setReplay((r) => r && { ...r, idx: Number(e.target.value), playing: false })}
+                      aria-label="Replay time"
+                    />
+                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => setReplay(null)}>
+                      Live
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
                     className="btn btn--sm"
-                    onClick={() =>
-                      setReplay((r) => r && { ...r, playing: !r.playing, idx: !r.playing && r.idx >= candles.length - 1 ? 0 : r.idx })
-                    }
+                    disabled={candles.length === 0}
+                    onClick={() => setReplay({ idx: 0, playing: true, speed: 2 })}
+                    title="Play the day again, candle by candle: the trades, the stop and the trail as they happened"
                   >
-                    {replay.playing ? '❚❚ Pause' : '▶ Play'}
+                    ▶ Replay the day
                   </button>
-                  <div className="seg" role="group" aria-label="Replay speed">
-                    {[1, 2, 5, 10].map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        className={`seg__btn${replay.speed === s ? ' is-active' : ''}`}
-                        aria-pressed={replay.speed === s}
-                        onClick={() => setReplay((r) => r && { ...r, speed: s })}
-                      >
-                        {s}×
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    className="story__scrub"
-                    type="range"
-                    min={0}
-                    max={Math.max(0, candles.length - 1)}
-                    value={Math.min(replay.idx, Math.max(0, candles.length - 1))}
-                    onChange={(e) => setReplay((r) => r && { ...r, idx: Number(e.target.value), playing: false })}
-                    aria-label="Replay time"
-                  />
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setReplay(null)}>
-                    Live
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn--sm"
-                  disabled={candles.length === 0}
-                  onClick={() => setReplay({ idx: 0, playing: true, speed: 2 })}
-                  title="Play the day again, candle by candle: the trades, the stop and the trail as they happened"
-                >
-                  ▶ Replay the day
-                </button>
-              )}
-              <div className="seg" role="group" aria-label="Timeframe">
-                {([1, 5] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    className={`seg__btn${minutes === m ? ' is-active' : ''}`}
-                    aria-pressed={minutes === m}
-                    onClick={() => setMinutes(m)}
-                  >
-                    {m}m
-                  </button>
-                ))}
+                )}
+                <div className="seg" role="group" aria-label="Timeframe">
+                  {([1, 5] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`seg__btn${minutes === m ? ' is-active' : ''}`}
+                      aria-pressed={minutes === m}
+                      onClick={() => setMinutes(m)}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          }
-        >
-          {indexQ.isError && <InlineError error={indexQ.error} />}
-          <StoryChart
-            candles={chartCandles}
-            levels={chartLevels}
-            marks={indexMarks}
-            fitKey={`${spotSymbol}|${day}|${minutes}|${replay ? 'replay' : 'live'}|${prevCandles.length > 0}`}
-            range={chartRange}
-            height={460}
-            overlay={
-              cursorMs != null ? (
-                <>
-                  <Badge tone="accent">Replay · {istHm(cursorMs)} IST</Badge>{' '}
-                  {engineAt && <span className="story__overlay-state">{engineAt.label}{engineAt.detail ? ` · ${engineAt.detail}` : ''}</span>}
-                </>
-              ) : undefined
             }
+          >
+            {indexQ.isError && <InlineError error={indexQ.error} />}
+            <StoryChart
+              candles={chartCandles}
+              levels={chartLevels}
+              marks={indexMarks}
+              fitKey={`${spotSymbol}|${day}|${minutes}|${replay ? 'replay' : 'live'}|${prevCandles.length > 0}`}
+              range={chartRange}
+              height={460}
+              overlay={
+                cursorMs != null ? (
+                  <>
+                    <Badge tone="accent">Replay · {istHm(cursorMs)} IST</Badge>{' '}
+                    {engineAt && <span className="story__overlay-state">{engineAt.label}{engineAt.detail ? ` · ${engineAt.detail}` : ''}</span>}
+                  </>
+                ) : undefined
+              }
+            />
+            <ul className="story__legend">
+              <li><i className="lg lg--prev" /> Yesterday's high / low</li>
+              <li><i className="lg lg--open" /> Day open</li>
+              <li><i className="lg lg--entry" /> Entry</li>
+              <li><i className="lg lg--stop" /> Stop</li>
+              <li><i className="lg lg--arm" /> Trail arms here</li>
+              <li><i className="lg lg--trail" /> Trail (active): sells here</li>
+            </ul>
+          </Panel>
+
+        {/* ------------------------------------------------- each option */}
+        {/* Right under the index: the same replay button plays both, so a trade's option is watched with its index. */}
+        {[...trades].sort((a, b) => Number(b.open) - Number(a.open) || b.entryMs - a.entryMs).map((t) => (
+          <OptionPanel
+            key={t.groupId}
+            trade={t}
+            day={day}
+            isToday={isToday}
+            live={live}
+            risk={view.risk?.leg ?? null}
+            cursorMs={cursorMs}
           />
-          <ul className="story__legend">
-            <li><i className="lg lg--prev" /> Yesterday's high / low</li>
-            <li><i className="lg lg--open" /> Day open</li>
-            <li><i className="lg lg--entry" /> Entry</li>
-            <li><i className="lg lg--stop" /> Stop</li>
-            <li><i className="lg lg--arm" /> Trail arms here</li>
-            <li><i className="lg lg--trail" /> Trail (active): sells here</li>
-          </ul>
-        </Panel>
+        ))}
+        </div>
 
         <Panel title={isTrendRider ? `How ${view.name} trades today` : 'Today'}>
           <div className="story__rules">
@@ -702,6 +719,27 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
         </Panel>
       </div>
 
+      {/* ------------------------------------------------------- timeline */}
+      <Panel title="What the strategy said">
+        {(view.activity ?? []).length === 0 ? (
+          <p className="empty">Nothing yet.</p>
+        ) : (
+          <ol className="story__timeline">
+            {[...(view.activity ?? [])]
+              .sort((a, b) => Date.parse(a.atUtc) - Date.parse(b.atUtc))
+              .map((a, i) => (
+                <li key={i}>
+                  <span className="story__time mono">{istHm(Date.parse(a.atUtc))}</span>
+                  <Badge tone={a.type === 'OPEN_GROUP' ? 'accent' : a.type === 'CLOSE_GROUP' ? 'warn' : 'neutral'}>
+                    {a.type === 'OPEN_GROUP' ? 'BUY' : a.type === 'CLOSE_GROUP' ? 'SELL' : a.type.replace(/_/g, ' ').toLowerCase()}
+                  </Badge>
+                  <span className="story__text">{a.text}</span>
+                </li>
+              ))}
+          </ol>
+        )}
+      </Panel>
+
       {/* ------------------------------------------------------ positions */}
       <Panel title="Positions today">
         {trades.length === 0 ? (
@@ -765,32 +803,6 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
           <p className="small-note">"Booked by hand": entered in the ledger on the owner's request, not a live fill. The strategy does not manage it; it closes at the run's square-off or by Exit.</p>
         )}
       </Panel>
-
-      {/* ------------------------------------------------- each option */}
-      {[...trades].sort((a, b) => Number(b.open) - Number(a.open) || b.entryMs - a.entryMs).map((t) => (
-        <OptionPanel key={t.groupId} trade={t} day={day} isToday={isToday} live={live} risk={view.risk?.leg ?? null} />
-      ))}
-
-      {/* ------------------------------------------------------- timeline */}
-      <Panel title="What the strategy said">
-        {(view.activity ?? []).length === 0 ? (
-          <p className="empty">Nothing yet.</p>
-        ) : (
-          <ol className="story__timeline">
-            {[...(view.activity ?? [])]
-              .sort((a, b) => Date.parse(a.atUtc) - Date.parse(b.atUtc))
-              .map((a, i) => (
-                <li key={i}>
-                  <span className="story__time mono">{istHm(Date.parse(a.atUtc))}</span>
-                  <Badge tone={a.type === 'OPEN_GROUP' ? 'accent' : a.type === 'CLOSE_GROUP' ? 'warn' : 'neutral'}>
-                    {a.type === 'OPEN_GROUP' ? 'BUY' : a.type === 'CLOSE_GROUP' ? 'SELL' : a.type.replace(/_/g, ' ').toLowerCase()}
-                  </Badge>
-                  <span className="story__text">{a.text}</span>
-                </li>
-              ))}
-          </ol>
-        )}
-      </Panel>
     </section>
   )
 }
@@ -803,16 +815,24 @@ function OptionPanel({
   isToday,
   live,
   risk,
+  cursorMs,
 }: {
   trade: TradeMark
   day: string
   isToday: boolean
   live: boolean
   risk: { targetPoints?: number | null; stopLossPoints?: number | null; targetPercent?: number | null; stopLossPercent?: number | null } | null
+  /** The replay's clock (the index chart's), or null: then the option shows the whole day so far. */
+  cursorMs: number | null
 }) {
   const barsQ = useRunDayBars(trade.symbol, day, isToday, live && trade.open)
-  const candles = useMemo(() => foldSession(barsQ.data ?? [], day, 1), [barsQ.data, day])
+  const all = useMemo(() => foldSession(barsQ.data ?? [], day, 1), [barsQ.data, day])
+  const candles = useMemo(() => (cursorMs == null ? all : all.filter((c) => c.t < cursorMs)), [all, cursorMs])
+  const at = useMemo(() => tradeAt(trade, all, cursorMs), [trade, all, cursorMs])
+  const replaying = cursorMs != null
+
   const levels: Level[] = useMemo(() => {
+    if (!at.bought) return []
     const out: Level[] = [{ price: trade.entryPrice, title: `Bought ₹${formatPrice(trade.entryPrice)}`, kind: 'entry' }]
     const target =
       risk?.targetPoints != null ? trade.entryPrice + risk.targetPoints : risk?.targetPercent != null ? trade.entryPrice * (1 + risk.targetPercent / 100) : null
@@ -821,12 +841,13 @@ function OptionPanel({
     if (target != null) out.push({ price: target, title: 'Target', kind: 'best' })
     if (stop != null) out.push({ price: stop, title: 'Premium SL', kind: 'stop' })
     return out
-  }, [trade.entryPrice, risk])
+  }, [at.bought, trade.entryPrice, risk])
   const marks: Mark[] = useMemo(() => {
-    const out: Mark[] = [
-      { time: candleStart(trade.entryMs, 1), price: trade.entryPrice, title: 'BUY', sub: `${istHm(trade.entryMs)} · ₹${formatPrice(trade.entryPrice)}`, tone: 'buy', above: false },
-    ]
-    if (!trade.open && trade.exitMs != null && trade.exitPrice != null) {
+    const out: Mark[] = []
+    if (at.bought) {
+      out.push({ time: candleStart(trade.entryMs, 1), price: trade.entryPrice, title: 'BUY', sub: `${istHm(trade.entryMs)} · ₹${formatPrice(trade.entryPrice)}`, tone: 'buy', above: false })
+    }
+    if (at.sold && trade.exitMs != null && trade.exitPrice != null) {
       out.push({
         time: candleStart(trade.exitMs, 1),
         price: trade.exitPrice,
@@ -837,28 +858,54 @@ function OptionPanel({
       })
     }
     return out
-  }, [trade])
+  }, [at.bought, at.sold, trade])
+  // In a replay the option fills the session's width left to right, like the index above it.
+  const range = replaying ? { from: 0, to: Math.max(all.length, 375) + 2 } : undefined
+  const state = !at.bought ? <Badge>not bought yet</Badge> : at.sold ? <Badge>closed</Badge> : <Badge tone="live">open</Badge>
 
   return (
     <Panel
       title={
         <>
-          {trade.label} {trade.open ? <Badge tone="live">open</Badge> : <Badge>closed</Badge>} {trade.manual && <Badge tone="warn">booked by hand</Badge>}
+          {trade.label} {state} {trade.manual && <Badge tone="warn">booked by hand</Badge>}
         </>
       }
       actions={
-        <span className={`story__optpnl ${pnlClass(trade.pnl)}`}>
-          {formatInrSigned(trade.pnl)} <span className="faint">({formatPercent(trade.pnlPercent, 1)})</span>
-        </span>
+        at.bought ? (
+          <span className={`story__optpnl ${pnlClass(at.pnl)}`}>
+            {formatInrSigned(at.pnl)} <span className="faint">({formatPercent(at.pnlPercent, 1)})</span>
+          </span>
+        ) : undefined
       }
     >
-      <StoryChart candles={candles} levels={levels} marks={marks} fitKey={`${trade.symbol}|${day}`} height={280} />
+      <StoryChart
+        candles={candles}
+        levels={levels}
+        marks={marks}
+        fitKey={`${trade.symbol}|${day}|${replaying ? 'replay' : 'live'}`}
+        range={range}
+        height={280}
+        overlay={
+          replaying ? (
+            <>
+              <Badge tone="accent">Replay · {istHm(cursorMs)} IST</Badge>{' '}
+              {at.price != null && <span className="story__overlay-state">₹{formatPrice(at.price)}</span>}
+            </>
+          ) : undefined
+        }
+      />
       <p className="small-note">
-        {trade.lots} lots × {trade.qty / Math.max(1, trade.lots)} = {trade.qty} · bought {istHm(trade.entryMs)} at ₹{formatPrice(trade.entryPrice)}
-        {trade.indexAtEntry != null ? ` (index ${p1(trade.indexAtEntry)})` : ''}
-        {trade.open
-          ? ` · now ₹${formatPrice(trade.ltp)}`
-          : ` · sold ${trade.exitMs ? istHm(trade.exitMs) : ''} at ₹${formatPrice(trade.exitPrice)}${trade.exitReason ? ` — ${trade.exitReason}` : ''}`}
+        {!at.bought
+          ? `Bought at ${istHm(trade.entryMs)} — the replay has not reached it yet.`
+          : (
+            <>
+              {trade.lots} lots × {trade.qty / Math.max(1, trade.lots)} = {trade.qty} · bought {istHm(trade.entryMs)} at ₹{formatPrice(trade.entryPrice)}
+              {trade.indexAtEntry != null ? ` (index ${p1(trade.indexAtEntry)})` : ''}
+              {at.sold
+                ? ` · sold ${trade.exitMs ? istHm(trade.exitMs) : ''} at ₹${formatPrice(trade.exitPrice)}${trade.exitReason ? ` — ${trade.exitReason}` : ''}`
+                : ` · ${replaying ? 'then' : 'now'} ₹${formatPrice(at.price)}`}
+            </>
+          )}
       </p>
     </Panel>
   )

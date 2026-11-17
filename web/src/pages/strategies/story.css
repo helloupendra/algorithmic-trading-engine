@@ -21,6 +21,14 @@
   align-items: start;
 }
 
+/* The left column: the index, and each trade's option right under it (one replay plays both). */
+.story__main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
 @media (max-width: 1100px) {
   .story__grid {
     grid-template-columns: minmax(0, 1fr);

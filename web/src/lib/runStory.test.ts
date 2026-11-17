@@ -10,6 +10,7 @@ import {
   istHm,
   mergeLevels,
   previousClose,
+  tradeAt,
   tradeMarks,
   trendRiderEntries,
   v2Check,
@@ -168,6 +169,56 @@ describe('tradeMarks', () => {
   it('flags a position booked by hand', () => {
     const manual: LiveActivity = { ...OPEN, metadata: { ...OPEN.metadata, manual_backfill: true } }
     expect(tradeMarks([position], [manual], [])[0].manual).toBe(true)
+  })
+})
+
+describe('tradeAt (the option in a replay)', () => {
+  // The real trade: bought 09:20 at 93.35, 2 lots (130), sold by the trail 13:07:37 at 115.75.
+  const closed: LivePosition = {
+    id: 7,
+    groupId: 'TR2_20261117T035000_001',
+    symbol: 'NSE:NIFTY26N1725300CE',
+    contract: { underlying: 'NIFTY', strike: 25300, optionType: 'CE', expiryDate: '2026-11-17', label: 'NIFTY 25300 CE · 17 Nov' },
+    side: 'BUY',
+    lots: 2,
+    lotSize: 65,
+    quantity: 130,
+    status: 'Closed',
+    entryPrice: 93.35,
+    exitPrice: 115.75,
+    ltp: 165.25,
+    ltpUpdatedUtc: '2026-11-17T09:00:00Z',
+    pnl: 2912,
+    openedUtc: '2026-11-17T03:50:00Z',
+    closedUtc: '2026-11-17T07:37:37Z',
+    entryValue: 93.35 * 130,
+  } as LivePosition
+  const [trade] = tradeMarks([closed], [], [])
+  const option = [at('09:19', 90, 92, 89, 91), at('09:20', 93, 96, 92, 95), at('12:00', 200, 215, 199, 210), at('13:10', 82, 86, 69.35, 82.6)]
+  const clock = (hm: string) => Date.parse(`2026-11-17T${hm}:00+05:30`)
+
+  it('before the entry: nothing at stake, the option still priced', () => {
+    expect(tradeAt(trade, option, clock('09:20'))).toEqual({ bought: false, sold: false, price: 91, pnl: 0, pnlPercent: null })
+  })
+
+  it('while held: the last 1-minute close against the entry', () => {
+    const noon = tradeAt(trade, option, clock('12:01'))
+    expect(noon).toMatchObject({ bought: true, sold: false, price: 210 })
+    expect(noon.pnl).toBeCloseTo((210 - 93.35) * 130, 6)
+    expect(noon.pnlPercent).toBeCloseTo(((210 - 93.35) / 93.35) * 100, 6)
+  })
+
+  it('once sold: the booked P&L, whatever the option did after', () => {
+    expect(tradeAt(trade, option, clock('13:11'))).toMatchObject({ bought: true, sold: true, price: 115.75, pnl: 2912 })
+  })
+
+  it('out of a replay: the trade as it stands', () => {
+    expect(tradeAt(trade, option, null)).toMatchObject({ bought: true, sold: true, price: 115.75, pnl: 2912 })
+  })
+
+  it('a sold-to-open leg gains when the option falls', () => {
+    const sold = tradeAt({ ...trade, side: 'SELL', open: true, exitMs: null, exitPrice: null }, option, clock('13:11'))
+    expect(sold.pnl).toBeCloseTo((93.35 - 82.6) * 130, 6)
   })
 })
 
