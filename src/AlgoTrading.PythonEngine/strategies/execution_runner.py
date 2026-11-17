@@ -351,13 +351,19 @@ def resolve_contract_requirements(strategy: Any, params: Optional[Dict[str, Any]
     The contracts the strategy wants, or the ATM CE/PE default when the class
     does not declare any. A broken override must not take the run down: it is
     logged and the default is used.
+
+    A strategy that trades the instrument itself on this run (its instance says
+    instrument_kind "equity": TrendRiderV2BE on a share) declares none and gets
+    none. The default would resolve, subscribe and keep the stock's ATM call and
+    put on every move of its strike, for a run that never reads them, and the
+    feed has a symbol cap (FYERS_MAX_SYMBOLS).
     """
     try:
         requirements = list(strategy.get_contract_requirements(params or {}) or [])
     except Exception as ex:
         print(f"[CONTRACT] WARN: get_contract_requirements failed ({ex}); falling back to ATM CE/PE", flush=True)
         requirements = []
-    if not requirements:
+    if not requirements and str(getattr(strategy, "instrument_kind", "") or "").strip().lower() != "equity":
         requirements = list(BaseStrategy.get_contract_requirements(params or {}))
     return requirements
 
@@ -770,6 +776,9 @@ if __name__ == "__main__":
     lot_size = resolve_lot_size(api, args.underlying)
     print(f"[{args.underlying}] Lot size {lot_size if lot_size else 'unknown'} "
           f"(leg quantities are lots; the platform multiplies by this).")
+    if str(getattr(strategy, "instrument_kind", "") or "").strip().lower() == "equity":
+        print(f"[{args.underlying}] This run trades the share itself ({args.spot_symbol}): a leg's quantity is shares, "
+              f"the platform's lot size for a share being 1; the option lot above does not apply.", flush=True)
 
     # The contracts this strategy wants on every tick, at the distances the
     # run's parameters ask for. Resolved once: the keys never change during a
