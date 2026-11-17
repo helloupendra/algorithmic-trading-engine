@@ -11,10 +11,12 @@
 # through. It does nothing while the morning job is still running
 # (KEEPER_WAIT_PID). After that, once a minute until KEEPER_UNTIL, it asks
 # scripts/lib/session_keeper.py what to do and does it:
-#   - feed: the FYERS feed is not running, so it is started. Or it runs but a
-#     spot the plan trades has had no price for 5 minutes, so it is stopped
-#     and started. At most KEEPER_FEED_MAX times a day, KEEPER_FEED_GAP_SECONDS
-#     apart.
+#   - feed: whichever live feed is running (FYERS, or Angel One once someone
+#     has switched to it) is stopped and started when a spot the plan trades
+#     has had no price for 5 minutes. With none running for two checks in a
+#     row, the last one seen running is started (KEEPER_FEED, FYERS at first).
+#     The two checks leave time for a switch made by hand. At most
+#     KEEPER_FEED_MAX times a day, KEEPER_FEED_GAP_SECONDS apart.
 #   - runs: a planned run is not live, and its last run today ended by itself
 #     (the runner exited, or an API restart lost it), or it never started.
 #     That run alone is started again with market-open.sh --redeploy-only and
@@ -47,7 +49,8 @@ RUN_MAX="${KEEPER_RUN_MAX:-4}"
 RUN_GAP="${KEEPER_RUN_GAP_SECONDS:-180}"
 WAIT_PID="${KEEPER_WAIT_PID:-}"
 DAY_STATE="${KEEPER_DAY_STATE:-unknown}"
-FYERS_FEED="${KEEPER_FYERS_FEED:-1}"     # 0 when Dhan is the day's feed: FYERS is not touched
+FYERS_FEED="${KEEPER_FYERS_FEED:-1}"     # 0 when Dhan is the day's feed: no feed is touched
+LAST_FEED="${KEEPER_FEED:-fyers}"        # started when none runs; follows whichever is seen running
 EXPECTED_TEXT="${KEEPER_EXPECTED:-}"
 DRY="${KEEPER_DRY:-0}"                   # 1: say what would be done, do nothing
 
@@ -90,49 +93,53 @@ FEED_SAID="" RUNS_SAID=""
 feed_once() { [ "$1" = "$FEED_SAID" ] || { FEED_SAID="$1"; say "$1"; }; }
 runs_once() { [ "$1" = "$RUNS_SAID" ] || { RUNS_SAID="$1"; say "$1"; }; }
 
-say "session keeper started (pid $$): $(grep -c . "$WORK/expected.txt") planned run(s), $(paste -sd, "$WORK/expected.txt"); watching until $UNTIL IST; FYERS feed $([ "$FYERS_FEED" = 1 ] && echo watched || echo 'not touched (Dhan is the feed)')"
+say "session keeper started (pid $$): $(grep -c . "$WORK/expected.txt") planned run(s), $(paste -sd, "$WORK/expected.txt"); watching until $UNTIL IST; feeds $([ "$FYERS_FEED" = 1 ] && echo "watched ($LAST_FEED first)" || echo 'not touched (Dhan is the feed)')"
 fetch /api/Users users.json
 
-FEED_DONE=0 FEED_LAST=0 RUN_DONE=0 RUN_LAST=0
+FEED_DONE=0 FEED_LAST=0 RUN_DONE=0 RUN_LAST=0 NONE_RUNNING=0
 while :; do
   NOW="$(hhmm)"
   [ "$NOW" -ge "$((10#$UNTIL))" ] && break
   if [ -n "$WAIT_PID" ] && kill -0 "$WAIT_PID" 2>/dev/null; then sleep 20; continue; fi
   if [ "$NOW" -lt "$((10#$FROM))" ]; then sleep 20; continue; fi
 
-  fetch /api/Ingestor/status ingestor.json
+  fetch /api/Feeds feeds.json
   fetch /api/LiveData/latest/all quotes.json
   fetch '/api/Strategy/runs?status=Running&take=500' running.json
   fetch "/api/Strategy/runs?fromDate=$(date +%F)&take=500" today.json
-  DECISION="$(python3 scripts/lib/session_keeper.py --dir "$WORK" --expected "$WORK/expected.txt" --day-state "$DAY_STATE" 2>&1)"
+  DECISION="$(python3 scripts/lib/session_keeper.py --dir "$WORK" --expected "$WORK/expected.txt" --day-state "$DAY_STATE" --feed "$LAST_FEED" 2>&1)"
   FEED_LINE="$(printf '%s\n' "$DECISION" | sed -n 's/^feed //p')"
   RUNS_LINE="$(printf '%s\n' "$DECISION" | sed -n 's/^runs //p')"
   if [ -z "$FEED_LINE" ] || [ -z "$RUNS_LINE" ]; then
     feed_once "session keeper: no decision ($(printf '%s' "$DECISION" | tail -1 | head -c 160))"
     sleep "$EVERY"; continue
   fi
-  FEED_ACT="${FEED_LINE%% *}"; FEED_WHY="${FEED_LINE#* }"
+  FEED_ACT="${FEED_LINE%% *}"; REST="${FEED_LINE#* }"; FEED_KEY="${REST%% *}"; FEED_WHY="${REST#* }"
+  if [ "$FEED_ACT" = start ]; then NONE_RUNNING=$((NONE_RUNNING + 1)); else NONE_RUNNING=0; fi
+  case "$FEED_ACT" in ok|restart|wait) [ "$FEED_KEY" != - ] && LAST_FEED="$FEED_KEY" ;; esac
   RUNS_ACT="${RUNS_LINE%% *}"; REST="${RUNS_LINE#* }"; RUNS_KEYS="${REST%% *}"; RUNS_WHY="${REST#* }"
   EPOCH="$(date +%s)"
 
   case "$FEED_ACT" in
     start|restart)
       if [ "$FYERS_FEED" != 1 ]; then
-        feed_once "feed: $FEED_WHY — Dhan is the feed today, FYERS is not touched"
+        feed_once "feed: $FEED_WHY — Dhan is the feed today, no feed is touched"
+      elif [ "$FEED_ACT" = start ] && [ "$NONE_RUNNING" -lt 2 ]; then
+        feed_once "feed: $FEED_WHY — waiting one more check (a switch by hand may be under way)"
       elif [ "$FEED_DONE" -ge "$FEED_MAX" ]; then
         feed_once "feed: $FEED_WHY — already restarted $FEED_MAX times today; leaving it to a person"
         notify_at_most_hourly keeper-feed-cap "AlgoTrading" "Session keeper: $FEED_WHY. The feed was restarted $FEED_MAX times today; look at Data → Feeds."
       elif [ "$DRY" = 1 ]; then
-        feed_once "dry run: feed: $FEED_WHY — would ${FEED_ACT} the FYERS feed"
+        feed_once "dry run: feed: $FEED_WHY — would ${FEED_ACT} the $FEED_KEY feed"
       elif [ $((EPOCH - FEED_LAST)) -ge "$FEED_GAP" ]; then
         FEED_DONE=$((FEED_DONE + 1)); FEED_LAST="$EPOCH"; FEED_SAID=""
-        say "feed: $FEED_WHY — ${FEED_ACT}ing the FYERS feed ($FEED_DONE of $FEED_MAX today)"
+        say "feed: $FEED_WHY — ${FEED_ACT}ing the $FEED_KEY feed ($FEED_DONE of $FEED_MAX today)"
         if [ "$FEED_ACT" = restart ]; then
-          say "  stop: $(api_post /api/Ingestor/stop '{}' 2>&1 | head -c 160)"
+          say "  stop: $(api_post "/api/Feeds/$FEED_KEY/stop" '{}' 2>&1 | head -c 160)"
           sleep 3
         fi
-        say "  start: $(api_post /api/Ingestor/start '{}' 2>&1 | head -c 160)"
-        notify "AlgoTrading" "Session keeper: $FEED_WHY. The FYERS feed was ${FEED_ACT}ed ($FEED_DONE of $FEED_MAX today)."
+        say "  start: $(api_post "/api/Feeds/$FEED_KEY/start" '{}' 2>&1 | head -c 160)"
+        notify "AlgoTrading" "Session keeper: $FEED_WHY. The $FEED_KEY feed was ${FEED_ACT}ed ($FEED_DONE of $FEED_MAX today)."
       fi ;;
     *) feed_once "feed: $FEED_ACT — $FEED_WHY" ;;
   esac

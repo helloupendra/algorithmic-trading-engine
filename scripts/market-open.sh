@@ -688,8 +688,9 @@ fi
 # Until 17 Nov 2026 nothing brought a planned run back once its feed went silent
 # or its runner exited: it stayed stopped for the rest of the day. The owner:
 # until Dhan's data plan is back, NIFTY must not stop under any condition.
-# scripts/session-keeper.sh restarts a silent or dead FYERS feed and starts again
-# a planned run that ended by itself, once this job is over, until 15:25 IST.
+# scripts/session-keeper.sh restarts a silent or dead live feed (FYERS, or Angel One
+# after a switch: scripts/switch-feed.sh) and starts again a planned run that
+# ended by itself, once this job is over, until 15:25 IST.
 # Detached, so the desk does not wait for it. MARKET_OPEN_KEEPER=0 turns it off.
 start_session_keeper() {
   local expected

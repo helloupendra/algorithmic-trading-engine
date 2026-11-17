@@ -25,7 +25,9 @@ IST = timezone(timedelta(hours=5, minutes=30))
 NOW = datetime(2026, 11, 18, 11, 0, tzinfo=IST).astimezone(timezone.utc)
 USERS = [{"id": 2, "userName": "admin"}]
 PLAN = [("admin", "TrendRiderV2", "NIFTY")]
-RUNNING_FEED = {"isRunning": True, "managed": True, "processId": 1}
+FYERS_ON = [{"key": "fyers", "isRunning": True}, {"key": "angel", "isRunning": False}]
+ANGEL_ON = [{"key": "fyers", "isRunning": False}, {"key": "angel", "isRunning": True}]
+NONE_ON = [{"key": "fyers", "isRunning": False}, {"key": "angel", "isRunning": False}]
 
 
 def quote(symbol, seconds_ago, now=NOW):
@@ -41,23 +43,29 @@ def run(strategy="TrendRiderV2", underlying="NIFTY", status="Stopped", started="
 
 
 class FeedTests(unittest.TestCase):
-    def decide(self, quotes, ingestor=RUNNING_FEED, day="trading", underlyings=("NIFTY",)):
-        return sk.feed_decision(ingestor, quotes, list(underlyings), NOW, day)
+    def decide(self, quotes, feeds=FYERS_ON, day="trading", underlyings=("NIFTY",), preferred="fyers"):
+        return sk.feed_decision(feeds, quotes, list(underlyings), NOW, day, preferred)
 
-    def test_a_feed_that_is_not_running_is_started(self):
-        self.assertEqual("start", self.decide([], ingestor={"isRunning": False})[0])
+    def test_with_no_feed_running_the_last_one_seen_is_started(self):
+        self.assertEqual(("start", "fyers"), self.decide([], feeds=NONE_ON)[:2])
+        self.assertEqual(("start", "angel"), self.decide([], feeds=NONE_ON, preferred="angel")[:2])
 
     def test_no_status_from_the_api_is_not_a_reason_to_act(self):
-        self.assertEqual("unknown", self.decide([], ingestor=None)[0])
+        self.assertEqual("unknown", self.decide([], feeds=None)[0])
         self.assertEqual("unknown", self.decide(None)[0])
 
     def test_a_spot_pricing_now_is_left_alone(self):
-        self.assertEqual("ok", self.decide([quote("NSE:NIFTY50-INDEX", 20)])[0])
+        self.assertEqual(("ok", "fyers"), self.decide([quote("NSE:NIFTY50-INDEX", 20)])[:2])
 
-    def test_five_minutes_without_a_price_restarts_the_feed(self):
-        action, why = self.decide([quote("NSE:NIFTY50-INDEX", 400)])
-        self.assertEqual("restart", action)
+    def test_five_minutes_without_a_price_restarts_the_feed_that_is_running(self):
+        action, key, why = self.decide([quote("NSE:NIFTY50-INDEX", 400)])
+        self.assertEqual(("restart", "fyers"), (action, key))
         self.assertIn("NIFTY", why)
+
+    def test_once_switched_to_angel_angel_is_the_one_judged_and_restarted(self):
+        # The owner's 18 Nov plan: Angel from 09:15, FYERS back by hand if it misbehaves.
+        self.assertEqual(("ok", "angel"), self.decide([quote("NSE:NIFTY50-INDEX", 20)], feeds=ANGEL_ON)[:2])
+        self.assertEqual(("restart", "angel"), self.decide([quote("NSE:NIFTY50-INDEX", 400)], feeds=ANGEL_ON)[:2])
 
     def test_under_five_minutes_is_left_to_the_feeds_own_watchdog(self):
         self.assertEqual("ok", self.decide([quote("NSE:NIFTY50-INDEX", 200)])[0])
@@ -147,7 +155,7 @@ class CommandLineTests(unittest.TestCase):
             def save(name, body):
                 with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
                     json.dump(body, handle)
-            save("ingestor.json", RUNNING_FEED)
+            save("feeds.json", ANGEL_ON)
             save("quotes.json", [quote("NSE:NIFTY50-INDEX", 15)])
             save("users.json", USERS)
             save("running.json", [])
@@ -161,7 +169,7 @@ class CommandLineTests(unittest.TestCase):
                          "--now", NOW.isoformat()])
         lines = out.getvalue().splitlines()
         self.assertEqual(2, len(lines))
-        self.assertTrue(lines[0].startswith("feed ok "))
+        self.assertTrue(lines[0].startswith("feed ok angel "))
         self.assertTrue(lines[1].startswith("runs redeploy admin|TrendRiderV2|NIFTY "))
 
     def test_a_missing_answer_reads_as_unknown(self):

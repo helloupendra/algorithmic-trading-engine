@@ -70,8 +70,10 @@ public class AngelConnectorTests
         Assert.True(d.Capabilities.OpenInterest);
         Assert.True(d.Capabilities.Greeks);
 
-        // Not built: no feed adapter, no full chain, no order path.
-        Assert.False(d.Capabilities.LiveTicks);
+        // The live feed since 18 Nov 2026 (market_data/live/vendors/angel.py).
+        Assert.True(d.Capabilities.LiveTicks);
+
+        // Not built: no depth feed, no full chain, no order path.
         Assert.False(d.Capabilities.Depth);
         Assert.False(d.Capabilities.OptionChain);
         Assert.False(d.Capabilities.Orders);

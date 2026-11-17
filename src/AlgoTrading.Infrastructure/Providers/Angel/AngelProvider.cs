@@ -8,8 +8,10 @@ namespace AlgoTrading.Infrastructure.Providers.Angel;
 /// </summary>
 /// <remarks>
 /// Added 2026-09-16 as a data connector. Its REST side is implemented here
-/// (session, quotes, candles); its websocket is not, so <c>LiveTicks</c> stays
-/// false until a feed adapter exists and has streamed a session. Angel serves
+/// (session, quotes, candles). Its websocket is the live feed since 18 Nov 2026
+/// (market_data/live/vendors/angel.py, started from /api/Feeds/angel): it signs in
+/// by itself with the PIN and a TOTP code, where FYERS needs a person every
+/// morning, and carries 1,000 symbols where FYERS carries 100. Angel serves
 /// option greeks for a live expiry but not a full chain with OI per strike, so
 /// <c>Greeks</c> is true and <c>OptionChain</c> is not.
 ///
@@ -35,8 +37,8 @@ public static class AngelProvider
             History = true,
             Quotes = true,
 
-            // The binary feed is not built yet; see the remarks.
-            LiveTicks = false,
+            // SmartAPI WebSocket 2.0, snap-quote mode (market_data/live/vendors/angel.py).
+            LiveTicks = true,
 
             // 20 levels on its depth feed, once that feed exists.
             Depth = false,
@@ -53,8 +55,7 @@ public static class AngelProvider
 
             UsesCanonicalSymbols = false,
 
-            // 1,000 tokens a websocket session, 3 sessions (for when the feed
-            // adapter is built).
+            // 1,000 tokens a websocket session, 3 sessions.
             MaxStreamSymbols = 1000,
 
             // The 1-minute window; longer intervals allow more (5m 100 days,

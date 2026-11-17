@@ -2,6 +2,7 @@ using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Providers;
+using AlgoTrading.Infrastructure.Providers.Angel;
 using AlgoTrading.Infrastructure.Providers.Fyers;
 using AlgoTrading.Infrastructure.Providers.Replay;
 using AlgoTrading.Infrastructure.Providers.TrueData;
@@ -77,6 +78,17 @@ public class FeedSupervisorRegistryTests
         Assert.Equal(new[] { "fyers", "truedata" }, registry.All.Select(f => f.Key));
         Assert.Null(registry.Get(ReplayProvider.Key));
         Assert.Null(registry.Get("nope"));
+    }
+
+    [Fact]
+    public void Angel_one_has_a_feed_of_its_own_after_fyers()
+    {
+        var (registry, _) = Build(AngelProvider.Descriptor, FyersProvider.Descriptor);
+
+        Assert.Equal(new[] { "fyers", "angel" }, registry.All.Select(f => f.Key));
+        var d = registry.Get(AngelProvider.Key)!.Descriptor;
+        Assert.Equal(new[] { "--vendor", "angel" }, d.Args);
+        Assert.Equal("feed.angel.pid", d.PidSettingKey);
     }
 
     [Fact]

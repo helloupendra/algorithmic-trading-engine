@@ -16,14 +16,15 @@ scripts/session-keeper.sh asks this once a minute. Arguments:
                         running.json   GET /api/Strategy/runs?status=Running
                         today.json     GET /api/Strategy/runs?fromDate=<today>
                         quotes.json    GET /api/LiveData/latest/all
-                        ingestor.json  GET /api/Ingestor/status
+                        feeds.json     GET /api/Feeds (every live feed: key, isRunning)
                       A file that is missing or unreadable means "the API did not answer".
     --expected FILE   the planned runs, "account|strategy|underlying" per line (market-open's parser)
     --day-state S     trading | unknown, from the morning job's calendar check
+    --feed KEY        the feed to start when none is running (the last one seen running); default fyers
     --now ISO         the time to judge at (tests); default now
 
 It prints two lines:
-    feed ok|start|restart|wait|unknown <why>
+    feed ok|start|restart|wait|unknown <feed key or -> <why>
     runs ok|redeploy|hold|unknown <keys, comma-separated, for redeploy> <why>
 """
 from __future__ import annotations
@@ -64,19 +65,26 @@ def _quote_time(quote: dict) -> Optional[datetime]:
     return _parse(quote.get("updatedUtc")) or _parse(quote.get("exchangeTimestampUtc"))
 
 
-def feed_decision(ingestor, quotes, underlyings: list[str], now: datetime, day_state: str) -> tuple[str, str]:
+def feed_decision(feeds, quotes, underlyings: list[str], now: datetime, day_state: str,
+                  preferred: str = "fyers") -> tuple[str, str, str]:
     """
-    ("ok" | "start" | "restart" | "wait" | "unknown", why). Judged on the NSE and BSE spots the
-    plan trades; MCX is not watched (the plan has no commodity until Dhan is back).
+    ("ok" | "start" | "restart" | "wait" | "unknown", the feed's key or "-", why). Whichever feed is
+    running is the one judged and restarted: FYERS, or Angel One once someone has switched to it.
+    With none running, `preferred` (the last one seen running) is started. Judged on the NSE and
+    BSE spots the plan trades; MCX is not watched (the plan has no commodity until Dhan is back).
     """
-    if not isinstance(ingestor, dict):
-        return "unknown", "the feed's status could not be read"
-    if ingestor.get("isRunning") is not True:
-        return "start", "the FYERS feed is not running"
-
-    rows = _rows(quotes) if quotes is not None else None
+    rows = _rows(feeds) if feeds is not None else None
     if rows is None:
-        return "unknown", "the latest prices could not be read"
+        return "unknown", "-", "the feeds' status could not be read"
+    running = [str(r.get("key") or "").strip().lower() for r in rows if r.get("isRunning") is True]
+    running = [key for key in running if key]
+    if not running:
+        return "start", preferred, f"no live feed is running ({preferred} was the last)"
+    feed = running[0]
+
+    quote_rows = _rows(quotes) if quotes is not None else None
+    if quote_rows is None:
+        return "unknown", feed, "the latest prices could not be read"
     today = now.astimezone(IST).date()
     stale: list[str] = []
     priced_today = False
@@ -87,22 +95,23 @@ def feed_decision(ingestor, quotes, underlyings: list[str], now: datetime, day_s
             continue
         watched += 1
         opened = datetime.combine(today, OPENS[exchange], tzinfo=IST)
-        stamps = [t for t in (_quote_time(q) for q in rows if pattern.match(str(q.get("symbol") or ""))) if t]
+        stamps = [t for t in (_quote_time(q) for q in quote_rows if pattern.match(str(q.get("symbol") or ""))) if t]
         last = max(stamps) if stamps else None
         if last is not None and last >= opened:
             priced_today = True
         if last is None or (now - last).total_seconds() > STALE_AFTER_SECONDS:
             seen = f"last {last.astimezone(IST):%H:%M:%S} IST" if last else "never priced"
             stale.append(f"{underlying} ({seen})")
+    running_text = "+".join(running)
     if not watched:
-        return "ok", "no NSE/BSE spot in the plan"
+        return "ok", feed, f"{running_text} running; no NSE/BSE spot in the plan"
     if not stale:
-        return "ok", "every spot the plan trades is pricing"
+        return "ok", feed, f"{running_text} running; every spot the plan trades is pricing"
     # A day the calendar cannot vouch for, with nothing priced since the open, is probably a
     # holiday: restarting the feed would not bring prices, only pages.
     if day_state != "trading" and not priced_today:
-        return "wait", "no price since the open on a day the calendar cannot vouch for: " + ", ".join(stale)
-    return "restart", f"no price for {STALE_AFTER_SECONDS // 60} min: " + ", ".join(stale)
+        return "wait", feed, "no price since the open on a day the calendar cannot vouch for: " + ", ".join(stale)
+    return "restart", feed, f"no price for {STALE_AFTER_SECONDS // 60} min on {feed}: " + ", ".join(stale)
 
 
 def runs_decision(expected: list[Key], users, running, today) -> tuple[str, list[Key], str]:
@@ -158,6 +167,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--dir", required=True)
     parser.add_argument("--expected", required=True)
     parser.add_argument("--day-state", default="unknown")
+    parser.add_argument("--feed", default="fyers")
     parser.add_argument("--now", default="")
     args = parser.parse_args(argv)
 
@@ -170,12 +180,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     folder = args.dir
     underlyings = [key[2] for key in expected]
 
-    feed, feed_why = feed_decision(_load(os.path.join(folder, "ingestor.json")),
-                                   _load(os.path.join(folder, "quotes.json")), underlyings, now, args.day_state)
+    feed, feed_key, feed_why = feed_decision(_load(os.path.join(folder, "feeds.json")),
+                                             _load(os.path.join(folder, "quotes.json")), underlyings, now,
+                                             args.day_state, args.feed.strip().lower() or "fyers")
     runs, keys, runs_why = runs_decision(expected, _load(os.path.join(folder, "users.json")),
                                          _load(os.path.join(folder, "running.json")),
                                          _load(os.path.join(folder, "today.json")))
-    print(f"feed {feed} {feed_why}")
+    print(f"feed {feed} {feed_key} {feed_why}")
     print(f"runs {runs} {','.join('|'.join(k) for k in keys) or '-'} {runs_why}")
     return 0
 
