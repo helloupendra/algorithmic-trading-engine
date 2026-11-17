@@ -18,14 +18,21 @@ up on whatever local bars exist and says which source it used.
 The broker retry loop still has its place: with NO local bars, waiting for a
 sign-in is better than starting blind (see core/warmup_retry.py). With local
 bars in hand there is nothing to wait for, so the broker gets one try.
+
+A store with plenty of bars can still be missing most of one day. On
+2026-11-17 TrendRider V2 warmed up at 09:18 while the store held 16 Nov only
+from 13:49 (the live recorder had missed the morning; FYERS history filled it
+later that day). V2 read yesterday's high as 25,291.1; the day's high was
+25,337.6. So every earlier session is checked, and a short one (under 90% of
+its candles) is filled from the broker, once, before the strategy sees it.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, List, Optional, Sequence
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from core.data_models import BarData
 from core.resolutions import is_daily, minutes_of
@@ -77,6 +84,13 @@ def live_warmup_count(strategy: Any) -> int:
     """
     return max(LIVE_WARMUP_BARS, required_warmup_bars(strategy) or 0)
 
+
+#: India Standard Time, where the session's 09:15-15:30 is.
+IST = timezone(timedelta(hours=5, minutes=30))
+SESSION_OPEN_MIN = 9 * 60 + 15
+SESSION_CLOSE_MIN = 15 * 60 + 30
+#: A session holding fewer of its candles than this share counts as short.
+COMPLETE_SHARE = 0.9
 
 #: Fewer bars than this and the broker is still worth asking: most warming
 #: strategies need tens of bars (Ghost's pivots, an EMA's span) before they
@@ -139,6 +153,76 @@ def local_bars(api, symbol: str, resolution: str, start_date: str, end_date: str
     return bars
 
 
+def short_sessions(bars: Sequence[BarData], resolution: str, before: date) -> List[Tuple[date, int, int]]:
+    """
+    The sessions before `before` (an IST date) holding under COMPLETE_SHARE of
+    their candles: (day, candles held, candles a full session has). Daily bars
+    have no session to count and are never short.
+    """
+    if is_daily(resolution):
+        return []
+    minutes = max(1, minutes_of(resolution))
+    full = SESSION_MINUTES // minutes
+    held: dict = {}
+    for b in bars:
+        ist = b.timestamp_start.astimezone(IST)
+        minute = ist.hour * 60 + ist.minute
+        if minute < SESSION_OPEN_MIN or minute >= SESSION_CLOSE_MIN or ist.date() >= before:
+            continue
+        held.setdefault(ist.date(), set()).add((minute - SESSION_OPEN_MIN) // minutes)
+    return [(d, len(slots), full) for d, slots in sorted(held.items()) if len(slots) < full * COMPLETE_SHARE]
+
+
+def fill_sessions(stored: Sequence[BarData], extra: Sequence[BarData], days: Sequence[date]) -> List[BarData]:
+    """`stored` plus the bars of `extra` that fall on `days` at a start `stored` lacks; oldest first."""
+    have = {b.timestamp_start for b in stored}
+    wanted = set(days)
+    added = [b for b in extra
+             if b.timestamp_start.astimezone(IST).date() in wanted and b.timestamp_start not in have]
+    return sorted([*stored, *added], key=lambda b: b.timestamp_start)
+
+
+def _describe(gaps: Sequence[Tuple[date, int, int]]) -> str:
+    return ", ".join(f"{d:%d %b} {n}/{full}" for d, n, full in gaps)
+
+
+def _fill_short_sessions(stored: List[BarData], *, make_engine: Callable, symbol: str, resolution: str,
+                         start_date: str, end_date: str, label: str, log: Callable[[str], None],
+                         sleep=None) -> WarmupBars:
+    """A full-looking store with short earlier sessions: one broker try to fill them, never fatal."""
+    try:
+        before = date.fromisoformat(end_date[:10])
+        gaps = short_sessions(stored, resolution, before)
+    except ValueError:
+        return WarmupBars(stored, "local store", f"{len(stored)} bars from the platform store")
+    if not gaps:
+        return WarmupBars(stored, "local store", f"{len(stored)} bars from the platform store")
+
+    log(f"[{label}] Warmup: short session(s) in the platform store ({_describe(gaps)} candles); "
+        f"asking the broker once to fill them.")
+    try:
+        kwargs = {"sleep": sleep} if sleep is not None else {}
+        broker = fetch_warmup_bars_with_retry(
+            make_engine=make_engine, symbol=symbol, resolution=resolution,
+            start_date=start_date, end_date=end_date, label=label, attempts=1, **kwargs) or []
+        why = "the broker returned nothing"
+    except Exception as ex:  # noqa: BLE001 — reported, never fatal
+        broker = []
+        why = "the broker rejected the token" if is_auth_failure(ex) else f"the broker failed ({ex})"
+
+    merged = fill_sessions(stored, broker, [d for d, _, _ in gaps])
+    added = len(merged) - len(stored)
+    if added == 0:
+        return WarmupBars(stored, "local store",
+                          f"{len(stored)} stored bars; short session(s) {_describe(gaps)} not filled ({why}). "
+                          "Levels read from those days (yesterday's high/low, the average range) may be wrong.")
+    still = short_sessions(merged, resolution, before)
+    detail = f"{len(stored)} stored bars + {added} from the broker for {_describe(gaps)}"
+    if still:
+        detail += f"; still short: {_describe(still)} (a short trading session, or the broker lacks it too)"
+    return WarmupBars(merged, "local store + broker", detail)
+
+
 def load_warmup_bars(
     *,
     api,
@@ -161,7 +245,8 @@ def load_warmup_bars(
     """
     stored = local_bars(api, symbol, resolution, start_date, end_date)
     if len(stored) >= min_local_bars:
-        return WarmupBars(stored, "local store", f"{len(stored)} bars from the platform store")
+        return _fill_short_sessions(stored, make_engine=make_engine, symbol=symbol, resolution=resolution,
+                                    start_date=start_date, end_date=end_date, label=label, log=log, sleep=sleep)
 
     attempts = 1 if stored else WARMUP_AUTH_RETRY_ATTEMPTS
     if stored:

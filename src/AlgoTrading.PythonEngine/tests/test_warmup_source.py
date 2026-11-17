@@ -11,8 +11,10 @@ broker only to fill a gap, and never a blocking wait when local bars exist.
 import unittest
 from datetime import datetime, timedelta, timezone
 
+from datetime import date
+
 from core.warmup_source import (LIVE_WARMUP_BARS, WARMUP_DAYS, canonical_resolution, live_warmup_count,
-                                 load_warmup_bars, local_bars, warmup_days_for)
+                                 load_warmup_bars, local_bars, short_sessions, warmup_days_for, IST)
 
 
 def rows(count, symbol="NSE:NIFTY50-INDEX", start="2026-09-15T03:45:00Z"):
@@ -145,3 +147,85 @@ class WarmupSizeTest(unittest.TestCase):
         self.assertEqual(900, live_warmup_count(strategy))
         days = warmup_days_for(strategy, "5m")
         self.assertGreaterEqual(days * 5 / 7 - 2, 12)   # 12 sessions even with two holidays
+
+
+def ist_rows(day, first_hm="09:15", count=75, high=100.0):
+    """`count` 5-minute rows from `first_hm` IST on `day`, as the store answers them."""
+    h, m = map(int, first_hm.split(":"))
+    first = datetime.fromisoformat(f"{day}T{h:02d}:{m:02d}:00+05:30").astimezone(timezone.utc)
+    return [{"symbol": "NSE:NIFTY50-INDEX",
+             "timestampUtc": (first + timedelta(minutes=5 * i)).isoformat().replace("+00:00", "Z"),
+             "open": 1.0, "high": high, "low": 0.5, "close": 1.0, "volume": 1} for i in range(count)]
+
+
+def ist_bars(day, first_hm="09:15", count=75, high=100.0):
+    from core.data_models import BarData
+    return [BarData(symbol=r["symbol"], resolution="5m",
+                    timestamp_start=datetime.fromisoformat(r["timestampUtc"].replace("Z", "+00:00")),
+                    open=r["open"], high=r["high"], low=r["low"], close=r["close"], volume=1)
+            for r in ist_rows(day, first_hm, count, high)]
+
+
+class ShortSessionTests(unittest.TestCase):
+    """
+    17 Nov 2026: TrendRider V2 warmed up at 09:18 while the store held 16 Nov
+    only from 13:49, and read yesterday's high as 25,291.1 instead of 25,337.6.
+    A short earlier session is now filled from the broker before the strategy
+    sees it, and said out loud when it cannot be.
+    """
+
+    def setUp(self):
+        FakeEngine.made = 0
+
+    def load(self, stored, engine):
+        logs = []
+        out = load_warmup_bars(api=FakeApi(stored), make_engine=engine, symbol="NSE:NIFTY50-INDEX", resolution="5m",
+                               start_date="2026-11-01", end_date="2026-11-17", label="NIFTY",
+                               log=logs.append, sleep=lambda _: None)
+        return out, logs
+
+    def test_a_short_yesterday_is_filled_from_the_broker_once(self):
+        # 13 Nov whole; 16 Nov only from 13:50 (20 candles), its morning high missing.
+        stored = ist_rows("2026-11-13") + ist_rows("2026-11-16", "13:50", 20, high=25291.1)
+        broker = (ist_bars("2026-11-13", high=1.0) + ist_bars("2026-11-16", count=55, high=25337.6)
+                  + ist_bars("2026-11-16", "13:50", 20, high=25291.1) + ist_bars("2026-11-17", count=1))
+        out, logs = self.load(stored, FakeEngine(bars=broker))
+        self.assertEqual(1, FakeEngine.made)
+        self.assertEqual("local store + broker", out.source)
+        nov16 = [b for b in out.bars if b.timestamp_start.date() == date(2026, 11, 16)]
+        self.assertEqual(75, len(nov16))
+        self.assertEqual(25337.6, max(b.high for b in nov16))
+        # Only the short day is filled: 13 Nov keeps the store's own bars, today gets nothing from here.
+        self.assertTrue(all(b.high == 100.0 for b in out.bars if b.timestamp_start.date() == date(2026, 11, 13)))
+        self.assertFalse(any(b.timestamp_start.astimezone(IST).date() == date(2026, 11, 17) for b in out.bars))
+        self.assertIn("16 Nov 20/75", logs[0])
+        self.assertIn("+ 55 from the broker", out.detail)
+
+    def test_a_refused_broker_keeps_the_store_and_says_the_levels_may_be_wrong(self):
+        stored = ist_rows("2026-11-13") + ist_rows("2026-11-16", "13:50", 20)
+        out, _ = self.load(stored, FakeEngine(error=AUTH))
+        self.assertEqual(("local store", 95), (out.source, len(out.bars)))
+        self.assertEqual(1, FakeEngine.made)   # one try, no wait for a sign-in
+        self.assertIn("not filled", out.detail)
+        self.assertIn("may be wrong", out.detail)
+
+    def test_full_sessions_and_today_never_call_the_broker(self):
+        stored = ist_rows("2026-11-13") + ist_rows("2026-11-16") + ist_rows("2026-11-17", count=2)
+        out, logs = self.load(stored, FakeEngine(error=AUTH))
+        self.assertEqual(0, FakeEngine.made)
+        self.assertEqual(("local store", 152), (out.source, len(out.bars)))
+        self.assertEqual([], logs)
+
+    def test_a_short_session_the_broker_lacks_too_is_named(self):
+        # 8 Nov 2026, the Muhurat hour: 14 candles wherever you look.
+        stored = ist_rows("2026-11-06") + ist_rows("2026-11-08", "13:45", 14)
+        out, _ = self.load(stored, FakeEngine(bars=ist_bars("2026-11-08", "13:45", 14)))
+        self.assertEqual("local store", out.source)
+        self.assertIn("08 Nov 14/75", out.detail)
+
+    def test_short_sessions_counts_slots_inside_the_session_only(self):
+        bars = ist_bars("2026-11-16") + ist_bars("2026-11-16", "15:30", 3)
+        self.assertEqual([], short_sessions(bars, "5m", date(2026, 11, 17)))
+        self.assertEqual([(date(2026, 11, 16), 20, 75)],
+                         short_sessions(ist_bars("2026-11-16", "13:50", 20), "5", date(2026, 11, 17)))
+        self.assertEqual([], short_sessions(ist_bars("2026-11-16", "13:50", 20), "D", date(2026, 11, 17)))
