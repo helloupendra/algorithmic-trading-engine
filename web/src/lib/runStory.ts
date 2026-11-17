@@ -426,7 +426,10 @@ export function adrFrom(daily: ReadonlyArray<Bar>, day: string, sessions = 10): 
 export interface Level {
   price: number
   title: string
-  kind: 'prev' | 'open' | 'entry' | 'stop' | 'trail' | 'arm' | 'best'
+  /** The name on a phone's narrow ladder ("Y-High" for "Yday high"); the title when absent. */
+  short?: string
+  /** `check`: a level the strategy did not use, shown because it differs from one it did. */
+  kind: 'prev' | 'open' | 'entry' | 'stop' | 'trail' | 'arm' | 'best' | 'check'
 }
 
 /**
@@ -457,4 +460,78 @@ export function mergeLevels(levels: ReadonlyArray<Level>, tolerance = 0.0004): L
 export function previousClose(daily: ReadonlyArray<Bar>, day: string): number | null {
   const before = daily.filter((b) => istDay(b.t) < day).sort((a, b) => a.t - b.t)
   return before.length ? before[before.length - 1].c : null
+}
+
+/* ------------------------------------------------------- sessions and events */
+
+/**
+ * One bar per full session (09:15–15:30 IST) from intraday candles: the
+ * day's first open, highest high, lowest low and last close. A day with fewer
+ * than `minBars` candles in the session (a Muhurat hour, a day the recorder
+ * missed) is left out, so it never stands in for "yesterday". Built from the
+ * stored intraday candles because the stored daily candles can lag days behind.
+ */
+export function sessionsFrom(bars: ReadonlyArray<Bar>, minutes = 5, minBars = 60): Bar[] {
+  const byDay = new Map<string, Bar[]>()
+  for (const b of bars) {
+    const m = istMinute(b.t)
+    if (m < SESSION_OPEN_MIN || m >= SESSION_CLOSE_MIN) continue
+    const d = istDay(b.t)
+    byDay.set(d, [...(byDay.get(d) ?? []), b])
+  }
+  const out: Bar[] = []
+  for (const [, list] of byDay) {
+    const day = [...list].sort((a, b) => a.t - b.t)
+    const slots = new Set(day.map((b) => Math.floor((istMinute(b.t) - SESSION_OPEN_MIN) / minutes)))
+    if (slots.size < minBars) continue
+    out.push({
+      t: day[0].t,
+      o: day[0].o,
+      h: Math.max(...day.map((b) => b.h)),
+      l: Math.min(...day.map((b) => b.l)),
+      c: day[day.length - 1].c,
+    })
+  }
+  return out.sort((a, b) => a.t - b.t)
+}
+
+/**
+ * When an entry's trail armed: the first 1-minute bar from the entry on whose
+ * high (a call) or low (a put) the index stood trail_arm_adr × ADR in favour.
+ * Null when it has not armed, or the entry has no trail.
+ */
+export function armEvent(entry: TrendRiderEntry, bars: ReadonlyArray<Bar>): { ms: number; level: number } | null {
+  const e = entry.entrySpot
+  const adr = entry.levels.adr
+  if (e == null || adr == null || adr <= 0 || !(entry.armAdr > 0) || !(entry.giveAdr > 0)) return null
+  const buy = entry.direction === 'BUY'
+  const level = buy ? e + entry.armAdr * adr : e - entry.armAdr * adr
+  const from = candleStart(entry.atMs, 1)
+  for (const b of [...bars].sort((x, y) => x.t - y.t)) {
+    if (b.t < from) continue
+    if (buy ? b.h >= level : b.l <= level) return { ms: b.t, level }
+  }
+  return null
+}
+
+/**
+ * Where each label of a price ladder goes: as close as it can to its own
+ * price's y, never closer than `gap` to the next, inside [gap/2, height − gap/2].
+ * `wanted` is in any order; the answer is in the same order.
+ */
+export function ladderLayout(wanted: ReadonlyArray<number>, height: number, gap: number): number[] {
+  const order = wanted.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y)
+  const lo = gap / 2
+  const hi = Math.max(lo, height - gap / 2)
+  const ys = order.map((o) => Math.min(Math.max(o.y, lo), hi))
+  // Down: each label at least `gap` below the one above it.
+  for (let k = 1; k < ys.length; k++) ys[k] = Math.max(ys[k], ys[k - 1] + gap)
+  // Up from the bottom, if that pushed the last ones past the edge.
+  if (ys.length > 0 && ys[ys.length - 1] > hi) {
+    ys[ys.length - 1] = hi
+    for (let k = ys.length - 2; k >= 0; k--) ys[k] = Math.min(ys[k], ys[k + 1] - gap)
+  }
+  const out = new Array<number>(wanted.length)
+  order.forEach((o, k) => (out[o.i] = ys[k]))
+  return out
 }

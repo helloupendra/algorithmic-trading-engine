@@ -16,17 +16,9 @@
 
 .story__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
-}
-
-/* The left column: the index, and each trade's option right under it (one replay plays both). */
-.story__main {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
 }
 
 @media (max-width: 1100px) {
@@ -35,11 +27,54 @@
   }
 }
 
-/* --- the chart and its boxed marks -------------------------------------- */
+/* --- the chart: a status strip, the plot, and the level ladder beside it -- */
+
+.story-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.story-chart__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  min-height: 26px;
+  font-size: 12.5px;
+}
+
+.story-chart__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.story__state { color: var(--text-2); }
+
+.story-chart__ohlc {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.story-chart__ohlc b { color: var(--text-3); font-weight: 600; margin-left: 4px; }
+.story-chart__ohlc .pos { color: var(--pos); }
+.story-chart__ohlc .neg { color: var(--neg); }
+
+/* The plot and, to its right, the ladder of level names and prices. */
+.story-chart__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 156px;
+  height: var(--h, 480px);
+}
 
 .story-chart {
   position: relative;
-  width: 100%;
+  min-width: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -64,7 +99,7 @@
 
 .story-link circle {
   fill: none;
-  stroke-width: 2.5;
+  stroke-width: 2.2;
 }
 
 .story-link--buy line,
@@ -75,22 +110,27 @@
 .story-link--loss circle { stroke: var(--neg); }
 .story-link--flat line,
 .story-link--flat circle { stroke: var(--text-3); }
+.story-link--arm line,
+.story-link--arm circle { stroke: var(--warn); }
 
+/* The boxes live in the empty bands above and below the candles (StoryChart's BAND). */
 .story-label {
   position: absolute;
+  transform: translateX(-50%);
   pointer-events: none;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 1px;
-  padding: 4px 8px;
+  padding: 2px 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  background: var(--surface);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
   font-size: 11.5px;
   line-height: 1.25;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 230px;
   z-index: 2;
 }
 
@@ -103,26 +143,94 @@
 .story-label--win b { color: var(--pos); }
 .story-label--loss { border-color: var(--neg); }
 .story-label--loss b { color: var(--neg); }
+.story-label--arm { border-color: var(--warn); border-style: dashed; }
+.story-label--arm b { color: var(--warn); }
 
-.story-chart__overlay {
+.story-chart__empty {
   position: absolute;
-  top: 8px;
-  left: 10px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  pointer-events: none;
-  font-size: 12px;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--text-3);
 }
 
-.story__overlay-state {
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  border: 1px solid var(--line);
-  color: var(--text-2);
+/* The ladder: each level's name and price as near its line as the others allow. */
+.story-ladder {
+  position: relative;
+  height: 100%;
+  border-left: 1px solid var(--line-soft);
+}
+
+.story-ladder__links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 10px;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.story-rung-link { stroke: var(--text-3); stroke-width: 1; }
+.story-rung-link--entry { stroke: var(--accent); }
+.story-rung-link--stop { stroke: var(--neg); }
+.story-rung-link--trail,
+.story-rung-link--arm,
+.story-rung-link--check { stroke: var(--warn); }
+.story-rung-link--best { stroke: var(--pos); }
+
+.story-rung {
+  position: absolute;
+  left: 10px;
+  right: 2px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--text-3);
+  background: var(--surface2, var(--surface));
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.story-rung b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.story-rung__name,
+.story-rung__short { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+.story-rung__short { display: none; }
+
+.story-rung--prev { border-left-color: var(--text-3); }
+.story-rung--open { border-left-color: var(--text-2); }
+.story-rung--entry { border-left-color: var(--accent); }
+.story-rung--entry b { color: var(--accent); }
+.story-rung--stop { border-left-color: var(--neg); }
+.story-rung--stop b { color: var(--neg); }
+.story-rung--trail { border-left-color: var(--warn); }
+.story-rung--trail b { color: var(--warn); }
+.story-rung--arm { border-left: 3px dotted var(--warn); }
+.story-rung--best { border-left-color: var(--pos); }
+.story-rung--best b { color: var(--pos); }
+.story-rung--check { border-left: 3px dashed var(--warn); }
+.story-rung--check .story-rung__name,
+.story-rung--check .story-rung__short { color: var(--warn); }
+
+@media (max-width: 640px) {
+  .story-chart__body {
+    grid-template-columns: minmax(0, 1fr) 114px;
+    height: calc(var(--h, 480px) * 0.72);
+  }
+  .story-rung { font-size: 10px; padding: 0 4px; gap: 3px; }
+  .story-rung__name { display: none; }
+  .story-rung__short { display: inline; }
+  .story-label { font-size: 10.5px; padding: 2px 6px; }
+  .story-label span { font-size: 10px; }
+  .story-chart__status { font-size: 11.5px; }
+  .story-chart__ohlc { font-size: 10.5px; white-space: normal; }
 }
 
 .story__controls {
@@ -136,15 +244,6 @@
 .story__scrub {
   width: 140px;
   accent-color: var(--accent);
-}
-
-.story-chart__empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  margin: 0;
-  color: var(--text-3);
 }
 
 /* --- legend ------------------------------------------------------------- */
@@ -174,6 +273,8 @@
 .lg--stop { border-color: var(--neg); }
 .lg--arm { border-top-style: dotted; border-color: var(--warn); }
 .lg--trail { border-color: var(--warn); }
+.lg--best { border-top-style: dotted; border-color: var(--pos); }
+.lg--check { border-top-style: dashed; border-color: var(--warn); }
 
 /* --- the rules panel ----------------------------------------------------- */
 

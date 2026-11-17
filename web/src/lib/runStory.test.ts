@@ -7,9 +7,13 @@ import {
   engineStatus,
   exitPlan,
   foldSession,
+  istDay,
   istHm,
   mergeLevels,
   previousClose,
+  armEvent,
+  ladderLayout,
+  sessionsFrom,
   tradeAt,
   tradeMarks,
   trendRiderEntries,
@@ -266,5 +270,61 @@ describe('previousClose', () => {
   it('is the last daily close before the day', () => {
     const d = (day: string, c: number): Bar => ({ t: Date.parse(`${day}T00:00:00Z`), o: c, h: c, l: c, c })
     expect(previousClose([d('2026-11-13', 1), d('2026-11-16', 2), d('2026-11-17', 3)], '2026-11-17')).toBe(2)
+  })
+})
+
+describe('sessionsFrom (yesterday from the intraday candles)', () => {
+  /** n 5-minute bars from 09:15 IST on a day, each one point higher. */
+  function day(d: string, n: number, base: number): Bar[] {
+    return Array.from({ length: n }, (_, i) => {
+      const t = Date.parse(`${d}T09:15:00+05:30`) + i * 5 * 60_000
+      return { t, o: base + i, h: base + i + 2, l: base + i - 1, c: base + i + 1 }
+    })
+  }
+
+  it('builds one bar per full session and skips a Muhurat hour', () => {
+    // 8 Nov 2026: the Muhurat session, 14 candles. It must never count as "yesterday".
+    const bars = [...day('2026-11-06', 75, 25000), ...day('2026-11-08', 14, 24990), ...day('2026-11-16', 75, 25200)]
+    const out = sessionsFrom(bars, 5, 60)
+    expect(out.map((b) => istDay(b.t))).toEqual(['2026-11-06', '2026-11-16'])
+    expect(out[1]).toMatchObject({ o: 25200, h: 25200 + 74 + 2, l: 25200 - 1, c: 25200 + 74 + 1 })
+    expect(previousClose(out, '2026-11-17')).toBe(25275)
+  })
+
+  it('leaves out bars outside 09:15-15:30', () => {
+    const late = { t: Date.parse('2026-11-16T15:45:00+05:30'), o: 1, h: 99999, l: 1, c: 1 }
+    const out = sessionsFrom([...day('2026-11-16', 75, 25200), late], 5, 60)
+    expect(out[0].h).toBe(25276)
+  })
+})
+
+describe('armEvent', () => {
+  it('finds the minute the trail armed (17 Nov: 12:00, at 25,490.5)', () => {
+    const entry: TrendRiderEntry = {
+      groupId: 'G', atMs: Date.parse('2026-11-17T09:20:00+05:30'), direction: 'BUY', entrySpot: 25344.75,
+      levels: { prevHigh: 25291.1, prevLow: 25172.1, dayOpen: 25282.05, adr: 291.5 }, levelsKind: 'prev_day',
+      entryOfDay: 1, stopAdr: 0.5, armAdr: 0.5, giveAdr: 0.35,
+    } as TrendRiderEntry
+    const bars = [at('11:59', 25481.7, 25486.6, 25481.7, 25483.8), at('12:00', 25483.2, 25498.5, 25483.2, 25495.2)]
+    expect(armEvent(entry, bars)).toEqual({ ms: Date.parse('2026-11-17T12:00:00+05:30'), level: 25490.5 })
+    expect(armEvent(entry, bars.slice(0, 1))).toBeNull()
+    expect(armEvent({ ...entry, armAdr: 0 }, bars)).toBeNull()
+  })
+})
+
+describe('ladderLayout', () => {
+  it('keeps labels at their own y when there is room', () => {
+    expect(ladderLayout([100, 300, 50], 500, 22)).toEqual([100, 300, 50])
+  })
+
+  it('spreads labels that would overlap, keeping their order', () => {
+    const ys = ladderLayout([200, 205, 210], 500, 22)
+    expect(ys).toEqual([200, 222, 244])
+  })
+
+  it('pushes back up from the bottom edge', () => {
+    const ys = ladderLayout([495, 498], 500, 22)
+    expect(ys[1]).toBe(489)
+    expect(ys[0]).toBe(467)
   })
 })
