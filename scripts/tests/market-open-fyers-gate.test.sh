@@ -76,6 +76,18 @@ check "says why" "$(grep -q 'not waiting for FYERS: Dhan is today' <<<"$out"; ec
 check "still asks for the sign-in" "$(grep -q 'notify: FYERS is not signed in' <<<"$out"; echo $?)"
 check "tried the refresh first" "$(grep -q 'api_post /api/auth/refresh-token' <<<"$out"; echo $?)"
 
+echo "Angel One is the feed (MARKET_OPEN_FEED=angel), FYERS not signed in, never signs in:"
+out="$(LIVE_FEED=angel run_case angel 0 -1 0900)"
+check "carries on without waiting" "$(grep -q 'exit: 0' <<<"$out"; echo $?)"
+check "does not sleep" "$(! grep -q '^sleep' <<<"$out"; echo $?)"
+check "says why" "$(grep -q 'not waiting for FYERS: Angel One is today' <<<"$out"; echo $?)"
+check "still asks for the sign-in" "$(grep -q 'notify: FYERS is not signed in. Strategies start on Angel One' <<<"$out"; echo $?)"
+
+echo "FYERS is the feed (MARKET_OPEN_FEED=fyers): the gate still waits for the sign-in:"
+out="$(LIVE_FEED=fyers run_case fyers 0 2 0905)"
+check "waits for it" "$(grep -q '^sleep' <<<"$out"; echo $?)"
+check "and carries on once signed in" "$(grep -q 'exit: 0' <<<"$out"; echo $?)"
+
 echo "FYERS is the feed (no Dhan), sign-in arrives after two polls:"
 out="$(run_case fyers 0 2 0905)"
 check "waits for the sign-in" "$(test "$(grep -c '^sleep' <<<"$out")" = 2; echo $?)"

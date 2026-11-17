@@ -204,6 +204,17 @@ DOW="$(date +%u)"
 # --- 1. credentials ----------------------------------------------------------
 load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
 
+# The live feed when Dhan is not the day's feed: fyers (a FYERS sign-in by hand
+# every morning, 100 symbols) or angel (Angel One signs in by itself with a PIN
+# and a TOTP code, 1,000 symbols). MARKET_OPEN_FEED in .env; the owner chose
+# Angel on 18 Nov 2026, with FYERS as the backup: a silent Angel after the open
+# hands over to FYERS (step 6).
+LIVE_FEED="$(printf '%s' "${MARKET_OPEN_FEED:-fyers}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+case "$LIVE_FEED" in
+  fyers|angel) ;;
+  *) warn "MARKET_OPEN_FEED='$LIVE_FEED' is neither fyers nor angel — FYERS is the feed"; LIVE_FEED=fyers ;;
+esac
+
 # --- 1b. not a second time under live runs ------------------------------------
 # This job restarts the API and the feeds. At 08:45 nothing is running; once
 # the session is under way, a second run would restart them under the day's
@@ -664,6 +675,12 @@ fyers_gate() {  # $1 = 1 when Dhan is the day's feed
     notify "AlgoTrading" "FYERS is not signed in. Strategies start on Dhan without it; sign in when you can so the backup feed is ready."
     return 0
   fi
+  # Angel One signs in by itself, so FYERS is the backup and the option chain only.
+  if [ "${LIVE_FEED:-fyers}" = angel ]; then
+    say "  not waiting for FYERS: Angel One is today's feed (it signs in by itself) and every run is paper"
+    notify "AlgoTrading" "FYERS is not signed in. Strategies start on Angel One without it; sign in when you can for the option chain and the backup feed."
+    return 0
+  fi
   wait_for_fyers
 }
 # <<< fyers-gate
@@ -699,7 +716,7 @@ start_session_keeper() {
   [ -n "$expected" ] || return 0
   if command -v setsid >/dev/null 2>&1; then set -- setsid; else set --; fi
   KEEPER_WAIT_PID="$$" KEEPER_EXPECTED="$expected" KEEPER_DAY_STATE="$DAY_STATE" \
-    KEEPER_FYERS_FEED="$([ "$DHAN_PRIMARY" = 1 ] && echo 0 || echo 1)" \
+    KEEPER_FYERS_FEED="$([ "$DHAN_PRIMARY" = 1 ] && echo 0 || echo 1)" KEEPER_FEED="$LIVE_FEED" \
     nohup "$@" "$REPO_ROOT/scripts/session-keeper.sh" </dev/null >/dev/null 2>&1 &
   say "session keeper started (pid $!): it watches the feed and the plan's runs from the end of this job until 15:25 IST — logs/session-keeper.log"
 }
@@ -715,7 +732,7 @@ fi
 # is seeing which strategies would be deployed, into which accounts, before a
 # morning proves it the hard way.
 if [ "$DRY_RUN" = 1 ]; then
-  say "dry run: would start the ingestor and the chain poller; the plan follows"
+  say "dry run: would start the $([ "$LIVE_FEED" = angel ] && echo 'Angel One feed' || echo 'ingestor (FYERS)') and the chain poller; the plan follows"
 elif [ "$REDEPLOY_ONLY" = 1 ]; then
   say "redeploy only: no feed is stopped or started and the feed check is skipped; the plan follows"
 else
@@ -725,6 +742,7 @@ else
 # would sit deaf all day while the API reports it healthy. Stop first — a
 # stop with nothing running is a no-op — then start with today's token.
 stop_daemon "tick ingestor" "/api/Ingestor/stop"
+stop_daemon "Angel One feed" "/api/Feeds/angel/stop"
 stop_daemon "chain poller" "/api/OptionChain/poller/stop"
 
 # Last week's weekly options are still on the recording list, and FYERS answers
@@ -773,8 +791,20 @@ start_fyers_feed() {
   start_daemon "chain poller ($CHAIN_UNDERLYINGS)" "/api/OptionChain/poller/start"
 }
 
+start_angel_feed() {
+  start_daemon "Angel One feed" "/api/Feeds/angel/start"
+  # The option chain is FYERS's REST poller: it needs the day's FYERS sign-in.
+  if connected; then
+    start_daemon "chain poller ($CHAIN_UNDERLYINGS)" "/api/OptionChain/poller/start"
+  else
+    say "  chain poller not started: it reads FYERS, which is not signed in — start it from Data once signed in"
+  fi
+}
+
 if [ "$DHAN_PRIMARY" = 1 ]; then
   say "Dhan is today's feed; the FYERS feed and chain poller stay off as the backup"
+elif [ "$LIVE_FEED" = angel ]; then
+  start_angel_feed
 else
   start_fyers_feed
 fi
@@ -821,8 +851,9 @@ stop_started_feeds() {  # on a probable holiday: what this job started is not le
     say "  stopped the Dhan feed and chain recorder this job started"
   else
     api_post /api/Ingestor/stop '{}' >/dev/null 2>&1 || true
+    api_post /api/Feeds/angel/stop '{}' >/dev/null 2>&1 || true
     api_post /api/OptionChain/poller/stop '{}' >/dev/null 2>&1 || true
-    say "  stopped the FYERS feed and chain poller this job started"
+    say "  stopped the live feed and chain poller this job started"
   fi
 }
 
@@ -847,6 +878,27 @@ if [ "$FEED_VERDICT" = fail ] && [ "$DHAN_PRIMARY" = 1 ]; then
     fyers_try_refresh || wait_for_fyers
   fi
   # The wait may have ended on Dhan signing in, which started its feed, and only one feed runs.
+  if [ "$DHAN_PRIMARY" = 1 ]; then
+    FEED_LABEL="(Dhan) "
+  else
+    start_fyers_feed
+    FEED_LABEL="(FYERS) "
+  fi
+  sleep 90
+  check_feed "$FEED_LABEL"
+fi
+
+# The backup for Angel One: no price since the open, so FYERS takes over (it
+# needs the day's FYERS sign-in, waited for here as on a FYERS morning).
+if [ "$FEED_VERDICT" = fail ] && [ "$DHAN_PRIMARY" != 1 ] && [ "$LIVE_FEED" = angel ]; then
+  warn "the Angel One feed delivered no prices — switching to the FYERS feed"
+  notify "AlgoTrading" "Angel One delivered no prices after the open. Switching to FYERS: sign in to FYERS if you have not."
+  stop_daemon "Angel One feed" "/api/Feeds/angel/stop"
+  LIVE_FEED=fyers
+  if ! connected; then
+    say "  the FYERS feed needs a FYERS sign-in first"
+    fyers_try_refresh || wait_for_fyers
+  fi
   if [ "$DHAN_PRIMARY" = 1 ]; then
     FEED_LABEL="(Dhan) "
   else
