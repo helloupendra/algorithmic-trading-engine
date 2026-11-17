@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   CandlestickSeries,
   createChart,
@@ -111,12 +112,18 @@ function StoryChart({
   marks,
   fitKey,
   height,
+  range,
+  overlay,
 }: {
   candles: Bar[]
   levels: Level[]
   marks: Mark[]
   fitKey: string
   height: number
+  /** The bars (logical indexes) shown when `fitKey` changes; all of them when absent. */
+  range?: { from: number; to: number }
+  /** A note laid over the top-left corner (the replay's clock). */
+  overlay?: ReactNode
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLDivElement | null>(null)
@@ -127,6 +134,9 @@ function StoryChart({
   const levelPricesRef = useRef<number[]>([])
   levelPricesRef.current = levels.map((l) => l.price).filter((p) => Number.isFinite(p))
   const fittedRef = useRef<string | null>(null)
+  // The range to show, read when `fitKey` changes (not on every refresh, which would undo the trader's zoom).
+  const rangeRef = useRef(range)
+  rangeRef.current = range
   const [placed, setPlaced] = useState<Placed[]>([])
   const { theme } = useTheme()
 
@@ -188,7 +198,12 @@ function StoryChart({
         }
       },
     })
-    chart.applyOptions({ rightPriceScale: { scaleMargins: { top: 0.14, bottom: 0.1 } } })
+    // The view holds the whole session's width: new candles (live, or a replay's) fill it from the left
+    // instead of sliding the chart under the trader's eyes.
+    chart.applyOptions({
+      rightPriceScale: { scaleMargins: { top: 0.14, bottom: 0.1 } },
+      timeScale: { shiftVisibleRangeOnNewBar: false },
+    })
     chartRef.current = chart
     seriesRef.current = series
     const observer = new ResizeObserver(() => {
@@ -222,7 +237,8 @@ function StoryChart({
     )
     if (fittedRef.current !== fitKey && candles.length > 0) {
       fittedRef.current = fitKey
-      chart.timeScale().fitContent()
+      if (rangeRef.current) chart.timeScale().setVisibleLogicalRange(rangeRef.current)
+      else chart.timeScale().fitContent()
     }
     requestAnimationFrame(() => layoutRef.current())
   }, [candles, fitKey, theme])
@@ -271,6 +287,7 @@ function StoryChart({
         </div>
       ))}
       {candles.length === 0 && <p className="story-chart__empty">No candles recorded for this day yet.</p>}
+      {overlay && <div className="story-chart__overlay">{overlay}</div>}
     </div>
   )
 }
@@ -322,29 +339,79 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
     () => (dailyQ.data ?? []).map((c) => ({ t: Date.parse(c.timestampUtc), o: c.open, h: c.high, l: c.low, c: c.close })),
     [dailyQ.data],
   )
-  const entries = useMemo(() => trendRiderEntries(view.activity ?? []), [view.activity])
-  const trades = useMemo(() => tradeMarks(view.positions ?? [], view.activity ?? [], bars1), [view.positions, view.activity, bars1])
-  const spot = view.spotLtp ?? bars1.at(-1)?.c ?? null
-
-  const plans: OpenPlan[] = useMemo(() => {
-    const out: OpenPlan[] = []
-    for (const trade of trades) {
-      if (!trade.open) continue
-      const entry = entries.find((e) => e.groupId === trade.groupId)
-      if (!entry) continue
-      const since = bars1.filter((b) => b.t >= candleStart(entry.atMs, 1))
-      const plan = exitPlan(entry, since, spot)
-      if (plan) out.push({ trade, entry, plan })
-    }
-    return out
-  }, [trades, entries, bars1, spot])
-
-  // The day's levels: from the strategy's own signal when it has entered, else from the stored candles.
-  const latest = entries.at(-1) ?? null
   const prevSession = useMemo(() => {
     const before = daily.filter((b) => istDay(b.t) < day)
     return before.at(-1) ?? null
   }, [daily, day])
+
+  // The previous session's candles go before today's: V2 enters off yesterday's high and low.
+  const prevDay = prevSession ? istDay(prevSession.t) : null
+  const prevQ = useStoredCandles(prevDay ? spotSymbol : null, minutes === 1 ? '1' : '5', prevDay ?? undefined, prevDay ?? undefined)
+  const prevCandles = useMemo(
+    () =>
+      prevDay
+        ? foldSession((prevQ.data ?? []).map((c) => ({ t: Date.parse(c.timestampUtc), o: c.open, h: c.high, l: c.low, c: c.close })), prevDay, minutes)
+        : [],
+    [prevQ.data, prevDay, minutes],
+  )
+
+  const entries = useMemo(() => trendRiderEntries(view.activity ?? []), [view.activity])
+  const trades = useMemo(() => tradeMarks(view.positions ?? [], view.activity ?? [], bars1), [view.positions, view.activity, bars1])
+  const spot = view.spotLtp ?? bars1.at(-1)?.c ?? null
+
+  /* ---- the replay: the day again, candle by candle, after the market or any time */
+  const [replay, setReplay] = useState<{ idx: number; playing: boolean; speed: number } | null>(null)
+  // A new timeframe is a new grid of candles: the replay starts over.
+  useEffect(() => setReplay(null), [minutes])
+  useEffect(() => {
+    if (!replay?.playing) return
+    const id = window.setInterval(() => {
+      setReplay((r) => {
+        if (!r) return r
+        if (r.idx + 1 >= candles.length) return { ...r, idx: Math.max(0, candles.length - 1), playing: false }
+        return { ...r, idx: r.idx + 1 }
+      })
+    }, Math.max(60, 900 / replay.speed))
+    return () => window.clearInterval(id)
+  }, [replay?.playing, replay?.speed, candles.length])
+  // The replay's clock: the close of the candle it has reached.
+  const cursorMs = replay && candles.length > 0 ? candles[Math.min(replay.idx, candles.length - 1)].t + minutes * 60_000 : null
+
+  // The day as it stood at the cursor (or now, out of a replay).
+  const bars1At = useMemo(() => (cursorMs == null ? bars1 : bars1.filter((b) => b.t < cursorMs)), [bars1, cursorMs])
+  const spotAt = cursorMs == null ? spot : (bars1At.at(-1)?.c ?? null)
+  const tradesAt = useMemo(
+    () =>
+      cursorMs == null
+        ? trades
+        : trades
+            .filter((t) => t.entryMs < cursorMs)
+            .map((t) => (t.exitMs != null && t.exitMs < cursorMs ? t : { ...t, open: true, exitMs: null, exitPrice: null })),
+    [trades, cursorMs],
+  )
+  const shownToday = useMemo(() => (cursorMs == null ? candles : candles.filter((c) => c.t < cursorMs)), [candles, cursorMs])
+  const chartCandles = useMemo(() => [...prevCandles, ...shownToday], [prevCandles, shownToday])
+
+  const plansOf = useCallback(
+    (list: TradeMark[], bars: Bar[], spotNow: number | null): OpenPlan[] => {
+      const out: OpenPlan[] = []
+      for (const trade of list) {
+        if (!trade.open) continue
+        const entry = entries.find((e) => e.groupId === trade.groupId)
+        if (!entry) continue
+        const plan = exitPlan(entry, bars.filter((b) => b.t >= candleStart(entry.atMs, 1)), spotNow)
+        if (plan) out.push({ trade, entry, plan })
+      }
+      return out
+    },
+    [entries],
+  )
+  // Now: the positions table and the numbers on top. At the cursor: the chart and the rules panel.
+  const plans = useMemo(() => plansOf(trades, bars1, spot), [plansOf, trades, bars1, spot])
+  const plansAt = useMemo(() => (cursorMs == null ? plans : plansOf(tradesAt, bars1At, spotAt)), [cursorMs, plans, plansOf, tradesAt, bars1At, spotAt])
+
+  // The day's levels: from the strategy's own signal when it has entered, else from the stored candles.
+  const latest = entries.at(-1) ?? null
   const levels = {
     prevHigh: latest?.levels.prevHigh ?? prevSession?.h ?? null,
     prevLow: latest?.levels.prevLow ?? prevSession?.l ?? null,
@@ -365,21 +432,33 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
     '14:30',
     openTrades.filter((t) => t.manual).length,
   )
-  // The last closed candle at the strategy's 5-minute grid (live hands a forming one too).
+  // The last closed candle at the strategy's 5-minute grid (live hands a forming one too), at the cursor in a replay.
   const lastClosed = (() => {
     const five = foldSession(indexQ.data ?? [], day, 5)
-    const now = Date.now()
-    const done = live ? five.filter((c) => c.t + 5 * 60_000 <= now) : five
+    const now = cursorMs ?? Date.now()
+    const done = live || cursorMs != null ? five.filter((c) => c.t + 5 * 60_000 <= now) : five
     return done.at(-1) ?? null
   })()
   const check = v2Check(levels, lastClosed?.c ?? null)
+  // What the strategy was doing at the replay's clock.
+  const engineAt =
+    cursorMs == null
+      ? null
+      : engineStatus(
+          true,
+          plansAt.map((p) => p.plan),
+          tradesAt.filter((t) => t.open && !t.manual).length,
+          cursorMs,
+          '14:30',
+          tradesAt.filter((t) => t.open && t.manual).length,
+        )
 
   const chartLevels: Level[] = useMemo(() => {
     const out: Level[] = []
     if (levels.prevHigh != null) out.push({ price: levels.prevHigh, title: 'Yday high', kind: 'prev' })
     if (levels.prevLow != null) out.push({ price: levels.prevLow, title: 'Yday low', kind: 'prev' })
     if (levels.dayOpen != null) out.push({ price: levels.dayOpen, title: 'Day open', kind: 'open' })
-    for (const { plan } of plans) {
+    for (const { plan } of plansAt) {
       out.push({ price: plan.entry, title: 'Entry', kind: 'entry' })
       if (plan.stop != null) out.push({ price: plan.stop, title: plan.activeKind === 'stop' ? 'Stop (active)' : 'Stop', kind: 'stop' })
       if (plan.armed && plan.trail != null) out.push({ price: plan.trail, title: 'Trail (active)', kind: 'trail' })
@@ -387,11 +466,11 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
       if (plan.armed) out.push({ price: plan.bestLevel, title: 'Best', kind: 'best' })
     }
     return out
-  }, [levels.prevHigh, levels.prevLow, levels.dayOpen, plans])
+  }, [levels.prevHigh, levels.prevLow, levels.dayOpen, plansAt])
 
   const indexMarks: Mark[] = useMemo(() => {
     const out: Mark[] = []
-    for (const t of trades) {
+    for (const t of tradesAt) {
       if (t.indexAtEntry != null) {
         out.push({
           time: candleStart(t.entryMs, minutes),
@@ -414,7 +493,16 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
       }
     }
     return out
-  }, [trades, minutes])
+  }, [tradesAt, minutes])
+
+  // The chart shows the whole session's width (so a replay fills it left to right), with yesterday before it:
+  // all of it at 5 minutes, its last hour and a half at 1 minute.
+  const sessionBars = minutes === 5 ? 75 : 375
+  const keepPrev = minutes === 5 ? prevCandles.length : Math.min(90, prevCandles.length)
+  const chartRange = {
+    from: Math.max(0, prevCandles.length - keepPrev),
+    to: prevCandles.length + Math.max(candles.length, sessionBars) + 2,
+  }
 
   const close = useClosePositions()
   const exitTrade = (t: TradeMark) => {
@@ -453,25 +541,90 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
       {/* ------------------------------------------------ chart and rules */}
       <div className="story__grid">
         <Panel
-          title={`${view.underlying ?? 'Index'} · ${minutes}-minute · ${day}`}
+          title={`${view.underlying ?? 'Index'} · ${minutes}-minute · ${prevDay ? 'yesterday + ' : ''}${day}`}
           actions={
-            <div className="seg" role="group" aria-label="Timeframe">
-              {([1, 5] as const).map((m) => (
+            <div className="story__controls">
+              {replay ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    onClick={() =>
+                      setReplay((r) => r && { ...r, playing: !r.playing, idx: !r.playing && r.idx >= candles.length - 1 ? 0 : r.idx })
+                    }
+                  >
+                    {replay.playing ? '❚❚ Pause' : '▶ Play'}
+                  </button>
+                  <div className="seg" role="group" aria-label="Replay speed">
+                    {[1, 2, 5, 10].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`seg__btn${replay.speed === s ? ' is-active' : ''}`}
+                        aria-pressed={replay.speed === s}
+                        onClick={() => setReplay((r) => r && { ...r, speed: s })}
+                      >
+                        {s}×
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    className="story__scrub"
+                    type="range"
+                    min={0}
+                    max={Math.max(0, candles.length - 1)}
+                    value={Math.min(replay.idx, Math.max(0, candles.length - 1))}
+                    onChange={(e) => setReplay((r) => r && { ...r, idx: Number(e.target.value), playing: false })}
+                    aria-label="Replay time"
+                  />
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setReplay(null)}>
+                    Live
+                  </button>
+                </>
+              ) : (
                 <button
-                  key={m}
                   type="button"
-                  className={`seg__btn${minutes === m ? ' is-active' : ''}`}
-                  aria-pressed={minutes === m}
-                  onClick={() => setMinutes(m)}
+                  className="btn btn--sm"
+                  disabled={candles.length === 0}
+                  onClick={() => setReplay({ idx: 0, playing: true, speed: 2 })}
+                  title="Play the day again, candle by candle: the trades, the stop and the trail as they happened"
                 >
-                  {m}m
+                  ▶ Replay the day
                 </button>
-              ))}
+              )}
+              <div className="seg" role="group" aria-label="Timeframe">
+                {([1, 5] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`seg__btn${minutes === m ? ' is-active' : ''}`}
+                    aria-pressed={minutes === m}
+                    onClick={() => setMinutes(m)}
+                  >
+                    {m}m
+                  </button>
+                ))}
+              </div>
             </div>
           }
         >
           {indexQ.isError && <InlineError error={indexQ.error} />}
-          <StoryChart candles={candles} levels={chartLevels} marks={indexMarks} fitKey={`${spotSymbol}|${day}|${minutes}`} height={460} />
+          <StoryChart
+            candles={chartCandles}
+            levels={chartLevels}
+            marks={indexMarks}
+            fitKey={`${spotSymbol}|${day}|${minutes}|${replay ? 'replay' : 'live'}|${prevCandles.length > 0}`}
+            range={chartRange}
+            height={460}
+            overlay={
+              cursorMs != null ? (
+                <>
+                  <Badge tone="accent">Replay · {istHm(cursorMs)} IST</Badge>{' '}
+                  {engineAt && <span className="story__overlay-state">{engineAt.label}{engineAt.detail ? ` · ${engineAt.detail}` : ''}</span>}
+                </>
+              ) : undefined
+            }
+          />
           <ul className="story__legend">
             <li><i className="lg lg--prev" /> Yesterday's high / low</li>
             <li><i className="lg lg--open" /> Day open</li>
@@ -516,13 +669,13 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
                 <p className="story__side">
                   {check.side === 'BUY' ? <Badge tone="pos">Call side is live</Badge> : check.side === 'SELL' ? <Badge tone="neg">Put side is live</Badge> : <Badge>No side yet</Badge>}
                 </p>
-                {plans.map(({ trade, plan }) => (
+                {plansAt.map(({ trade, plan }) => (
                   <div key={trade.groupId} className="story__plan">
                     <h3>{trade.label}</h3>
                     <table className="story__kv">
                       <tbody>
                         <tr><th>Entry (index)</th><td className="num">{p1(plan.entry)}</td></tr>
-                        <tr className="neg"><th>Stop</th><td className="num">{p1(plan.stop)} {plan.stop != null && spot != null ? <span className="faint">({pts(plan.direction === 'BUY' ? spot - plan.stop : plan.stop - spot)} away)</span> : null}</td></tr>
+                        <tr className="neg"><th>Stop</th><td className="num">{p1(plan.stop)} {plan.stop != null && spotAt != null ? <span className="faint">({pts(plan.direction === 'BUY' ? spotAt - plan.stop : plan.stop - spotAt)} away)</span> : null}</td></tr>
                         <tr><th>Trail arms at</th><td className="num">{p1(plan.armAt)} {plan.armed ? <Badge tone="pos">armed</Badge> : null}</td></tr>
                         <tr><th>Best so far</th><td className="num">{p1(plan.bestLevel)} <span className="faint">({pts(plan.best)})</span></td></tr>
                         <tr className="warn"><th>Trail sells at</th><td className="num">{plan.trail != null ? p1(plan.trail) : 'not armed yet'}</td></tr>
@@ -534,7 +687,7 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
                     </table>
                   </div>
                 ))}
-                {plans.length > 0 && (
+                {plansAt.length > 0 && (
                   <p className="small-note faint">
                     Best, trail and room are worked out here from 1-minute highs and lows; the strategy checks every tick, so its own figures can differ by a few points.
                   </p>

@@ -96,6 +96,40 @@
 .story-label--loss { border-color: var(--neg); }
 .story-label--loss b { color: var(--neg); }
 
+.story-chart__overlay {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  pointer-events: none;
+  font-size: 12px;
+}
+
+.story__overlay-state {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.story__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.story__scrub {
+  width: 140px;
+  accent-color: var(--accent);
+}
+
 .story-chart__empty {
   position: absolute;
   inset: 0;

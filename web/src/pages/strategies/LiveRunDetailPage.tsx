@@ -217,7 +217,7 @@ export function LiveRunDetailPage() {
       {/* Only once the view is here: the subtitle above already says "Loading
           run…", and a card with nothing to go on read as a stopped run. */}
       {view && (
-        <RunCard strategy={strategy} runId={runId} run={null} exit={null} canControl={canControl}>
+        <RunCard strategy={strategy} runId={runId} run={null} exit={null} canControl={canControl} storyLink={false}>
           <OrdersDisclosure runId={runId} isActive={isActive} lotSize={view.lotSize} />
         </RunCard>
       )}

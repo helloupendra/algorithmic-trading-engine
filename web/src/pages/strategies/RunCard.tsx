@@ -17,6 +17,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import {
   useClosePositions,
   useSetCarryForward,
@@ -668,6 +669,8 @@ export interface RunCardProps {
   dismissTitle?: string
   /** Extra disclosures rendered after Activity and Runner output (the order ledger). */
   children?: ReactNode
+  /** A "Chart & story" link to the run's own page; off on that page itself. */
+  storyLink?: boolean
 }
 
 export function RunCard({
@@ -680,6 +683,7 @@ export function RunCard({
   onDismiss,
   dismissTitle,
   children,
+  storyLink = true,
 }: RunCardProps) {
   const live = useStrategyLive(runId, true)
   const stop = useStopStrategy()
@@ -784,6 +788,11 @@ export function RunCard({
           <span className="faint">{when.length > 0 ? '· ' : ''}run #{runId}</span>
         </span>
         <div className="run-card__actions">
+          {storyLink && !view?.isManualBook && (
+            <Link className="btn btn--sm" to={`/trade/runs/${runId}`} title="The day's chart with every BUY and SELL, the levels, the exits, and a replay">
+              Chart &amp; story
+            </Link>
+          )}
           {!known ? null : isActive ? (
             mayControl && allowStop && (
               <button
