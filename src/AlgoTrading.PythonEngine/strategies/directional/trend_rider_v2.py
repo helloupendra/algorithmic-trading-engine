@@ -16,7 +16,15 @@ Trend Rider V2: TrendRider with the three changes the owner asked for on 16-17 N
 
 Both exits are checked on every call, which live is every tick (the spot), so they act within seconds;
 TrendRider's own exit (a candle closing back across the day's open) and the run's square-off still
-apply. Everything else is TrendRider's, except that two of its day filters are off by default: "today's range is
+apply.
+
+  4. **Sold at 15:15, live as in the lab** (`square_off_ist`, from 20 Nov 2026 on the owner's word). Every
+     backtest squares off at 15:15, but a live run held its position until the platform stopped it at the
+     15:30 close (18 and 19 Nov 2026), so live and the lab could end the same trade at different prices.
+     "auto" (the default) sells on the first tick at or after 15:15 on NSE and BSE and adds nothing on MCX
+     (TrendRiderV2BE), whose run is squared off at its own close; "HH:MM" sets another time, "none" turns
+     it off, and a run's own `index_exits.exit_after_ist` wins. In a backtest the engine's 15:15 square-off
+     acts first, so the backtest's trades do not change. Everything else is TrendRider's, except that two of its day filters are off by default: "today's range is
 still small" (`min_range_frac` 0) and "yesterday must have been narrow" (`max_prev_range` 0). The rest are kept: the
 after-a-wide-day and gap-against filters, one position at a time, re-entry only on a new
 day extreme, up to `max_entries` a day. Setting `index_stop_adr` or `trail_arm_adr` to 0 turns that exit
@@ -30,7 +38,7 @@ docs/strategies/TrendRiderV2.md, Limitations.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from strategies.base_strategy import BarFrame, StrategyInput, StrategySignal
 from strategies.directional.trend_rider import TrendRiderStrategy, _compact
@@ -63,7 +71,14 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
         "index_stop_adr": 0.5,         # 0 turns the index stop off
         "trail_arm_adr": 0.5,          # 0 turns the trailing exit off
         "trail_giveback_adr": 0.35,
+        # When an open position is sold whatever it shows: "auto" is 15:15 on NSE/BSE (the backtest's square-off) and
+        # nothing on MCX; "HH:MM" sets it; "none" turns it off. Live runs had held to the 15:30 close (18-19 Nov 2026).
+        "square_off_ist": "auto",
     }
+
+    #: The "auto" square-off of a market's session: NSE and BSE sell at 15:15, as every backtest does. MCX runs keep
+    #: the platform's square-off at their own close (TrendRiderV2BE reads candles to 23:55 there).
+    AUTO_SQUARE_OFF = {"nse": "15:15", "mcx": None}
 
     def __init__(self, params: Dict[str, Any] = None):
         params = dict(params or {})
@@ -82,12 +97,39 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
             raise ValueError("index_stop_adr, trail_arm_adr and trail_giveback_adr cannot be negative")
         if self.trail_arm_adr and not self.trail_giveback_adr:
             raise ValueError("trail_giveback_adr must be above 0 when the trailing exit is on")
-        # V2's own stop and trail, with anything the run's "index_exits" sets on top (it wins where both speak).
+        # The square-off time: "auto" until the market is known (V2 itself reads only the NSE session).
+        self.square_off_param = self._square_off_param(p.get("square_off_ist"))
+        self.square_off_from_run = bool(self.index_exits is not None and self.index_exits.exit_after_ist)
+        # V2's own stop, trail and square-off time, with anything the run's "index_exits" sets on top (it wins where
+        # both speak).
         rules = IndexExitRules(stop_adr=self.index_stop_adr, trail_arm_adr=self.trail_arm_adr,
-                               trail_giveback_adr=self.trail_giveback_adr)
+                               trail_giveback_adr=self.trail_giveback_adr,
+                               exit_after_ist=self.square_off_for("nse"))
         if self.index_exits is not None:
             rules = rules.merged(**{k: v for k, v in self.index_exits.__dict__.items() if v})
         self.index_exits = rules if rules.any_rule else None
+
+    # ----------------------------------------------------------- square-off ---
+    @staticmethod
+    def _square_off_param(value: Any) -> str:
+        """"auto", "none" or an HH:MM, from the run's square_off_ist."""
+        text = str(value if value is not None else "auto").strip().lower()
+        if text in ("", "auto"):
+            return "auto"
+        if text in ("none", "null", "off", "false"):
+            return "none"
+        try:
+            return datetime.strptime(text, "%H:%M").strftime("%H:%M")
+        except ValueError as ex:
+            raise ValueError(f"square_off_ist must be auto, none or HH:MM, got {value!r}") from ex
+
+    def square_off_for(self, market: str) -> Optional[str]:
+        """The time an open position is sold on this market's session, or None for no such exit."""
+        if self.square_off_param == "none":
+            return None
+        if self.square_off_param == "auto":
+            return self.AUTO_SQUARE_OFF.get(market)
+        return self.square_off_param
 
     # ---------------------------------------------------------------- entry ---
     def _enter(self, state: Dict[str, Any], inp: StrategyInput, at: datetime, bar: BarFrame,

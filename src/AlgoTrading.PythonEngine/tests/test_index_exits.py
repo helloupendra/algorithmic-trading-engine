@@ -34,10 +34,12 @@ class ParseTest(unittest.TestCase):
         for cls in (TrendRiderStrategy, TrendRiderV2Strategy):
             defaults = json.loads(json.dumps(cls.default_params))
             as_text = {k: ("null" if v is None else json.dumps(v) if isinstance(v, dict) else v) for k, v in defaults.items()}
+            # V2 also sells at 15:15 (square_off_ist "auto" on NSE), as every backtest does (20 Nov 2026).
+            expected = {**stop_and_trail, "exit_after_ist": "15:15"} if cls is TrendRiderV2Strategy else stop_and_trail
             for params in (defaults, as_text):
                 strategy = cls(params)
                 self.assertEqual(strategy.bar_minutes, 5)
-                self.assertEqual(strategy.index_exits.describe(), stop_and_trail, cls.__name__)
+                self.assertEqual(strategy.index_exits.describe(), expected, cls.__name__)
         # "null" (or None) switches TrendRider's default stop and trail off.
         for off in ("null", None):
             self.assertIsNone(TrendRiderStrategy({"index_exits": off}).index_exits)

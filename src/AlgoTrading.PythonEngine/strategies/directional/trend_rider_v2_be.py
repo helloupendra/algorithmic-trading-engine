@@ -227,6 +227,10 @@ class TrendRiderV2BEStrategy(TrendRiderV2Strategy):
                     "which has no share to buy. Run it with instrument_kind options, or with equity on a stock.")
         self.market = market
         self._apply(SESSIONS[market])
+        # The square-off time follows the market (15:15 on NSE/BSE, none on MCX) unless the run named one.
+        if self.index_exits is not None and not self.square_off_from_run:
+            rules = self.index_exits.merged(exit_after_ist=self.square_off_for(market))
+            self.index_exits = rules if rules.any_rule else None
 
     @staticmethod
     def _price_symbol(inp: StrategyInput, resolution: str) -> Optional[str]:

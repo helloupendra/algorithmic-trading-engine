@@ -73,7 +73,10 @@ The first that fires wins:
 3. **Index trail:** the best move in favour has reached `trail_arm_adr` × ADR, and the index has given
    back `trail_giveback_adr` × ADR from that best.
 4. **The day's open gives way:** TrendRider's exit, a candle closing back across the open.
-5. **End of day:** the run's square-off.
+5. **15:15:** the first tick at or after `square_off_ist` (15:15 by default) sells, live as in a backtest.
+   Before 20 Nov 2026 a live run held until the platform stopped it at the 15:30 close, while every backtest
+   sold at 15:15 (on 19 Nov the same call was ₹241.35 at 15:14 and sold at ₹240.05 at 15:30).
+6. **End of day:** the run's square-off.
 
 ## Parameters
 
@@ -88,6 +91,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 | `index_stop_adr` | 0.5 | Index move against the entry, × ADR, that sells; 0 turns it off | Fewer stops, bigger losses | Tighter; more whipsaw exits |
 | `trail_arm_adr` | 0.5 | Move in favour, × ADR, after which the trail is live; 0 turns it off | Protects only bigger runs | Protects smaller runs, sells more trends early |
 | `trail_giveback_adr` | 0.35 | Give-back from the best, × ADR, that sells once armed | Holds through deeper pullbacks | Sells sooner |
+| `square_off_ist` | `"auto"` | When an open position is sold whatever it shows: `auto` is 15:15 on NSE/BSE (none on MCX, see TrendRiderV2BE), `HH:MM` sets it, `none` turns it off. A run's `index_exits.exit_after_ist` wins. A backtest's own 15:15 square-off acts first, so its trades are the same | Holds closer to the close | Sells earlier in the afternoon |
 | `index_exits` | none | More index exits on top of the three above (`supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`; see TrendRider). A `stop_adr` or trail set here replaces V2's own | — | — |
 
 ## Worked example

@@ -57,11 +57,15 @@ declared none).
   15:30. An `HH:MM` set by the run wins in either market.
 - **Exits:** the stop, breakeven step and trail on every call (live, every tick of the price); the day-open exit on
   a closed candle.
-- **End of day:** the strategy carries nothing overnight and has no square-off of its own.
-  - Live, `MarketHoursService` stops the run at its market's close (`MarketCloseRules`): 15:30 for NSE and BSE
-    (15:45 from 7 Dec 2026, see [the specs' note](README.md)), and for MCX 23:30 or 23:55 as above
-    ("MCX closed (23:55 IST)").
-  - A replay squares off at its `eod_square_off_ist`, 15:15 by default.
+- **End of day:** the strategy carries nothing overnight.
+  - On NSE and BSE it sells an open position on the first tick at or after `square_off_ist` (V2's, `auto` = 15:15;
+    from 20 Nov 2026), so a live run ends the day where a replay does. Before that a live run held until the close.
+  - On MCX `auto` adds no time exit: `MarketHoursService` stops the run at its market's close (`MarketCloseRules`),
+    23:30 or 23:55 as above ("MCX closed (23:55 IST)"). An `HH:MM` set by the run applies on either market.
+  - NSE and BSE close at 15:30 (15:45 from 7 Dec 2026, see [the specs' note](README.md)); the platform stops a live
+    run there.
+  - A replay squares off at its `eod_square_off_ist`, 15:15 by default; that comes first in a replay, so the
+    time exit changes no backtest trade.
 
 ## Entry
 
@@ -118,7 +122,7 @@ The first that fires wins:
    on the same call, so those keep their own reasons when they fire together.
 5. **The day's open gives way:** a candle closes back across $O_d$ (the reason now names the run's underlying,
    where TrendRider always wrote "NIFTY").
-6. **End of day:** the market close live, `eod_square_off_ist` in a replay.
+6. **End of day:** `square_off_ist` (15:15 on NSE/BSE by default, none on MCX) and then the market close live; `eod_square_off_ist` in a replay.
 7. **The run's stop button.**
 
 ## Parameters

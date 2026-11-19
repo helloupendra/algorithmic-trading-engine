@@ -388,7 +388,8 @@ class V2UnchangedTest(unittest.TestCase):
     def kind(signal_type, reason):
         if signal_type == "OPEN_GROUP":
             return signal_type
-        return next((k for k in ("index stop", "index trail", "breakeven stop", "back across the day's open") if k in reason), reason)
+        return next((k for k in ("index stop", "index trail", "breakeven stop", "back across the day's open", "time exit")
+                     if k in reason), reason)
 
     def test_breakeven_off_decides_as_v2(self):
         kinds = set()
@@ -398,8 +399,9 @@ class V2UnchangedTest(unittest.TestCase):
             self.assertEqual(be, v2)
             self.assertEqual(be_skips, v2_skips)
             kinds |= {self.kind(t, r) for _, t, _, _, r in v2}
-        # The sample exercises the entries and every V2 exit.
-        self.assertEqual(kinds, {"OPEN_GROUP", "index stop", "index trail", "back across the day's open"})
+        # The sample exercises the entries and every V2 exit, the 15:15 square-off (square_off_ist) included: this
+        # replay has no engine square-off, so a position still open at 15:15 is sold by the strategy itself.
+        self.assertEqual(kinds, {"OPEN_GROUP", "index stop", "index trail", "back across the day's open", "time exit"})
 
     def test_the_default_differs_from_v2_first_at_a_breakeven_exit(self):
         v2, _ = self.decisions(TrendRiderV2Strategy, {}, 2)
@@ -444,6 +446,58 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(entry["defaultParameters"]["instrument_kind"], "options")
         self.assertEqual([c["key"] for c in entry["contractRequirements"]], ["buy_ce", "buy_pe"])
         self.assertNotRegex(entry["legsSummary"], r"(?i)\bsells?\b")    # the library files it under option buying
+
+
+class SquareOffTest(BreakevenTest):
+    """square_off_ist (20 Nov 2026): live sells at 15:15 on NSE/BSE as every backtest does; MCX keeps its own close."""
+
+    def test_auto_is_1515_on_nse_and_nothing_on_mcx(self):
+        self.assertEqual(TrendRiderV2Strategy().index_exits.exit_after_ist, "15:15")
+        self.assertEqual(TrendRiderV2BEStrategy({"underlying": "NIFTY"}).index_exits.exit_after_ist, "15:15")
+        self.assertEqual(TrendRiderV2BEStrategy({"underlying": "HDFCBANK"}).index_exits.exit_after_ist, "15:15")
+        self.assertIsNone(TrendRiderV2BEStrategy({"underlying": "CRUDEOILM"}).index_exits.exit_after_ist)
+        # A run whose market is known only at its first call: NSE's until then, then the market's own.
+        late = TrendRiderV2BEStrategy()
+        self.assertEqual(late.index_exits.exit_after_ist, "15:15")
+        late._use_market("mcx", "CRUDEOIL")
+        self.assertIsNone(late.index_exits.exit_after_ist)
+        self.assertEqual(late.index_exits.breakeven_adr, 0.25)       # the rest of the rules are kept
+
+    def test_a_set_time_or_none_and_the_runs_own_index_exit_wins(self):
+        self.assertEqual(TrendRiderV2Strategy({"square_off_ist": "15:00"}).index_exits.exit_after_ist, "15:00")
+        self.assertIsNone(TrendRiderV2Strategy({"square_off_ist": "none"}).index_exits.exit_after_ist)
+        self.assertEqual(TrendRiderV2BEStrategy({"underlying": "CRUDEOILM", "square_off_ist": "23:00"})
+                         .index_exits.exit_after_ist, "23:00")
+        for underlying in ("NIFTY", "CRUDEOILM"):
+            s = TrendRiderV2BEStrategy({"underlying": underlying, "index_exits": {"exit_after_ist": "14:45"}})
+            self.assertEqual(s.index_exits.exit_after_ist, "14:45", underlying)
+        for bad in ("3pm", "25:00", 1515):
+            with self.assertRaises(ValueError, msg=bad):
+                TrendRiderV2Strategy({"square_off_ist": bad})
+
+    def test_sells_on_the_first_tick_at_1515(self):
+        for cls in (TrendRiderV2Strategy, TrendRiderV2BEStrategy):
+            with self.subTest(strategy=cls.__name__):
+                self.setUp()
+                strategy = cls()
+                state = strategy.initialize_state()
+                _, frame = self.until_entry(strategy, state)
+                spot = frame.close + 1                     # a small move: no stop, trail or breakeven
+                at = lambda hh, mm, ss: self.days[11].replace(hour=hh, minute=mm, second=ss).astimezone(timezone.utc).isoformat()
+                self.assertEqual(strategy.on_bar(state, self.inp(state, spot, at(15, 14, 59))), [])
+                self.assertIsNotNone(state["position"])
+                out = strategy.on_bar(state, self.inp(state, spot, at(15, 15, 0)))
+                self.assertEqual(out[0].signal_type, "CLOSE_GROUP")
+                self.assertIn("time exit: 15:15 IST is at or after 15:15", out[0].reason)
+                self.assertIsNone(state["position"])
+
+    def test_off_with_none_holds_to_the_close(self):
+        strategy = TrendRiderV2Strategy({"square_off_ist": "none"})
+        state = strategy.initialize_state()
+        _, frame = self.until_entry(strategy, state)
+        stamp = self.days[11].replace(hour=15, minute=29, second=0).astimezone(timezone.utc).isoformat()
+        self.assertEqual(strategy.on_bar(state, self.inp(state, frame.close + 1, stamp)), [])
+        self.assertIsNotNone(state["position"])
 
 
 if __name__ == "__main__":
