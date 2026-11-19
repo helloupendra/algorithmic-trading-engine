@@ -832,9 +832,15 @@ class Watcher:
         head = f"  <b>{esc(side)}</b> {esc(label)}"
         if closing:
             pnl = float(position.get("pnl") or 0)
+            # The sell price is the closing order's fill (exitPrice). A closed leg has no live mark, so its "ltp" is
+            # null: until 19 Nov 2026 every close alert read "177.65 -> None". The mark is only a fallback for an
+            # API that sends no exitPrice, and a dash says plainly when neither is known.
+            sold = position.get("exitPrice")
+            if sold is None:
+                sold = position.get("ltp")
             body = (
                 f"     {esc(qty)} · {esc(position.get('entryPrice'))} -> "
-                f"<b>{esc(position.get('ltp'))}</b> · {esc(money(pnl))}"
+                f"<b>{esc(sold if sold is not None else '—')}</b> · {esc(money(pnl))}"
             )
         else:
             body = (
@@ -923,7 +929,7 @@ class Watcher:
         lines += [
             f"Run P&amp;L: <b>{esc(money(pnl.get('total')))}</b>"
             f"  (realized {esc(money(pnl.get('realized')))})",
-            f"Open now:  {open_legs}   ·   spot {esc(live.get('spotLtp'))}",
+            f"Open now:  {open_legs}   ·   spot {esc(live.get('spotLtp') if live.get('spotLtp') is not None else '—')}",
             f"Run #{run.get('runId')} · {esc(ist(datetime.now(timezone.utc).isoformat()))}",
         ]
 

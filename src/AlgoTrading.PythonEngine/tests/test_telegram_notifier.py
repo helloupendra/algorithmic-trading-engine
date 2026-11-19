@@ -183,6 +183,24 @@ class WatcherTransitionTests(unittest.TestCase):
         self.assertIn("1 leg closed", events[0]["title"])
         self.assertIn("250", events[0]["message"])
 
+    def test_a_closed_leg_shows_its_sell_price_not_none(self):
+        # 18-19 Nov 2026: every close read "177.65 -> None" — a closed leg's ltp is null; its fill is exitPrice.
+        cases = (({"exitPrice": 114.45, "ltp": None}, "114.45"),
+                 ({"ltp": 112.0}, "112.0"),                  # an API without exitPrice: the last mark
+                 ({"exitPrice": None, "ltp": None}, "—"))
+        for fields, shown in cases:
+            with self.subTest(fields=fields):
+                self.setUp()
+                leg = {**make_leg(1, status="Closed", pnl=-8216.0), "entryPrice": 177.65}
+                leg.pop("ltp")
+                leg.update(fields)
+                self.api.runs = [make_run(1, True, 0, 1)]
+                self.api.live = {1: {"positions": [leg]}}
+                self.watcher.tick()
+                message = self.publisher.events[0]["message"]
+                self.assertIn(f"177.65 -> <b>{shown}</b>", message)
+                self.assertNotIn("None", message)
+
     def test_a_leg_carried_forward_is_not_reported_as_a_close(self):
         """
         27 Sep: a leg ticked "carry forward" moves to the owner's manual book
