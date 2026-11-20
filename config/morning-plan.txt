@@ -39,11 +39,17 @@
 # 2026-11-18 night: on the owner's word ("v2be ko bhi kal live kar do nifty per"),
 # TrendRiderV2BE (V2 with the breakeven step that passed the lab, BE25) runs on
 # NIFTY beside V2, 2 lots, no leg target: 2 runs.
+#
+# 2026-11-20: on the owner's word ("isko V2 OB banao aur testing per lgao"),
+# TrendRiderV2OB (V2 BE with the order-block stop and half the lots after a wide
+# day, the two rules that passed the 20 Nov test) runs on NIFTY beside V2 and
+# V2 BE, 2 lots, no leg target: 3 runs.
 
 accounts: admin
 
 TrendRiderV2             NIFTY                   2  -
 TrendRiderV2BE           NIFTY                   2  -
+TrendRiderV2OB           NIFTY                   2  -
 
 # GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 # GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
