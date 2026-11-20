@@ -12,19 +12,19 @@ TrendRiderV2BE are not touched; this class only adds:
      own stop. It is checked on every tick, before the rest. V2 BE's breakeven step, V2's trail, the day-open exit
      and the 15:15 square-off are unchanged. V2's 0.5 x ADR stop stays behind it as a safety net; it can never act
      first, because the order-block stop is at or inside it.
-  2. **A smaller trade after a wide day** (WIDEH). When yesterday's range was at least `wide_prev_adr` (1.0) x ADR,
-     every entry of the day buys `wide_prev_size` (0.5) of the run's lots, rounded down, at least 1: 1 lot instead of
-     2. V2's own filter still skips the day when yesterday was wider than 1.3 x ADR. The sell is for the lots the
-     position was bought with.
+  2. **A smaller trade after a wide day** (WIDEH), **off by default**. With `wide_prev_adr` above 0, when yesterday's
+     range was at least that many x ADR, every entry of the day buys `wide_prev_size` (0.5) of the run's lots,
+     rounded down, at least 1: 1 lot instead of 2. The sell is for the lots the position was bought with. The owner
+     trades a fixed 2 lots ("size nhi change karni hai", 20 Nov 2026), so the default is 0: always the run's lots.
 
 Research, NIFTY, simple P&L, 2 lots of 65, no charges (rules committed before any run):
 
     Sep 2024 - Sep 2026 (development)  V2 +2,53,025, deepest fall 65.9% of Rs 1 lakh; V2 BE +2,82,867 / 56.5%;
-                                       OB+BE +3,14,665 / 55.9%; OB+BE with WIDEH +3,40,798 / 51.2%
+                                       OB+BE (this class) +3,14,665 / 55.9%; with WIDEH (1.0) +3,40,798 / 51.2%
     Aug 2020 - Aug 2024 (holdout)      V2 +3,98,320 / 60.8%; V2 BE +4,55,397 / 60.2%;
-                                       OB+BE +4,69,573 / 56.6%; OB+BE with WIDEH +4,61,884 / 45.8%
+                                       OB+BE (this class) +4,69,573 / 56.6%; with WIDEH (1.0) +4,61,884 / 45.8%
 
-OB+BE passed against V2 BE and WIDEH passed as a size rule against V2. The two together were reported, not judged.
+OB+BE passed against V2 BE and held on the holdout. WIDEH passed as a size rule against V2.
 Status (20 Nov 2026): a paper/testing version beside V2 and V2 BE, on the owner's word.
 """
 
@@ -42,21 +42,21 @@ from strategies.directional.trend_rider_v2_be import TrendRiderV2BEStrategy
 class TrendRiderV2OBStrategy(TrendRiderV2BEStrategy):
     name = "TrendRiderV2OB"
     description = (
-        "TrendRiderV2BE with the two rules that passed the 20 Nov 2026 test: the index stop sits at the order block "
-        "(the last candle before the signal that closed against the trade, 0.15-0.5 x the average daily range from "
-        "the entry) instead of 0.5 x ADR, and after a day wider than 1.0 x ADR it buys half the lots (1 of 2). The "
-        "breakeven step, the trail and the day-open exit are V2 BE's. A paper/testing version beside V2 and V2 BE."
+        "TrendRiderV2BE with the stop that passed the 20 Nov 2026 test: the index stop sits at the order block (the "
+        "last candle before the signal that closed against the trade, 0.15-0.5 x the average daily range from the "
+        "entry) instead of 0.5 x ADR. The breakeven step, the trail and the day-open exit are V2 BE's; the run's lots "
+        "are always bought. A paper/testing version beside V2 and V2 BE."
     )
     legs_summary = ("Buy CE 1 strike ITM on an up-trend day, or Buy PE 1 strike ITM on a down-trend day (itm_steps); "
-                    "half the lots after a wide day; one position at a time")
+                    "one position at a time")
     default_params: Dict[str, Any] = {
         **TrendRiderV2BEStrategy.default_params,
         # OB+BE: the stop at the order block, clamped to ob_stop_min_adr .. index_stop_adr x ADR from the entry.
         "ob_stop": True,
         "ob_stop_min_adr": 0.15,
-        # WIDEH: after a day of at least wide_prev_adr x ADR, buy wide_prev_size of the lots (down, at least 1).
-        # wide_prev_adr 0 turns it off.
-        "wide_prev_adr": 1.0,
+        # WIDEH, off (0): after a day of at least wide_prev_adr x ADR, buy wide_prev_size of the lots (down, at least
+        # 1). The tested setting is 1.0; the owner keeps a fixed 2 lots (20 Nov 2026), so it is off by default.
+        "wide_prev_adr": 0.0,
         "wide_prev_size": 0.5,
     }
 

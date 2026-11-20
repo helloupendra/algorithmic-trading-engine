@@ -115,10 +115,13 @@ class V2OBTest(unittest.TestCase):
         self.assertIn("index trail", out[0].reason)
 
     # ------------------------------------------------------------ the size --
-    def test_half_the_lots_after_a_wide_day(self):
+    def test_half_the_lots_after_a_wide_day_only_when_asked(self):
         # Yesterday 110 points: ADR 101, so yesterday was 1.09 x ADR (at least 1.0, under V2's 1.3 skip).
-        for params, bought in (({"lots": 2}, 1), ({"lots": 4}, 2), ({"lots": 1}, 1), ({"lots": 3}, 1),
-                               ({"lots": 2, "wide_prev_adr": 0}, 2), ({"lots": 2, "wide_prev_adr": 1.2}, 2)):
+        # Off by default (the owner trades a fixed 2 lots); wide_prev_adr 1.0 is the setting that was tested.
+        on = {"wide_prev_adr": 1.0}
+        for params, bought in (({"lots": 2}, 2), ({"lots": 4}, 4),
+                               ({"lots": 2, **on}, 1), ({"lots": 4, **on}, 2), ({"lots": 1, **on}, 1),
+                               ({"lots": 3, **on}, 1), ({"lots": 2, "wide_prev_adr": 1.2}, 2)):
             with self.subTest(params=params):
                 self.build(yesterday_range=110)
                 strategy = TrendRiderV2OBStrategy(params)
@@ -142,7 +145,7 @@ class V2OBTest(unittest.TestCase):
     # ------------------------------------------------------------ settings --
     def test_defaults_are_v2_bes_plus_four(self):
         be, ob = TrendRiderV2BEStrategy.default_params, TrendRiderV2OBStrategy.default_params
-        added = {"ob_stop": True, "ob_stop_min_adr": 0.15, "wide_prev_adr": 1.0, "wide_prev_size": 0.5}
+        added = {"ob_stop": True, "ob_stop_min_adr": 0.15, "wide_prev_adr": 0.0, "wide_prev_size": 0.5}
         self.assertEqual({k: v for k, v in ob.items() if k not in added}, be)
         self.assertEqual({k: ob[k] for k in added}, added)
         self.assertEqual(TrendRiderV2OBStrategy().index_exits.describe(), TrendRiderV2BEStrategy().index_exits.describe())
