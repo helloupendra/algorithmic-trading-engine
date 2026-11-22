@@ -44,9 +44,16 @@
 # TrendRiderV2OB (V2 BE with the order-block stop that passed the 20 Nov test)
 # runs on NIFTY beside V2 and V2 BE, 2 lots, no leg target: 3 runs. Always 2
 # lots: the owner keeps the size fixed, so its half-size rule is off.
+#
+# 2026-11-22 night: on the owner's word ("kal subhe yeh 4 script on kr do 2 lot
+# per"), all four TrendRider versions run on NIFTY from 23 Nov: TrendRider
+# (Version 1) is back beside V2, V2 BE and V2 OB, 2 lots, no leg target: 4 runs.
+# Version 1 has no square_off_ist of its own, so live it holds to the platform's
+# close, not the backtests' 15:15.
 
 accounts: admin
 
+TrendRider               NIFTY                   2  -
 TrendRiderV2             NIFTY                   2  -
 TrendRiderV2BE           NIFTY                   2  -
 TrendRiderV2OB           NIFTY                   2  -
