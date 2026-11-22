@@ -107,9 +107,9 @@ same "interleaved per strategy and underlying, accounts inner" \
   "$ORDER"
 REAL="$(grep -v '^[[:space:]]*#' config/morning-plan.txt | grep -v '^[[:space:]]*$' | grep -vi '^[[:space:]]*accounts:')"
 FIRST_TWO="$(plan_runs "admin coderforchange" 2 20 <<<"$REAL" | head -2 | cut -d'|' -f1-3 | tr '\n' ' ')"
-# From 18 Nov the plan is TrendRider V2 on NIFTY alone (the owner, 17 Nov evening).
+# From 23 Nov the plan starts with TrendRider (Version 1) on NIFTY, before V2, V2 BE and V2 OB (the owner, 22 Nov night).
 same "the real plan: both accounts' first run back to back" \
-  "admin|TrendRiderV2|NIFTY coderforchange|TrendRiderV2|NIFTY " "$FIRST_TWO"
+  "admin|TrendRider|NIFTY coderforchange|TrendRider|NIFTY " "$FIRST_TWO"
 same "the feed check covers what the real plan trades" "NIFTY" \
   "$(plan_runs "admin coderforchange" 2 20 <<<"$REAL" | cut -d'|' -f3 | awk '!seen[$0]++' | paste -sd, -)"
 
