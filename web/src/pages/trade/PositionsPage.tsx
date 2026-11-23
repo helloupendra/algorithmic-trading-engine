@@ -57,7 +57,8 @@ function Mark({ p }: { p: OpenPosition }) {
     <>
       <span className="dk-n">{plainNumber(p.markPrice!, p.markPrice! >= 1000 ? 0 : 2)}</span>
       <span className={`tr-sub ${state === 'stale' ? 'warn' : 'dk-t3'}`} title={when}>
-        {state === 'stale' ? `stale · ${p.markAgeSeconds != null ? ageText(p.markAgeSeconds) : 'age unknown'}` : ageText(p.markAgeSeconds ?? 0)}
+        {/* A mark with no time on it is just "stale": the longer note ran out of the column, and the title has it. */}
+        {state === 'stale' ? (p.markAgeSeconds != null ? `stale · ${ageText(p.markAgeSeconds)}` : 'stale') : ageText(p.markAgeSeconds ?? 0)}
       </span>
     </>
   )

@@ -562,6 +562,9 @@ select.field__input { appearance: auto; }
   flex: 1 1 100%;
   max-width: none;
   padding-right: max(0px, calc(100% - 78ch));
+  /* The header's 16px gap is for what sits beside the title; the description
+     keeps the 2px it has on pages that wrap the two in one block. */
+  margin-top: -14px;
 }
 
 .page--centered {
@@ -900,6 +903,11 @@ select.field__input { appearance: auto; }
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* Row actions in a table stay on one line: wrapped, "Alert / Remove" made
+   every watchlist row 93px tall on a phone and split the alert rules' three
+   actions over two lines on a desk. The table scrolls sideways instead. */
+.table td .chip-row:has(> .btn) { flex-wrap: nowrap; }
 
 .stack-list > * + * { margin-top: 14px; }
 
@@ -1387,6 +1395,12 @@ a.checklist__item:hover { background: var(--brand-soft); }
   /* A segmented control is a row of buttons: 34px of button in 3px of well. */
   .seg { padding: 3px; }
   .seg__btn { min-height: 40px; padding: 6px 12px; }
+  /* Six filters in one control are wider than a phone (Incidents, by agent):
+     the control keeps to its container and scrolls sideways, the cut edge
+     faded where the markup marks it .scroll-x. */
+  .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg__btn { flex: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1460,6 +1474,16 @@ a.pill:hover { border-color: var(--line-strong); }
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+/* "Stopped · <why>" can be a sentence: on a phone it ran 180px out of the
+   card. It wraps inside the head instead; 10px corners are a pill on one
+   line and a tidy box on two. */
+.run-card__head > .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border-radius: 10px;
 }
 
 .run-card__name {
@@ -3191,9 +3215,11 @@ a.oc-tab { text-decoration: none; }
 
 /* Market calendar: a remove control on every exchange cell would read as noise
    down a 16-row year; it comes forward on the row being looked at. */
-.calendar-remove { opacity: 0.25; padding: 0 6px; }
+.calendar-remove { opacity: 0; padding: 0 6px; }
 tr:hover .calendar-remove,
 .calendar-remove:focus-visible { opacity: 1; }
+/* A touch screen has no row to hover: the control is simply there. */
+@media (hover: none) { .calendar-remove { opacity: 1; color: var(--text-3); } }
 
 /* Positions on the option chain: a B/S marker beside a held leg's LTP, the
    held row outlined on its strike, and the positions panel above the chain. */

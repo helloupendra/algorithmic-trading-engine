@@ -367,7 +367,7 @@ function RulesTable({
                     </span>
                     {r.note && <span className="cell-sub la-note">“{r.note}”</span>}
                   </td>
-                  <td className={line.tone === 'warn' ? 'warn' : undefined}>
+                  <td className={`la-now${line.tone === 'warn' ? ' warn' : ''}`}>
                     <span className="mono">{line.text}</span>
                     {r.side && r.now?.state === 'live' && <span className="cell-sub">{r.side === 'at' ? 'on the level' : `${r.side} the level`}</span>}
                   </td>

@@ -219,6 +219,7 @@ export function MarketCalendarPage() {
                                     type="button"
                                     className="btn btn--ghost btn--sm calendar-remove"
                                     title={`Remove ${r.exchange} ${r.name}`}
+                                    aria-label={`Remove ${r.exchange} ${r.name}`}
                                     onClick={() => confirmRemove(r)}
                                     disabled={remove.isPending}
                                   >

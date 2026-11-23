@@ -835,7 +835,7 @@ export function IncidentsPage() {
                 </button>
               ))}
             </div>
-            <div className="seg" role="group" aria-label="Agent">
+            <div className="seg scroll-x" role="group" aria-label="Agent">
               <button
                 type="button"
                 className={`seg__btn ${agent === '' ? 'is-active' : ''}`}

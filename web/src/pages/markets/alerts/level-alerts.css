@@ -66,11 +66,19 @@
   margin-top: 12px;
 }
 
-td .la-actions { margin-top: 0; }
+/* In a row the three actions keep one line (wrapped, every rule was two lines tall). */
+td .la-actions { margin-top: 0; flex-wrap: nowrap; }
 
 .la-rule {
   white-space: normal;
   min-width: 200px;
+}
+
+/* A chain reading carries both OI totals ("0.96 · 3s ago · Total put OI … / call OI …"):
+   it wraps in its cell, or the one long line pushed the actions out of the panel. */
+.la-now {
+  white-space: normal;
+  max-width: 250px;
 }
 
 .la-note { font-style: italic; }
