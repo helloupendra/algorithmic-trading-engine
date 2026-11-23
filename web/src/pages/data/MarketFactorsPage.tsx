@@ -104,7 +104,7 @@ function FuturesPositionsPanel({ latest }: { latest: ParticipantDay | undefined 
         <EmptyState>No participant file stored yet.</EmptyState>
       ) : (
         <div className="tablewrap">
-          <table className="table">
+          <table className="table mf-fut-table">
             <thead>
               <tr>
                 <th>Who</th>

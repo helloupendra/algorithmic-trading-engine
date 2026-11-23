@@ -554,3 +554,11 @@ a.dk-news__t:hover { text-decoration: underline; }
 }
 /* The checkup's folded passed checks: one line under the ones that need a hand. */
 .dk-okmore { display: block; margin-top: 6px; }
+
+/* Phone: the Desk's text-sized links and the news filter get a finger's room
+   without growing (an invisible frame; the 12px between filters is shared). */
+@media (max-width: 760px) {
+  .dk-more, .dk-tabs button { position: relative; }
+  .dk-more::after { content: ''; position: absolute; inset: -12px 0; }
+  .dk-tabs button::after { content: ''; position: absolute; inset: -12px -6px; }
+}

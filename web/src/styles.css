@@ -3327,3 +3327,21 @@ tr:hover .calendar-remove,
 @media (max-width: 760px) {
   .sys-asof { align-items: flex-start; }
 }
+
+/* Phone tap targets (audit, 23 Nov 2026). Controls drawn smaller than a
+   finger keep their drawing and get the room around it: a taller box where
+   the layout has the height, an invisible frame where it does not. */
+@media (max-width: 760px) {
+  .disclosure__btn { min-height: 40px; }
+  .datefield__btn { width: 36px; height: 36px; right: 2px; }
+  a.pill { min-height: 36px; }
+  .shell__brand--bar,
+  .section-title__link,
+  .coverage-table__toggle,
+  .row-pick { position: relative; }
+  .shell__brand--bar::after,
+  .section-title__link::after,
+  .coverage-table__toggle::after,
+  .row-pick::after { content: ''; position: absolute; inset: -10px 0; }
+  .shell__brand--bar::after { inset: -8px; }
+}

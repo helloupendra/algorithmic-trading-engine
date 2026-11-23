@@ -238,3 +238,9 @@
   .sb .sb-link { margin-left: 0; }
   .sb .sb-num { text-align: left; }
 }
+
+/* Phone: B and S are the page's main action, and a wrong tap adds the wrong leg. */
+@media (max-width: 760px) {
+  .sb .sb-pick__acts { gap: 6px; }
+  .sb .sb-pick__btn { width: 32px; height: 32px; font-size: 12px; }
+}

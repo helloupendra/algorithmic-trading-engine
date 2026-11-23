@@ -306,6 +306,13 @@ a.lib-card__name:hover { color: var(--brand-hi); }
 }
 .lib-variant__side .lib-actions { margin-left: 0; }
 
+/* A phone: iOS zooms the page when a focused input's text is under 16px, and
+   the search box and the "Running now" chip were under a finger's height. */
+@media (max-width: 760px) {
+  .lib-search__input { font-size: 16px; min-height: 40px; }
+  .lib-toggle { min-height: 36px; }
+}
+
 @media (max-width: 640px) {
   .lib-search { flex: 1 1 100%; }
   .lib-section__hint { flex-basis: 100%; }

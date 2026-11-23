@@ -1437,3 +1437,9 @@ a.ai-subject:hover { text-decoration: underline; }
 .ai-phones__guide > summary { cursor: pointer; font-weight: 600; color: var(--text); }
 .ai-phones__guide > * + * { margin-top: 8px; }
 .ai-phones__steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.45; overflow-wrap: anywhere; }
+
+/* A phone: iOS zooms the page when a focused field's text is under 16px, and
+   the composer is the field this page is for. */
+@media (max-width: 760px) {
+  .field__input.ai-composer__input { font-size: 16px; }
+}

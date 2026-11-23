@@ -154,3 +154,7 @@
 .mf-form .field__input { width: auto; }
 .mf-form__title { flex: 1 1 220px; }
 .mf-form__source { flex: 1 1 180px; }
+
+/* Index futures positions: seven columns in half a page. At the table's usual
+   12px the Stance badge was cut at the panel's edge on a 1440 screen. */
+.mf-fut-table th, .mf-fut-table td { padding-left: 8px; padding-right: 8px; }
