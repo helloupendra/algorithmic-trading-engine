@@ -178,3 +178,7 @@ scripts/pager/pager.log
 # Browser test output
 web/playwright-report/
 web/test-results/
+
+# Database dumps (scripts/aws/migrate-db.sh dump, scripts/backup-db-to-drive.sh): never committed,
+# and an untracked dump must not hold up the desk's auto-deploy (it skips a dirty tree).
+/algotrading-*.tar
