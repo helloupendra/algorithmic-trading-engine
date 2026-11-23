@@ -41,6 +41,7 @@ export const NAV = [
       { slug: 'research', src: 'docs/RESEARCH_AND_ARCHITECTURE.md', title: 'Research & architecture' },
       { slug: 'risk-management', src: 'docs/03_ARCHITECTURE_AND_RISK_MANAGEMENT.md', title: 'Risk management' },
       { slug: 'status', src: 'docs/PROJECT_STATUS.md', title: 'Project status' },
+      { slug: 'privacy', src: 'docs/PRIVACY.md', title: 'Privacy policy' },
     ],
   },
   {
