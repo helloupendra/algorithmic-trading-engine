@@ -136,10 +136,11 @@ export function LoginPage() {
           <IconLogo className="signin__mark" />
           <span>OpenFNO</span>
         </a>
-        <p className="signin__clock" title={market ? `Time in India now: ${istNow()}` : 'NSE cash market hours, Monday to Friday'}>
+        {/* The short line, as on the homepage: a holiday's full name (it can be fifty characters) is in the title. */}
+        <p className="signin__clock" title={market ? `${market.text}. Time in India now: ${istNow()}` : 'NSE cash market hours, Monday to Friday'}>
           <span>
             <i className={market?.open ? 'is-open' : ''} aria-hidden="true" />
-            {market?.text ?? CASH_HOURS}
+            {market?.short ?? CASH_HOURS}
           </span>
         </p>
       </header>

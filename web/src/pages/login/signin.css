@@ -203,7 +203,11 @@
 }
 @media (max-width: 520px) {
   .signin { padding: 0 max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); }
-  .signin__top { padding-top: 20px; }
+  /* The market line keeps one line: beside the brand when it fits, under it when it does not
+     (a closed day's line wrapped into two ragged lines beside the name). */
+  .signin__top { padding-top: 20px; flex-wrap: wrap; row-gap: 8px; }
+  .signin__clock { font-size: 12px; }
+  .signin__clock span { white-space: nowrap; }
   .signin__clock small { display: none; }
   .signin__card { padding: 24px 20px 22px; border-radius: 16px; }
   /* 16px, or iOS zooms the page when a field takes focus. */

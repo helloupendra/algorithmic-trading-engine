@@ -2,7 +2,13 @@
 .home-page .public-header { gap:24px; }
 .home-page .public-nav { gap:23px; font-size:11px; }
 .home-page .header-actions { gap:18px; }
-.home-page .header-clock { display:inline-flex; align-items:center; gap:7px; width:151px; font-size:10px; color:var(--muted); white-space:nowrap; }
+/* The market line is as wide as its words, up to a limit, and is cut with an
+   ellipsis past it: at a fixed 151px a holiday's line ran over the GitHub mark
+   and the Open console button (24 Nov 2026). */
+.home-page .header-clock { display:inline-flex; align-items:center; gap:7px; min-width:0; max-width:300px; font-size:10px; color:var(--muted); white-space:nowrap; }
+.home-page .header-clock > span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.home-page .header-clock .dot { flex:none; }
+.home-page .header-actions { min-width:0; }
 .header-clock .dot { color:var(--muted); }
 .header-clock[data-market-status="open"] .dot { color:var(--green); }
 .github-link { display:inline-flex; align-items:center; justify-content:center; width:28px; height:30px; color:var(--muted); }
@@ -74,13 +80,13 @@
 .source-cta .source-licence { margin-top:12px; font-size:10px; color:var(--muted); }
 .source-cta-actions { display:flex; flex-direction:column; gap:10px; flex-shrink:0; }
 .footer-risk { max-width:510px; font-size:9px; line-height:1.8; color:var(--muted); }
-@media(max-width:1100px) { .home-page .brand-tag { display:none; }.home-page .public-nav { gap:16px; }.home-page .header-actions { gap:13px; }.home-page .header-clock { width:140px; font-size:9px; }.engine-layer .section-intro > p { max-width:48%; }.layer-specs { padding:15px 23px; }.layer-object { padding-inline:24px; }.condition-gates { grid-template-columns:1fr; gap:5px; }.condition-gates > div { padding-block:7px; }.ownership-grid { gap:30px; } }
+@media(max-width:1100px) { .home-page .brand-tag { display:none; }.home-page .public-nav { gap:16px; }.home-page .header-actions { gap:13px; }.home-page .header-clock { max-width:210px; font-size:9px; }.engine-layer .section-intro > p { max-width:48%; }.layer-specs { padding:15px 23px; }.layer-object { padding-inline:24px; }.condition-gates { grid-template-columns:1fr; gap:5px; }.condition-gates > div { padding-block:7px; }.ownership-grid { gap:30px; } }
 @media(max-width:800px) { .engine-layer .section-intro > p { padding-top:28px; }.layer-panel { grid-template-columns:1fr 1fr; }.layer-specs > div { grid-template-columns:1fr; gap:3px; font-size:10px; padding-block:10px; }.feed-pipes { grid-template-columns:1fr 1fr; }.feed-pipes span::after,.feed-pipes::after,.feed-store::before { display:none; }.feed-pipes { padding-bottom:12px; }.feed-store { padding:12px; }.risk-diagram { gap:20px; flex-direction:column; }.kill-switch-record { flex-direction:row; flex-wrap:wrap; justify-content:center; }.ownership-grid { grid-template-columns:1fr; gap:26px; }.ownership-copy > p { max-width:480px; }.ownership-copy h2 { font-size:30px; }.ownership-tests { text-align:center; }.footer-links { flex-wrap:wrap; gap:14px; } }
 @media(max-width:500px) {
  .home-page .public-header { display:grid; grid-template-columns:1fr auto auto; height:104px; gap:11px 13px; align-content:center; }
  .home-page .header-actions { display:contents; }.home-page .public-header .brand { grid-column:1; grid-row:1; }
  .home-page .github-link { grid-column:2; grid-row:1; width:21px; }.home-page .header-actions > .button { grid-column:3; grid-row:1; padding-inline:11px; font-size:10px; }
- .home-page .header-clock { grid-row:2; grid-column:1/-1; width:100%; font-size:9px; }
+ .home-page .header-clock { grid-row:2; grid-column:1/-1; width:100%; max-width:none; font-size:9px; }
  .home-page .hero-heading .eyebrow { font-size:8px; letter-spacing:.7px; max-width:none; }
  .home-page .hero-intro > p { font-size:13px; }.home-page .hero-actions { gap:9px; }
  .engine-layer .section-intro > p { max-width:100%; padding-top:0; font-size:11px; }

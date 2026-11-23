@@ -29,13 +29,24 @@ export type MarketLineSession = Pick<
   'isMarketOpen' | 'sessionCloseUtc' | 'nextMarketOpenUtc' | 'isHoliday' | 'holidayName' | 'specialSessionName'
 >
 
-export function marketLine(s: MarketLineSession, now: Date = new Date()): { open: boolean; text: string } {
+/** The longest special-session name the short line spells out ("Muhurat trading"); a longer one reads "special session". */
+const SHORT_NAME = 16
+
+/**
+ * `text` names the holiday or the session. `short` is the same line for a narrow place (the homepage's header):
+ * a holiday is "holiday" there, because an exchange's name for one can be fifty characters ("Prakash Gurpurb Sri
+ * Guru Nanak Dev" ran over the header's button on 24 Nov 2026), and the full line goes in the element's title.
+ */
+export function marketLine(s: MarketLineSession, now: Date = new Date()): { open: boolean; text: string; short: string } {
   if (s.isMarketOpen) {
-    const special = s.specialSessionName ? ` · ${s.specialSessionName}` : ''
-    return { open: true, text: `NSE open${special} · closes ${time(s.sessionCloseUtc)} IST` }
+    const closes = `closes ${time(s.sessionCloseUtc)} IST`
+    const name = s.specialSessionName
+    const brief = name ? ` · ${name.length <= SHORT_NAME ? name : 'special session'}` : ''
+    return { open: true, text: `NSE open${name ? ` · ${name}` : ''} · ${closes}`, short: `NSE open${brief} · ${closes}` }
   }
+  const opens = `opens ${when(s.nextMarketOpenUtc, now)} IST`
   const why = s.isHoliday && s.holidayName ? ` for ${s.holidayName}` : ''
-  return { open: false, text: `NSE closed${why} · opens ${when(s.nextMarketOpenUtc, now)} IST` }
+  return { open: false, text: `NSE closed${why} · ${opens}`, short: `NSE closed${s.isHoliday ? ' · holiday' : ''} · ${opens}` }
 }
 
 /** "Sun 15:46 IST": the time in India now, for a title on the line. */

@@ -15,11 +15,12 @@ async function refresh() {
     if (!res.ok) return
     const line = marketLine(await res.json())
     nodes.forEach((node) => {
-      node.textContent = line.text
+      // The short line: the header has room for one phrase, not for a holiday's full name. The title has it all.
+      node.textContent = line.short
       const box = node.closest('[data-market-status]')
       if (box) {
         box.dataset.marketStatus = line.open ? 'open' : 'closed'
-        box.title = `Time in India now: ${istNow()}`
+        box.title = `${line.text}. Time in India now: ${istNow()}`
       }
     })
   } catch {
