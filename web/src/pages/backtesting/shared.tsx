@@ -62,14 +62,17 @@ export function ComparePick({ runId, picked, onToggle }: { runId: number; picked
   const full = !on && picked.length >= MAX_COMPARE
   return (
     <td className="bt-pick">
-      <input
-        type="checkbox"
-        checked={on}
-        disabled={full}
-        onChange={() => onToggle(runId)}
-        aria-label={`Compare run ${runId}`}
-        title={full ? `At most ${MAX_COMPARE} runs side by side` : on ? 'Leave out of the comparison' : 'Add to the comparison'}
-      />
+      {/* The label is the target: a 13px box alone is too small for a finger. */}
+      <label className="bt-pick__hit">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={full}
+          onChange={() => onToggle(runId)}
+          aria-label={`Compare run ${runId}`}
+          title={full ? `At most ${MAX_COMPARE} runs side by side` : on ? 'Leave out of the comparison' : 'Add to the comparison'}
+        />
+      </label>
     </td>
   )
 }
@@ -113,11 +116,22 @@ export function BacktestStatusBadge({
   status,
   progressPercent,
   stopReason,
+  stacked,
 }: {
   status: BacktestStatus | string
   progressPercent?: number | null
   stopReason?: string | null
+  /** In a table row: the outcome in the badge and its reason on a line under it, so the column stays narrow. */
+  stacked?: boolean
 }) {
+  if (stacked && stopReason && (status === 'Completed' || status === 'Stopped')) {
+    return (
+      <span className="status-cell" title={stopReason}>
+        <Badge tone="warn">{status}</Badge>
+        <span className="cell-sub">{status === 'Completed' ? shortReason(stopReason) : stopReason}</span>
+      </span>
+    )
+  }
   switch (status) {
     case 'Running':
       return (

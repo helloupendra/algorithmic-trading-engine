@@ -36,15 +36,24 @@ function RunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: read
     <>
       <tr>
         <ComparePick runId={run.runId} picked={picked} onToggle={onPick} />
-        <td className="mono muted">#{run.runId}</td>
-        <td>
+        {/* Who started it and when sit under the run number: as a column of their own they pushed the row's
+            buttons out of the panel on a 1440 screen. */}
+        <td className="muted" title={run.completedUtc ? `finished ${formatDateTime(run.completedUtc)}` : undefined}>
+          <span className="mono">#{run.runId}</span>
+          <span className="cell-sub">
+            {run.startedBy ? `${run.startedBy} · ` : ''}
+            {formatDateTime(run.startedUtc ?? run.createdUtc)}
+          </span>
+        </td>
+        <td className="bt-runs__name" title={run.strategyName}>
           <Link to={`/research/backtests/runs/${run.runId}`}>
             <b>{run.strategyName}</b>
           </Link>
         </td>
         <td className="mono">{run.underlying}</td>
         <td className="muted">
-          {resolutionLabel(run.resolution)} · {formatDayRange(run.fromDate, run.toDate)}
+          {formatDayRange(run.fromDate, run.toDate)}
+          <span className="cell-sub">{resolutionLabel(run.resolution)} candles</span>
         </td>
         <td className="r">{formatNumber(run.lots)}</td>
         <td className="r muted">
@@ -53,16 +62,14 @@ function RunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: read
         <td className="r">
           <PnlValue value={run.netPnl} />
         </td>
-        <td className="r">{formatNumber(run.trades)}</td>
-        <td className="r muted">{run.trades > 0 ? formatPercent(run.winRatePercent, 0).replace('+', '') : '—'}</td>
-        <td>
-          <BacktestStatusBadge status={run.status} progressPercent={run.progressPercent} stopReason={run.stopReason} />
-        </td>
-        <td className="muted" title={run.completedUtc ? `finished ${formatDateTime(run.completedUtc)}` : undefined}>
-          {run.startedBy ? `${run.startedBy} · ` : ''}
-          {formatDateTime(run.startedUtc ?? run.createdUtc)}
-        </td>
         <td className="r">
+          {formatNumber(run.trades)}
+          {run.trades > 0 && <span className="cell-sub">{formatPercent(run.winRatePercent, 0).replace('+', '')} won</span>}
+        </td>
+        <td>
+          <BacktestStatusBadge status={run.status} progressPercent={run.progressPercent} stopReason={run.stopReason} stacked />
+        </td>
+        <td className="r bt-runs__act">
           {active ? (
             <button
               type="button"
@@ -190,11 +197,11 @@ export function BacktestRunsPage() {
               <p className="empty">Nothing matches these filters.</p>
             ) : (
               <div className="tablewrap">
-                <table className="table">
+                <table className="table bt-runs">
                   <thead>
                     <tr>
                       <th className="bt-pick" aria-label="Compare" />
-                      <th>Run</th>
+                      <th>Run · started</th>
                       <th>Strategy</th>
                       <th>Underlying</th>
                       <th>Range</th>
@@ -202,10 +209,8 @@ export function BacktestRunsPage() {
                       <th className="r">SL / target</th>
                       <th className="r">Net P&L</th>
                       <th className="r">Trades</th>
-                      <th className="r">Win rate</th>
                       <th>Status</th>
-                      <th>Started</th>
-                      <th />
+                      <th className="bt-runs__act" aria-label="Actions" />
                     </tr>
                   </thead>
                   <tbody>

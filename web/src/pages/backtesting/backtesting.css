@@ -304,6 +304,26 @@
 /* Run selection for a comparison, on the runs lists. */
 .bt-pick { width: 28px; }
 .bt-pick input { margin: 0; vertical-align: middle; }
+.bt-pick__hit { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+@media (max-width: 760px) {
+  .bt-pick { width: 44px; }
+  .table td.bt-pick, .table th.bt-pick { padding-left: 2px; padding-right: 2px; }
+  .bt-pick__hit { min-width: 40px; min-height: 40px; }
+  .bt-pick input { width: 18px; height: 18px; }
+}
+
+/* The runs list: twelve columns that fit a 1440 screen. A long strategy name
+   is cut with its full text in the title, and the row's button stays at the
+   right edge if a narrower window still has to scroll the middle. */
+.bt-runs td, .bt-runs th { padding-left: 10px; padding-right: 10px; }
+.bt-runs__name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.bt-runs .status-cell .cell-sub { max-width: 150px; }
+@media (min-width: 761px) {
+  .bt-runs { border-collapse: separate; border-spacing: 0; }
+  .bt-runs .bt-runs__act { position: sticky; right: 0; z-index: 1; background: var(--bg1); }
+  .bt-runs th.bt-runs__act { z-index: 2; }
+  .bt-runs tbody tr:hover td.bt-runs__act { background: linear-gradient(color-mix(in srgb, var(--surface2) 70%, transparent), color-mix(in srgb, var(--surface2) 70%, transparent)) var(--bg1); }
+}
 
 /* Runs side by side: one column per run, the first column names the figure
    and stays put while a phone scrolls the runs sideways. */
