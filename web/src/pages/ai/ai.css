@@ -1442,4 +1442,10 @@ a.ai-subject:hover { text-decoration: underline; }
    the composer is the field this page is for. */
 @media (max-width: 760px) {
   .field__input.ai-composer__input { font-size: 16px; }
+  /* Fifteen agents wrapped into six rows and took the whole first screen:
+     on a phone they are one row that scrolls sideways (the cut edge fades,
+     lib/scrollCues.ts), so the question box is in view when the page opens. */
+  .seg.seg--wrap.ai-agentpick { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .ai-agentpick::-webkit-scrollbar { display: none; }
+  .ai-agentpick .seg__btn { flex: none; }
 }

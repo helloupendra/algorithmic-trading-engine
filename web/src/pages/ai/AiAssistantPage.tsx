@@ -626,7 +626,7 @@ export function AiAssistantPage() {
     <div className="page ai ai-assistant">
       <div className="ai-assistant__grid">
       <div className="ai-assistant__main hp">
-      <div className="seg seg--wrap ai-agentpick" role="radiogroup" aria-label="Who to talk with">
+      <div className="seg seg--wrap ai-agentpick scroll-x" role="radiogroup" aria-label="Who to talk with">
         {CHAT_AGENTS.map((a) => {
           const info = agents.data?.agents.find((x) => x.key === a.key)
           const note = conversationNote(state.chats[a.key]) || (info?.status === 'off' ? 'switched off' : '')

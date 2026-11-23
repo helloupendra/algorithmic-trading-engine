@@ -300,7 +300,10 @@ function CallRow({ call, selected, now, onOpen }: { call: AiCallSummary; selecte
       <td className="ai-c-agent">{call.agentName || call.agentKey}</td>
       <td className="ai-c-who muted">
         {call.requestedBy}
-        {call.source && call.source !== 'console' && <span className="cell-sub">{sourceLabel(call.source)}</span>}
+        {/* The source under the name, unless it only repeats it ("scheduler" asked by the scheduler). */}
+        {call.source && call.source !== 'console' && sourceLabel(call.source).toLowerCase() !== (call.requestedBy ?? '').toLowerCase() && (
+          <span className="cell-sub">{sourceLabel(call.source)}</span>
+        )}
       </td>
       <td className={`ai-c-model ${call.model ? '' : 'ai-c-none'}`}>{call.model ? <span title={call.model}>{modelName(call.model)}</span> : <span className="faint">—</span>}</td>
       <td className="ai-c-outcome">

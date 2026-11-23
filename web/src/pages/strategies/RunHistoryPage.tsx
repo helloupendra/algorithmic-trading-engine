@@ -416,7 +416,7 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
             {recaps
               ? 'Recap runs — recorded days played again through the strategy runners. They are tests: their P&L is in no live total.'
               : isAdmin
-                ? 'Run history — every live run, attached to the user who started it. Nothing here is dismissed.'
+                ? 'Every live run, attached to the user who started it. Nothing here is dismissed.'
                 : 'Every live run you started, with its result. Nothing here is dismissed — hiding a card on the runner does not remove it.'}
           </p>
         </div>
