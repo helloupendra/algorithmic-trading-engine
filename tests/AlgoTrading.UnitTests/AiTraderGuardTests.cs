@@ -181,9 +181,12 @@ public class AiTraderGuardTests
     [Fact]
     public void It_may_start_only_listed_strategies_up_to_three_runs_and_stop_only_its_own()
     {
-        var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, null, null, null, "ChainFlowBuy", null, null, "Trend day.", 0.5);
+        var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, null, null, null, "TrendRiderV2BE", null, null, "Trend day.", 0.5);
         Assert.True(AiTraderGuard.Check(start, Book(), Rules).Allowed);
         Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "Fulcrum" }, Book(), Rules));
+        // Its first two strategies lost on two years of real premiums; from 24 Nov 2026 only the TrendRider family.
+        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "ChainFlowBuy" }, Book(), Rules));
+        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "GhostTangentCrossings" }, Book(), Rules));
         Refused("strategy-runs", AiTraderGuard.Check(start, Book(runs: [new(1, "Ghost", "NIFTY", 0), new(2, "Ghost", "SENSEX", 0), new(3, "ChainFlowBuy", "BANKNIFTY", 0)]), Rules));
         Refused("daily-loss", AiTraderGuard.Check(start, Book(net: -10_500m), Rules));
 

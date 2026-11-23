@@ -17,17 +17,17 @@ public class AiTraderRunsTests
     [Fact]
     public async Task It_starts_an_allowed_strategy_in_its_own_account_through_the_same_checks_as_a_person()
     {
-        using var desk = new RunnerDesk("GhostTangentCrossings", "ChainFlowBuy");
+        using var desk = new RunnerDesk("TrendRiderV2BE", "TrendRiderV2OB");
         await using var db = desk.Db();
         var account = await AiTraderAccount.EnsureAsync(db, default);
         // The real package check: its account's grants are what let it through.
         var runs = Runs(desk, db, new StrategyAccessService(db, desk.Limits), sessions: null);
 
-        var started = await runs.StartAsync(account, "GhostTangentCrossings", "NIFTY", 1, default);
+        var started = await runs.StartAsync(account, "TrendRiderV2BE", "NIFTY", 1, default);
 
         Assert.True(started.Started, started.Message);
         var run = Assert.Single(desk.Runs());
-        Assert.Equal((run.Id, account.Id, account.Id, AiTraderAccount.UserName, "GhostTangentCrossings", "Running"),
+        Assert.Equal((run.Id, account.Id, account.Id, AiTraderAccount.UserName, "TrendRiderV2BE", "Running"),
             (started.RunId!.Value, run.UserId, run.StartedByUserId!.Value, run.StartedByName, run.StrategyName, run.Status));
         Assert.Equal(account.Id, desk.Registry.Get(run.Id)!.UserId);
     }
@@ -35,13 +35,13 @@ public class AiTraderRunsTests
     [Fact]
     public async Task Without_its_grants_a_start_is_refused_by_the_package_check_and_leaves_no_row()
     {
-        using var desk = new RunnerDesk("ChainFlowBuy");
+        using var desk = new RunnerDesk("TrendRiderV2BE");
         await using var db = desk.Db();
         var account = await AiTraderAccount.EnsureAsync(db, default);
         db.UserStrategyGrants.RemoveRange(db.UserStrategyGrants.Where(g => g.UserId == account.Id));
         await db.SaveChangesAsync();
 
-        var started = await Runs(desk, db, new StrategyAccessService(db, desk.Limits), sessions: null).StartAsync(account, "ChainFlowBuy", "NIFTY", 1, default);
+        var started = await Runs(desk, db, new StrategyAccessService(db, desk.Limits), sessions: null).StartAsync(account, "TrendRiderV2BE", "NIFTY", 1, default);
 
         Assert.False(started.Started);
         Assert.Contains("no strategy package", started.Message);
@@ -51,11 +51,11 @@ public class AiTraderRunsTests
     [Fact]
     public async Task On_a_day_with_no_session_a_start_is_refused_as_a_persons_would_be()
     {
-        using var desk = new RunnerDesk("ChainFlowBuy");
+        using var desk = new RunnerDesk("TrendRiderV2BE");
         await using var db = desk.Db();
         var account = await AiTraderAccount.EnsureAsync(db, default);
 
-        var started = await Runs(desk, db, access: null, sessions: new NoSession()).StartAsync(account, "ChainFlowBuy", "NIFTY", 1, default);
+        var started = await Runs(desk, db, access: null, sessions: new NoSession()).StartAsync(account, "TrendRiderV2BE", "NIFTY", 1, default);
 
         Assert.False(started.Started);
         Assert.Contains("a live run can start only on a trading day", started.Message);
@@ -65,11 +65,11 @@ public class AiTraderRunsTests
     [Fact]
     public async Task It_stops_its_own_run_and_never_another_accounts()
     {
-        using var desk = new RunnerDesk("ChainFlowBuy");
+        using var desk = new RunnerDesk("TrendRiderV2BE");
         await using var db = desk.Db();
         var account = await AiTraderAccount.EnsureAsync(db, default);
         var runs = Runs(desk, db, access: null, sessions: null);
-        var own = await runs.StartAsync(account, "ChainFlowBuy", "NIFTY", 1, default);
+        var own = await runs.StartAsync(account, "TrendRiderV2BE", "NIFTY", 1, default);
         Assert.True(own.Started, own.Message);
         Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await desk.Start("BANKNIFTY", RunnerDesk.TraderId));
         long theirs = desk.Runs().Single(r => r.UserId == RunnerDesk.TraderId).Id;

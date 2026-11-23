@@ -254,7 +254,7 @@ public sealed class AiTraderExecutionTests : IDisposable
         Assert.Contains(past.Ignored, why => why.StartsWith("target 110 is at or under the price it is bought at", StringComparison.Ordinal));
 
         // A start has lots to tighten and nothing else.
-        var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, 2, null, null, "ChainFlowBuy", null, null, "Flow.", 0.5);
+        var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, 2, null, null, "TrendRiderV2BE", null, null, "Trend.", 0.5);
         var started = AiTraderRiskMemo.Apply(start, null, """{"memo":"One lot.","lots":1,"stopLoss":50}""");
         Assert.Equal((1, (decimal?)null), (started.Plan.Lots, started.Plan.StopLoss));
         Assert.Contains("a strategy start has no stop to tighten", started.Ignored);
@@ -382,16 +382,16 @@ public sealed class AiTraderExecutionTests : IDisposable
         using var t = new Trader();
         var runs = new FakeRuns();
         t.Ai.Provider.On(Judge1,
-            Answer("""{"action":"start_strategy","strategy":"chainflowbuy","underlying":"nifty","lots":5,"reason":"Flow is building.","confidence":0.5}"""),
+            Answer("""{"action":"start_strategy","strategy":"trendriderv2be","underlying":"nifty","lots":5,"reason":"A trend is building.","confidence":0.5}"""),
             Answer(Accept), Answer(Accept), Answer(Accept), Answer(MemoNoChange));
 
         var row = await t.Agent(runs: runs).DecideAsync(Eleven, AiTraderModes.Live, null, default);
 
         Assert.Equal((true, true), (row.Allowed, row.Executed));
         var (account, strategy, underlying, lots) = Assert.Single(runs.Started);
-        Assert.Equal((AiTraderAccount.UserName, "ChainFlowBuy", "NIFTY", 1), (account, strategy, underlying, lots));
+        Assert.Equal((AiTraderAccount.UserName, "TrendRiderV2BE", "NIFTY", 1), (account, strategy, underlying, lots));
         var started = JsonNode.Parse(row.ResultJson)!["started"]!;
-        Assert.Equal((77L, "ChainFlowBuy"), ((long)started["runId"]!, (string)started["strategy"]!));
+        Assert.Equal((77L, "TrendRiderV2BE"), ((long)started["runId"]!, (string)started["strategy"]!));
         Assert.Equal(("run-start", "/trade/runs/77"), (AiTraderResults.Placement(row)!.Kind, AiTraderResults.Placement(row)!.Link));
     }
 
@@ -401,7 +401,7 @@ public sealed class AiTraderExecutionTests : IDisposable
         using var t = new Trader();
         var runs = new FakeRuns { Refusal = "NSE is closed today (Sat 10 Oct): a live run can start only on a trading day." };
         t.Ai.Provider.On(Judge1,
-            Answer("""{"action":"start_strategy","strategy":"GhostTangentCrossings","underlying":"BANKNIFTY","lots":1,"reason":"Trend day.","confidence":0.5}"""),
+            Answer("""{"action":"start_strategy","strategy":"TrendRiderV2BE","underlying":"BANKNIFTY","lots":1,"reason":"Trend day.","confidence":0.5}"""),
             Answer(Accept), Answer(Accept), Answer(Accept), Answer(MemoNoChange));
 
         var row = await t.Agent(runs: runs).DecideAsync(Eleven, AiTraderModes.Live, null, default);
@@ -556,9 +556,9 @@ public sealed class AiTraderExecutionTests : IDisposable
         await AiTraderAccount.EnsureAsync(db, default);
 
         Assert.Equal(PlatformModules.Strategies, Assert.Single(db.UserModuleGrants.AsNoTracking().Where(g => g.UserId == user.Id)).ModuleKey);
-        Assert.Equal(new[] { "ChainFlowBuy", "GhostTangentCrossings" },
+        Assert.Equal(new[] { "TrendRider", "TrendRiderV2", "TrendRiderV2BE", "TrendRiderV2OB" },
             db.UserStrategyGrants.AsNoTracking().Where(g => g.UserId == user.Id).Select(g => g.StrategyName).OrderBy(n => n).ToList());
-        var access = await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "ChainFlowBuy", "NIFTY", 1, "LivePaper", 1);
+        var access = await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "TrendRiderV2BE", "NIFTY", 1, "LivePaper", 1);
         Assert.True(access.Allowed);
         Assert.False((await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "Ghost", "NIFTY", 1, "LivePaper", 1)).Allowed);
     }

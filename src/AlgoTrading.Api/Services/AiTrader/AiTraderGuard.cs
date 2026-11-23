@@ -225,6 +225,12 @@ public sealed class AiTraderRules
     public TimeOnly OpenFrom { get; init; } = new(9, 20);
     public TimeOnly OpenUntil { get; init; } = new(14, 45);
     public int MaxTradesPerDay { get; init; } = 10;
-    public IReadOnlyList<string> Strategies { get; init; } = ["GhostTangentCrossings", "ChainFlowBuy"];
+    /// <summary>
+    /// The strategies it may start in its own account. From 24 Nov 2026 (owner: "ready karo trading ke liye") the
+    /// TrendRider family, the one intraday NIFTY option-buying method that held over six years of tests (2020–2026);
+    /// GhostTangentCrossings and ChainFlowBuy, its first two, lost on two years of real premiums and are no longer
+    /// allowed (their old grants stay in the database, but this list is what a start is checked against).
+    /// </summary>
+    public IReadOnlyList<string> Strategies { get; init; } = ["TrendRider", "TrendRiderV2", "TrendRiderV2BE", "TrendRiderV2OB"];
     public int MaxStrategyRuns { get; init; } = 3;
 }
