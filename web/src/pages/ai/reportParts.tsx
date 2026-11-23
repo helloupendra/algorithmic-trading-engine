@@ -47,6 +47,9 @@ import { formatDateTime, formatNumber } from '../../lib/format'
 import { Badge } from '../../components/ui'
 import { IconChip } from '../../components/icons'
 import { AnswerText } from './AnswerText'
+// incident-detail__label (a section label's spacing) lives with the incidents page; a report opened from the AI or
+// the run page is a separate lazy chunk and came without it.
+import '../admin/incidents.css'
 import './ai.css'
 
 export function ReportStatusBadge({ status }: { status: string }) {

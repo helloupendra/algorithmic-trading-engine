@@ -63,6 +63,8 @@ import { useNow, useShownDay, useWidth } from '../desk/data'
 import { Money, Swatch, Waiting } from '../desk/parts'
 import { InlineError } from '../../components/ui'
 import '../desk/desk.css'
+// tr-grow and tr-empty are the trade pages' classes; the live runner is its own lazy chunk and did not load them.
+import '../trade/trade.css'
 import './tracks.css'
 
 interface Frame {

@@ -10,6 +10,10 @@
 import { Link } from 'react-router-dom'
 import { Badge } from '../../components/ui'
 import { compareHref, MAX_COMPARE, MIN_COMPARE } from '../../lib/backtestCompare'
+// The classes used here (bt-pick, bt-compare-add) and by the pages that share this module. Each page is its own
+// lazy chunk: one that did not import the stylesheet itself (the runs list, the overview, run history) opened
+// without these rules unless another backtesting page had been visited first.
+import './backtesting.css'
 import { formatLots } from '../../lib/format'
 import { resolutionLabel } from '../../lib/symbols'
 import type { BacktestStatus } from '../../lib/types'
