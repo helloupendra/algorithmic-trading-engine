@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
-import { NAV, SITE, robotsTxt, sitemapXml, urlFor } from './build.mjs'
+import { DESCRIPTIONS, FAMILIES, NAV, SITE, pageTitle, robotsTxt, sitemapXml, urlFor } from './build.mjs'
 
 const repo = new URL('../../', import.meta.url)
 
@@ -36,6 +36,55 @@ describe('sitemap.xml', () => {
       [`${SITE.url}/docs/architecture/`, '2026-10-21', '0.7'],
     ])
     expect(xml).toMatch(/^<\?xml version="1.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www.sitemaps.org\/schemas\/sitemap\/0.9">\n/)
+  })
+})
+
+describe('sitemap.xml and canonical pages', () => {
+  it('leaves out a page that names another as its canonical', () => {
+    const xml = sitemapXml(
+      [
+        { url: `${SITE.url}/docs/strategies/fulcrum/`, lastmod: '2026-10-20', canonical: `${SITE.url}/docs/strategies/fulcrum/` },
+        { url: `${SITE.url}/docs/strategies/fulcrum-buy/`, lastmod: '2026-10-20', canonical: `${SITE.url}/docs/strategies/fulcrum/` },
+      ],
+      '2026-10-29',
+    )
+    expect(xml).toContain('/docs/strategies/fulcrum/</loc>')
+    expect(xml).not.toContain('fulcrum-buy')
+  })
+
+  it('knows the Fulcrum variants as one family, and not the family page itself', () => {
+    const fam = FAMILIES.find((f) => f.slug === 'strategies/fulcrum')
+    expect(fam?.member.test('FulcrumMultiBuy50')).toBe(true)
+    expect(fam?.member.test('Fulcrum')).toBe(false)
+    expect(fam?.member.test('TrendRider')).toBe(false)
+  })
+})
+
+describe('what a search result shows', () => {
+  it('keeps every title within 60 characters, the longest strategy name included', () => {
+    for (const it of NAV.flatMap((g) => g.items)) expect(pageTitle(it).length, pageTitle(it)).toBeLessThanOrEqual(60)
+    expect(pageTitle({ title: 'FulcrumQtyAdjustmentBuy', spec: true })).toBe('FulcrumQtyAdjustmentBuy strategy spec · OpenFNO Docs')
+    expect(pageTitle({ title: 'FulcrumQtyAdjustmentBuy', spec: true }).length).toBeLessThanOrEqual(60)
+  })
+
+  it('keeps every hand-written description within 160 characters, for a page that exists', () => {
+    const slugs = new Set(NAV.flatMap((g) => g.items).map((it) => it.slug))
+    for (const [slug, text] of Object.entries(DESCRIPTIONS)) {
+      expect(text.length, slug).toBeLessThanOrEqual(160)
+      // Strategy specs are found by a folder listing at build time; the others are in NAV.
+      if (!slug.startsWith('strategies/')) expect(slugs.has(slug), `${slug} is not a docs page`).toBe(true)
+    }
+    expect(SITE.docsDescription.length).toBeLessThanOrEqual(160)
+  })
+
+  it('calls the project source-available under the licence the repository carries', () => {
+    const licence = readFileSync(new URL('LICENSE', repo), 'utf8')
+    expect(licence).toContain('SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0')
+    expect(SITE.licence.url).toBe('https://polyformproject.org/licenses/noncommercial/1.0.0')
+    for (const text of [SITE.tagline, SITE.description, SITE.docsDescription]) {
+      expect(text).toMatch(/source-available/i)
+      expect(text).not.toMatch(/open[- ]source/i)
+    }
   })
 })
 

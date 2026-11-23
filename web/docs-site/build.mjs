@@ -25,11 +25,41 @@ const repo = path.resolve(here, '..', '..')
 export const SITE = {
   url: 'https://openfno.com',
   name: 'OpenFNO',
-  tagline: 'Open-source algorithmic trading for Indian F&O',
+  // Source-available, not open source: the repository's LICENSE is PolyForm
+  // Noncommercial 1.0.0 (site.test.mjs reads the file and holds this to it).
+  tagline: 'Source-available algorithmic trading for Indian F&O',
   github: 'https://github.com/helloupendra/algorithmic-trading-engine',
   description:
-    'OpenFNO is an open-source algorithmic trading platform for Indian F&O: live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk, and a console for operators and traders.',
+    'OpenFNO is a source-available algorithmic trading desk for Indian F&O: live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk, and a console for operators and traders.',
+  // The docs home page's own search snippet (a description over 160 characters is cut mid-sentence).
+  docsDescription:
+    'Documentation for OpenFNO, a source-available algo trading desk for Indian F&O: architecture, modules, strategy specifications and the operating manual.',
+  licence: { name: 'PolyForm Noncommercial 1.0.0', url: 'https://polyformproject.org/licenses/noncommercial/1.0.0' },
+  // English as written in India: the html lang, og:locale and the JSON-LD inLanguage.
+  lang: 'en-IN',
 }
+
+/**
+ * Search snippets written by hand, for the pages whose first paragraph is not one: a table of contents, a sentence
+ * that only introduces a list, or a note about how a rule came to be. Keyed by slug; at most 160 characters each
+ * (site.test.mjs checks). Every other page is described by its own first paragraph.
+ */
+export const DESCRIPTIONS = {
+  research:
+    'The design report behind OpenFNO: a .NET control plane, a Python strategy engine, TimescaleDB and Redis, and the reasoning for each choice.',
+  'modules/ai':
+    'One console page for the desk’s hosted language models: which agents exist, the model chain each one walks, when each last ran, and every call in full.',
+  'strategies/trend-rider-v2-ob':
+    'TrendRider V2 BE with its index stop at the order block: the last 5-minute candle that closed against the trade, kept within 0.15–0.5 × ADR of the entry.',
+}
+
+/**
+ * Near-duplicate specs that name one page as the original (rel=canonical). The Fulcrum variants share most of
+ * their text with each other, and a search engine that crawled all fifteen indexed few of them (Search Console,
+ * 19 Oct 2026). Each keeps its own page (the spec guard needs one per strategy) and its place in the navigation,
+ * points at the family page, and is left out of the sitemap; the family page lists them all.
+ */
+export const FAMILIES = [{ slug: 'strategies/fulcrum', name: 'Fulcrum', member: /^Fulcrum.+/ }]
 
 /** The navigation, in reading order. `src` is repo-relative; `slug` is the URL under /docs/. */
 export const NAV = [
@@ -147,16 +177,28 @@ function gitDate(...files) {
   return new Date().toISOString().slice(0, 10)
 }
 
+/** The day a file first entered the repository (an article's datePublished), or null outside a git checkout. */
+function gitFirstDate(file) {
+  try {
+    const out = execFileSync('git', ['log', '--diff-filter=A', '--follow', '--format=%cI', '--', file], { cwd: repo, encoding: 'utf8' }).trim()
+    if (out) return out.split('\n').pop().slice(0, 10)
+  } catch {
+    /* not a git checkout */
+  }
+  return null
+}
+
 /**
  * Plain text of the first real paragraph — the page's description. A provenance line ("Source: `strategies/…py`
  * (…Strategy). Every rule below is read from the code…", which opens every strategy spec) is skipped for the paragraph
  * after it: as the description it put a file path in every strategy page's search snippet (Search Console, 19 Oct 2026).
  */
-export function firstParagraph(md) {
+export function firstParagraph(md, prefix = '', max = 158) {
   const lines = md.split('\n')
   let i = 0
+  // A numbered list is skipped too: a report's table of contents is not its description.
   const skippable = (line) =>
-    line.trim() === '' || /^#/.test(line) || /^!\[/.test(line) || /^<!--/.test(line) || /^\|/.test(line) || /^[-*>]/.test(line) || /^```/.test(line)
+    line.trim() === '' || /^#/.test(line) || /^!\[/.test(line) || /^<!--/.test(line) || /^\|/.test(line) || /^[-*>]/.test(line) || /^\d+\.\s/.test(line) || /^```/.test(line)
   let para = []
   for (;;) {
     while (i < lines.length && skippable(lines[i])) {
@@ -170,14 +212,33 @@ export function firstParagraph(md) {
     while (i < lines.length && lines[i].trim() !== '' && !/^#/.test(lines[i]) && !/^```/.test(lines[i])) para.push(lines[i++])
     if (para.length === 0 || !/^Source:/i.test(para[0].trim()) || i >= lines.length) break
   }
-  const text = para
+  // Code spans are set aside while emphasis marks are removed, so an identifier keeps its underscores
+  // (otm_offset_steps used to read "otmoffsetsteps") and <StrategyName>.md keeps its bracket.
+  const codes = []
+  let text = para
+    // a list that follows its lead-in without a blank line reads on as a sentence: "…one: the news; the filings; …"
+    .map((line) => line.replace(/^\s*[-*]\s+/, ''))
     .join(' ')
-    .replace(/`([^`]*)`/g, '$1')
+    .replace(/`([^`]*)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[*_>]/g, '')
+    .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[\s(“"])([*_])(?=\S)([^*_]+?)(?<=\S)\2(?=[\s).,;:!?”"]|$)/g, '$1$3')
+    .replace(/\u0000(\d+)\u0000/g, (_, n) => codes[+n])
     .replace(/\s+/g, ' ')
     .trim()
-  return text.length > 158 ? text.slice(0, 155).replace(/\s+\S*$/, '') + '…' : text
+  // "…live on one console page. The page shows:" — the sentence that only introduces a list is dropped.
+  if (/:$/.test(text)) {
+    const cut = text.lastIndexOf('. ')
+    text = cut > 40 ? text.slice(0, cut + 1) : text.replace(/:$/, '.')
+  }
+  if (prefix) text = `${prefix}${text}`
+  return text.length > max ? text.slice(0, max - 3).replace(/\s+\S*$/, '') + '…' : text
+}
+
+/** The first sentence of that paragraph, whole: a line in a list of pages, where a cut snippet would read as broken. */
+export function firstSentence(md) {
+  const text = firstParagraph(md, '', Infinity)
+  return /^(.+?[.!?])(?=\s|$)/.exec(text)?.[1] ?? text
 }
 
 /* ------------------------------------------------------------- markdown */
@@ -288,6 +349,8 @@ function jsonLd(obj) {
 
 /** The navigation actually built: sections whose source files exist here. */
 let nav = NAV
+/** Whether this checkout builds the privacy page, so the footer never links to a page that is not there. */
+let hasPrivacy = false
 
 function navHtml(current) {
   return nav.map(
@@ -299,9 +362,18 @@ function navHtml(current) {
 
 export const urlFor = (slug) => (slug ? `/docs/${slug}/` : '/docs/')
 
-function layout({ page, body, toc, prev, next, description, dateModified }) {
+/** The <title>: at most 60 characters, and a strategy page says what it is rather than a bare class name. */
+export function pageTitle(page) {
+  if (page.index) return `${SITE.name} Docs — algorithmic trading for Indian F&O`
+  return `${page.title}${page.spec ? ' strategy spec' : ''} · ${SITE.name} Docs`
+}
+
+function layout({ page, body, toc, prev, next, description, dateModified, datePublished }) {
   const url = `${SITE.url}${urlFor(page.slug)}`
-  const title = page.index ? `${SITE.name} Docs — ${SITE.tagline}` : `${page.title} · ${SITE.name} Docs`
+  // A variant of a family names the family page as the original; every other page names itself.
+  const canonical = `${SITE.url}${urlFor(page.canonical ?? page.slug)}`
+  const title = pageTitle(page)
+  const cardTitle = page.index ? `${SITE.name} Docs` : `${page.title}${page.spec ? ' strategy spec' : ''}`
   const crumbs = [{ name: 'Docs', url: `${SITE.url}/docs/` }]
   if (!page.index) crumbs.push({ name: page.title, url })
   const tocHtml =
@@ -311,24 +383,28 @@ function layout({ page, body, toc, prev, next, description, dateModified }) {
           .join('')}</ol></nav>`
       : ''
   return `<!doctype html>
-<html lang="en">
+<html lang="${SITE.lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
-<link rel="canonical" href="${url}">
+<link rel="canonical" href="${canonical}">
+${canonical === url ? `<link rel="alternate" hreflang="${SITE.lang}" href="${url}">\n<link rel="alternate" hreflang="x-default" href="${url}">` : ''}
 <meta name="robots" content="index,follow,max-image-preview:large">
 <meta name="theme-color" content="#f6f8f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e1115" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="${SITE.name}">
-<meta property="og:title" content="${esc(page.index ? SITE.name + ' Docs' : page.title)}">
+<meta property="og:locale" content="${SITE.lang.replace('-', '_')}">
+<meta property="og:title" content="${esc(cardTitle)}">
 <meta property="og:description" content="${esc(description)}">
-<meta property="og:url" content="${url}">
+<meta property="og:url" content="${canonical}">
 <meta property="og:image" content="${SITE.url}/brand/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${esc(page.index ? SITE.name + ' Docs' : page.title)}">
+<meta name="twitter:title" content="${esc(cardTitle)}">
 <meta name="twitter:description" content="${esc(description)}">
 <meta name="twitter:image" content="${SITE.url}/brand/og-image.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -341,11 +417,15 @@ ${jsonLd({
   headline: page.index ? `${SITE.name} documentation` : page.title,
   description,
   url,
+  mainEntityOfPage: { '@type': 'WebPage', '@id': canonical },
+  image: `${SITE.url}/brand/og-image.png`,
+  ...(datePublished ? { datePublished } : {}),
   dateModified,
-  inLanguage: 'en',
-  isPartOf: { '@type': 'WebSite', name: SITE.name, url: SITE.url },
-  author: { '@type': 'Organization', name: SITE.name, url: SITE.url },
-  publisher: { '@type': 'Organization', name: SITE.name, url: SITE.url, logo: { '@type': 'ImageObject', url: `${SITE.url}/brand/openfno-mark-512.png` } },
+  inLanguage: SITE.lang,
+  // The same nodes the homepage declares (#site, #org), so the pages read as one site.
+  isPartOf: { '@type': 'WebSite', '@id': `${SITE.url}/#site`, name: SITE.name, url: `${SITE.url}/` },
+  author: { '@type': 'Organization', '@id': `${SITE.url}/#org`, name: SITE.name, url: `${SITE.url}/` },
+  publisher: { '@type': 'Organization', '@id': `${SITE.url}/#org`, name: SITE.name, url: `${SITE.url}/`, logo: { '@type': 'ImageObject', url: `${SITE.url}/brand/openfno-mark-512.png` } },
 })}
 ${jsonLd({
   '@context': 'https://schema.org',
@@ -373,7 +453,7 @@ ${jsonLd({
   <main class="main" id="content">
     <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a><span>/</span><a href="/docs/">Docs</a>${page.index ? '' : `<span>/</span><span aria-current="page">${esc(page.title)}</span>`}</nav>
     <article class="doc">
-      ${page.index ? '' : `<h1>${esc(page.title)}</h1><p class="doc__meta">Updated ${dateModified} · <a href="${SITE.github}/blob/main/${esc(page.src)}" target="_blank" rel="noopener">Edit on GitHub</a></p>`}
+      ${page.index ? '' : `<h1>${esc(page.title)}</h1><p class="doc__meta">Updated <time datetime="${dateModified}">${dateModified}</time> · <a href="${SITE.github}/blob/main/${esc(page.src)}" target="_blank" rel="noopener">Edit on GitHub</a>${page.family ? ` · Part of the <a href="${urlFor(page.family.slug)}">${esc(page.family.name)} family</a>` : ''}</p>`}
       ${body}
     </article>
     <nav class="pager" aria-label="Previous and next">
@@ -381,8 +461,8 @@ ${jsonLd({
       ${next ? `<a class="pager__next" href="${urlFor(next.slug)}"><small>Next</small>${esc(next.title)}</a>` : '<span></span>'}
     </nav>
     <footer class="foot">
-      <span>© ${new Date().getFullYear()} ${SITE.name} · open source, MIT</span>
-      <span><a href="${SITE.github}" target="_blank" rel="noopener">Source</a> · <a href="/docs/deploy/local/">Run it yourself</a></span>
+      <span>© ${new Date().getFullYear()} ${SITE.name} · source-available, <a href="${SITE.licence.url}" target="_blank" rel="noopener">${SITE.licence.name}</a></span>
+      <span><a href="${SITE.github}" target="_blank" rel="noopener">Source</a> · <a href="/docs/deploy/local/">Run it yourself</a>${hasPrivacy ? ' · <a href="/docs/privacy/">Privacy</a>' : ''}</span>
     </footer>
   </main>
   ${tocHtml ? `<aside class="aside">${tocHtml}</aside>` : ''}
@@ -464,7 +544,8 @@ export async function buildDocs({ outDir }) {
       for (const f of files) {
         const name = f.slice(0, -3)
         const slug = `strategies/${name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2').toLowerCase()}`
-        items.push({ slug, src: `${g.glob}/${f}`, title: name })
+        const family = FAMILIES.find((fam) => fam.member.test(name))
+        items.push({ slug, src: `${g.glob}/${f}`, title: name, spec: true, ...(family ? { canonical: family.slug, family } : {}) })
       }
     }
     if (items.length) nav.push({ ...g, items })
@@ -473,35 +554,58 @@ export async function buildDocs({ outDir }) {
   const slugToUrl = new Map(flat.filter((it) => it.src).map((it) => [it.src.replace(/\\/g, '/'), urlFor(it.slug)]))
   // The repo README is linked from a few docs; it has no page here.
   slugToUrl.set('README.md', `${SITE.github}#readme`)
+  hasPrivacy = flat.some((it) => it.slug === 'privacy')
+
+  // First every page's source, description and dates: a family page lists its variants with their
+  // descriptions, and the docs home is as new as its newest page.
+  const drafts = []
+  for (const item of flat) {
+    const page = { ...item, hasMermaid: false, hasMath: false }
+    if (page.index) {
+      drafts.push({ page })
+      continue
+    }
+    const raw = await fs.readFile(path.join(repo, page.src), 'utf8')
+    // A spec's description leads with its name: two variants with the same Idea sentence still differ.
+    const description = DESCRIPTIONS[page.slug] ?? (firstParagraph(raw, page.spec ? `${page.title}: ` : '') || `${page.title} — ${SITE.name} documentation.`)
+    drafts.push({ page, raw, description, dateModified: gitDate(page.src), datePublished: gitFirstDate(page.src) })
+  }
+  const newest = drafts.reduce((max, d) => (d.dateModified && d.dateModified > max ? d.dateModified : max), gitDate('web/docs-site'))
 
   const pages = []
-  for (let i = 0; i < flat.length; i++) {
-    const page = { ...flat[i], hasMermaid: false, hasMath: false }
+  for (let i = 0; i < drafts.length; i++) {
+    const { page, raw } = drafts[i]
+    let { description, dateModified, datePublished } = drafts[i]
     let body
     let toc = []
-    let description
-    let dateModified
     if (page.index) {
       body = indexBody()
-      description = SITE.description
-      dateModified = new Date().toISOString().slice(0, 10)
+      description = SITE.docsDescription
+      // The page is the navigation: it changes when a page is added or updated, not on every deploy.
+      dateModified = newest
     } else {
-      const raw = await fs.readFile(path.join(repo, page.src), 'utf8')
       const withMath = renderMath(raw)
       page.hasMath = withMath !== raw
       const { marked, toc: t } = makeMarked(page, slugToUrl)
       body = await marked.parse(withMath)
       toc = t
-      description = firstParagraph(raw) || `${page.title} — ${SITE.name} documentation.`
-      dateModified = gitDate(page.src)
+      const family = FAMILIES.find((fam) => fam.slug === page.slug)
+      const members = family ? drafts.filter((d) => d.page.family?.slug === family.slug) : []
+      if (members.length) {
+        const id = `the-${slugify(family.name)}-family`
+        toc.push({ depth: 2, id, text: `The ${esc(family.name)} family` })
+        body += `<h2 id="${id}"><a class="anchor" href="#${id}" aria-label="Link to this section">#</a>The ${esc(family.name)} family</h2>
+<p>The other strategies in the ${esc(family.name)} family, each with its own specification:</p>
+<ul>${members.map((d) => `<li><a href="${urlFor(d.page.slug)}">${esc(d.page.title)}</a> — ${esc(firstSentence(d.raw))}</li>`).join('')}</ul>\n`
+      }
     }
     const prev = i > 0 ? flat[i - 1] : null
     const next = i < flat.length - 1 ? flat[i + 1] : null
-    const html = layout({ page, body, toc, prev, next, description, dateModified })
+    const html = layout({ page, body, toc, prev, next, description, dateModified, datePublished })
     const dir = page.slug ? path.join(docsOut, page.slug) : docsOut
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(path.join(dir, 'index.html'), html)
-    pages.push({ url: `${SITE.url}${urlFor(page.slug)}`, lastmod: dateModified, hasMermaid: page.hasMermaid })
+    pages.push({ url: `${SITE.url}${urlFor(page.slug)}`, lastmod: dateModified, hasMermaid: page.hasMermaid, canonical: `${SITE.url}${urlFor(page.canonical ?? page.slug)}` })
   }
 
   // Assets: stylesheet, behaviour, KaTeX, mermaid, the screenshots.
@@ -520,10 +624,11 @@ export async function buildDocs({ outDir }) {
   // Site-wide: robots and the sitemap. The console itself is behind a sign-in
   // and is asked not to be indexed; the landing page and the docs are.
   await fs.writeFile(path.join(outDir, 'robots.txt'), robotsTxt())
-  // The homepage's words live in index.html and landing/, so its date is
-  // theirs rather than the build's: a lastmod that moves on every deploy
-  // tells a crawler nothing.
-  await fs.writeFile(path.join(outDir, 'sitemap.xml'), sitemapXml(pages, gitDate('web/index.html', 'web/src/pages/landing')))
+  // The homepage is web/home.html with its styles and script in src/home, so
+  // its date is theirs rather than the build's: a lastmod that moves on every
+  // deploy tells a crawler nothing. (It read index.html and src/pages/landing
+  // until 23 Nov 2026, which stopped being the homepage on 8 Nov.)
+  await fs.writeFile(path.join(outDir, 'sitemap.xml'), sitemapXml(pages, gitDate('web/home.html', 'web/src/home')))
   return pages.length
 }
 
@@ -539,9 +644,13 @@ export function robotsTxt() {
   return `User-agent: *\nAllow: /\n${CRAWL_DISALLOW.map((p) => `Disallow: ${p}\n`).join('')}\nSitemap: ${SITE.url}/sitemap.xml\n`
 }
 
-/** sitemap.xml: the homepage first, then every docs page as buildDocs collected them ({ url, lastmod }). */
+/**
+ * sitemap.xml: the homepage first, then every docs page as buildDocs collected them ({ url, lastmod, canonical? }).
+ * A page that names another as its canonical is left out: a sitemap lists the addresses to index.
+ */
 export function sitemapXml(pages, homeLastmod) {
-  const urls = [{ url: `${SITE.url}/`, lastmod: homeLastmod, priority: '1.0' }, ...pages.map((p) => ({ ...p, priority: p.url.endsWith('/docs/') ? '0.9' : '0.7' }))]
+  const own = pages.filter((p) => !p.canonical || p.canonical === p.url)
+  const urls = [{ url: `${SITE.url}/`, lastmod: homeLastmod, priority: '1.0' }, ...own.map((p) => ({ ...p, priority: p.url.endsWith('/docs/') ? '0.9' : '0.7' }))]
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
     .map((u) => `  <url><loc>${u.url}</loc><lastmod>${u.lastmod}</lastmod><priority>${u.priority}</priority></url>`)
     .join('\n')}\n</urlset>\n`
