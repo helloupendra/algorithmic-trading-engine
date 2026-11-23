@@ -1,6 +1,6 @@
 # Research & Architecture Report
 
-### A Polyglot, Event-Driven Execution Engine for Indian Equity & Derivatives Markets
+*A polyglot, event-driven execution engine for Indian equity and derivatives markets.*
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
