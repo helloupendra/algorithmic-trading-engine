@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Weekly: the whole database to Google Drive, verified.
+# Daily: the whole database to Google Drive, verified.
 #
 # scripts/aws/migrate-db.sh dump writes algotrading-<stamp>.tar: every table
 # except the raw ticks, plus the ASP.NET data-protection keys that decrypt the
 # stored broker credentials and the trading PIN. This uploads it to
 # DB_BACKUP_REMOTE (default openfno-new:OpenFNO/database), compares the Drive
 # copy's MD5 with the server's, removes the server copy only when they match,
-# and keeps the newest DB_BACKUP_KEEP (default 8) dumps on Drive.
+# and keeps the newest DB_BACKUP_KEEP (default 30) dumps on Drive. A day that
+# already has its dump there is skipped, so a second run the same day does nothing.
 #
 # The raw ticks reach Drive every morning through archive-to-drive.sh, so the
 # two jobs together cover what the database holds. Secrets in .env are not
 # copied. Restore: ./scripts/aws/migrate-db.sh restore <file.tar>
 #
-# Run by cron on Sunday at 02:30 IST, when no market is open; by hand with no
-# arguments. Setup notes are kept outside the public repo.
+# Run every morning by archive-to-drive.sh (cron, 06:00 IST), right after the
+# day's market-data archive, so both backups happen together while no market is
+# open; by hand with no arguments. Setup notes are kept outside the public repo.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
@@ -23,7 +25,7 @@ mkdir -p "$REPO_ROOT/logs"
 load_env >/dev/null 2>&1 || true
 
 REMOTE="${DB_BACKUP_REMOTE:-openfno-new:OpenFNO/database}"
-KEEP="${DB_BACKUP_KEEP:-8}"
+KEEP="${DB_BACKUP_KEEP:-30}"
 
 fail() {
   warn "database backup to Drive FAILED: $1 — see $LOG"
@@ -35,6 +37,12 @@ fail() {
   echo "== $(date '+%F %T') database backup -> $REMOTE"
   rclone lsf "$REMOTE" >/dev/null 2>&1 || { echo "cannot reach $REMOTE"; exit 3; }
 } >>"$LOG" 2>&1 || fail "Drive cannot be reached (token?)"
+
+today="algotrading-$(date +%Y%m%d)-"
+if rclone lsf "$REMOTE" --include "${today}*.tar" 2>>"$LOG" | grep -q .; then
+  echo "today's dump is already on Drive; nothing to do" >>"$LOG"
+  exit 0
+fi
 
 # The dump reads the database through docker; nice and ionice keep the live
 # desk ahead of it. </dev/null so docker exec -i never reads this script's stdin.

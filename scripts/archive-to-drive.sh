@@ -4,7 +4,9 @@
 # (scripts/archive_to_drive.py).
 #
 # Run by cron at 06:00 IST, after the UTC day has ended and before the 08:45
-# morning job (setup notes are kept outside the public repo).
+# morning job (setup notes are kept outside the public repo). When it is done,
+# the whole database follows (scripts/backup-db-to-drive.sh), so both backups
+# run together every morning.
 # ARCHIVE_DROP_OLDER_THAN_DAYS in .env, when set, also frees the server's disk
 # of verified days older than that; unset, nothing is ever deleted.
 set -uo pipefail
@@ -31,3 +33,7 @@ else
   warn "archive to Drive FAILED — see $LOG"
   notify "AlgoTrading" "Archive to Drive FAILED at $(date '+%H:%M'). Nothing was deleted. Log: logs/archive-$(date +%F).log"
 fi
+
+# The owner wants both backups every day, together: the database follows the
+# market data. Its own log and alerts are in logs/db-backup-<date>.log.
+scripts/backup-db-to-drive.sh || true
