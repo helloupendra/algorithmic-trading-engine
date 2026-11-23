@@ -1,21 +1,24 @@
 /**
  * AI → Agents (/ai/agents): every agent the desk has or plans.
  *
- * Each agent says what it does and why, when it runs, which tier and chain
- * of models it uses (in fallback order), what it may read and the read-only
- * tools it may call to read it, what it may never do, when it last ran and what that call came to, and today's calls,
- * tokens and errors. A built agent can be switched off (and on) with a
- * reason, and given a chain of its own or put back on its tier's. A planned
- * agent is code still to write: it is shown dimmer with its phase, and has
- * no switch, because there is nothing to switch on.
+ * One row an agent: its name, whether it is on, what it does, its first model,
+ * its last call, today's calls and its switch, so the state of all fifteen is
+ * one screen (24 Nov 2026: as a full card each, the page was 4,800px for nine
+ * agents). Opening a row shows the rest: when it runs, the chain of models
+ * (and its editor), what it may read and the read-only tools it may call,
+ * what it may never do, Run now, and today's tokens and errors. A built agent
+ * can be switched off (and on) with a reason from its row. A planned agent is
+ * code still to write: it is shown dimmer and has no switch.
  *
- * Under them, the AI Trader's record (its mode, its limits, today's looks
- * and every decision with the brief it read), the assistant's check and
- * exam, and the parts of the desk that look like agents but are rules in
- * code (Sentinel, the pager, the supervisor), so the list is the whole story.
+ * Under them, folded to one line each until opened: the AI Trader's record
+ * (its mode, its limits, today's looks and every decision with the brief it
+ * read), the assistant's check and exam, and the parts of the desk that look
+ * like agents but are rules in code (Sentinel, the pager, the supervisor).
+ * A link to one of them (#ai-trader, a scoreboard row) opens it.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   AGENT_STATUSES,
@@ -46,7 +49,8 @@ import { formatDateTime, formatInrSigned } from '../../lib/format'
 import { useAiTraderStatus } from '../../lib/queries'
 import { shortDay } from '../../lib/replay'
 import { DateField } from '../../components/DateField'
-import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
+import { IconChevronDown, IconChevronRight } from '../../components/icons'
+import { Badge, EmptyState, InlineError, Loading } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
 import { AiTraderDecisionList, AiTraderLessons, AiTraderScoreboard, AiTraderShadowBook } from './AiTraderParts'
 import { errorText, useNow } from './common'
@@ -273,12 +277,69 @@ function RunNow({ agentKey }: { agentKey: string }) {
  * on weekdays the desk asks the Desk Assistant questions the code knows the
  * answers to, grades the answers by code, and writes one report a day.
  */
+/**
+ * A panel that is one line until it is opened: its title, a short summary of
+ * what is inside, and anything that must be seen without opening it. The body
+ * is not mounted while it is shut, so a closed panel reads nothing.
+ */
+function Fold({
+  title,
+  summary,
+  actions,
+  open,
+  onToggle,
+  className,
+  children,
+}: {
+  title: ReactNode
+  summary?: ReactNode
+  actions?: ReactNode
+  open: boolean
+  onToggle: () => void
+  className?: string
+  children: ReactNode
+}) {
+  const bodyId = useId()
+  return (
+    <section className={`panel ai-fold ${open ? 'is-open' : ''} ${className ?? ''}`}>
+      <header className="ai-fold__head">
+        <h2 className="panel__title ai-fold__title">
+          <button type="button" className="ai-fold__btn" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>
+            {open ? <IconChevronDown className="ai-fold__chev" aria-hidden="true" /> : <IconChevronRight className="ai-fold__chev" aria-hidden="true" />}
+            {title}
+          </button>
+        </h2>
+        {summary && <span className="ai-fold__sum">{summary}</span>}
+        {actions && <span className="ai-fold__actions">{actions}</span>}
+      </header>
+      {open && (
+        <div id={bodyId} className="ai-fold__body">
+          {children}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function AssistantCheckPanel({ now }: { now: number }) {
+  const [open, setOpen] = useState(false)
   const latest = useLatestAgentReport('assistant-check')
   const d = latest.data
   const c = d ? readAssistantCheck(d.data) : null
+  const last = d ? (
+    <>
+      last {d.report.subjectType === 'check' ? shortDate(d.report.subjectId) : `report #${d.report.id}`}:{' '}
+      <span className={d.report.status === 'ok' ? 'pos' : 'warn'}>{c ? checkScoreText(c) : d.report.title}</span>
+    </>
+  ) : latest.isPending ? (
+    'not read yet'
+  ) : latest.isError ? (
+    'could not be read'
+  ) : (
+    'no check has run yet'
+  )
   return (
-    <Panel title={<>Assistant check</>} className="ai-utility">
+    <Fold title={<>Assistant check</>} summary={<>12 questions on weekdays · {last}</>} open={open} onToggle={() => setOpen((v) => !v)} className="ai-utility">
       <p className="ai-utility__what">
         A test of the Desk Assistant, graded by code: up to 12 questions whose answers the desk knows (today's runs, the worst
         run and its net, open legs, live incidents, the checkup's verdict, NIFTY's PCR and max pain, one sum). It passes a day at{' '}
@@ -315,7 +376,7 @@ function AssistantCheckPanel({ now }: { now: number }) {
           </dd>
         </div>
       </dl>
-    </Panel>
+    </Fold>
   )
 }
 
@@ -325,11 +386,24 @@ function AssistantCheckPanel({ now }: { now: number }) {
  * week to week.
  */
 function AssistantExamPanel({ now }: { now: number }) {
+  const [open, setOpen] = useState(false)
   const latest = useLatestAgentReport('assistant-exam')
   const d = latest.data
   const e = d ? readAssistantExam(d.data) : null
+  const last = d ? (
+    <>
+      last {shortDate(d.report.sessionDate ?? '') || `report #${d.report.id}`}:{' '}
+      <span className={d.report.status === 'ok' ? 'pos' : 'warn'}>{e ? examScoreText(e) : d.report.title}</span>
+    </>
+  ) : latest.isPending ? (
+    'not read yet'
+  ) : latest.isError ? (
+    'could not be read'
+  ) : (
+    'no exam has finished yet'
+  )
   return (
-    <Panel title={<>Assistant exam</>} className="ai-utility">
+    <Fold title={<>Assistant exam</>} summary={<>weekly, on Sundays · {last}</>} open={open} onToggle={() => setOpen((v) => !v)} className="ai-utility">
       <p className="ai-utility__what">
         The Desk Assistant's score that compares week to week: up to 150 questions about finished trading days (runs, nets,
         charges, the worst and best run, each account) and a little arithmetic, answers read by code and frozen. Each is asked
@@ -367,7 +441,7 @@ function AssistantExamPanel({ now }: { now: number }) {
           </dd>
         </div>
       </dl>
-    </Panel>
+    </Fold>
   )
 }
 
@@ -378,7 +452,13 @@ function AssistantExamPanel({ now }: { now: number }) {
  * like every scheduled agent's; this is its record: the mode, the limits,
  * today's looks, and every decision with the brief it read.
  */
-function AiTraderPanel({ now }: { now: number }) {
+function AiTraderPanel({ now, wanted }: { now: number; wanted: boolean }) {
+  // Shut until asked for. A link to it or to a scoreboard row (`wanted`) opens it, and it stays open after.
+  const [opened, setOpened] = useState(wanted)
+  useEffect(() => {
+    if (wanted) setOpened(true)
+  }, [wanted])
+  const open = opened
   const status = useAiTraderStatus()
   const today = istDay(now)
   const [picked, setPicked] = useState<string | null>(null)
@@ -391,9 +471,29 @@ function AiTraderPanel({ now }: { now: number }) {
 
   return (
     <div id="ai-trader" className="atr-anchor">
-      <Panel
+      <Fold
         className="ai-utility atr-panel"
         title={<>AI Trader</>}
+        open={open}
+        onToggle={() => setOpened((v) => !v)}
+        summary={
+          s ? (
+            <>
+              {s.today ? dayCountsText(s.today) : 'today not known'}
+              {s.shadow && s.shadow.positions > 0 && (
+                <>
+                  {' · shadow net '}
+                  <b className={netTone(s.shadow.net)}>{formatInrSigned(s.shadow.net)}</b>
+                </>
+              )}
+              {' · scoreboard, lessons, shadow book, decisions'}
+            </>
+          ) : status.isPending ? (
+            'reading…'
+          ) : (
+            'its record: scoreboard, lessons, shadow book, decisions'
+          )
+        }
         actions={
           s ? (
             <>
@@ -506,7 +606,7 @@ function AiTraderPanel({ now }: { now: number }) {
                 : 'No look today. It is switched off: switch it on on its card, or press Run now for one look.'
           }
         />
-      </Panel>
+      </Fold>
     </div>
   )
 }
@@ -527,6 +627,17 @@ function LastCall({ agent, now }: { agent: AiAgent; now: number }) {
   )
 }
 
+/** The last call in a few characters for the row: when, and how it ended. */
+function LastCallBrief({ agent, now }: { agent: AiAgent; now: number }) {
+  const c = agent.lastCall
+  if (!c) return <span className="faint">{agent.built ? 'never called' : 'not built'}</span>
+  return (
+    <>
+      <span title={`${formatDateTime(c.utc)} IST`}>{callTime(c.utc, now)}</span> <OutcomeBadge outcome={c.outcome} />
+    </>
+  )
+}
+
 function AgentCard({
   agent,
   now,
@@ -534,6 +645,8 @@ function AgentCard({
   catalogNote,
   tierChain,
   highlighted,
+  open,
+  onToggle,
 }: {
   agent: AiAgent
   now: number
@@ -541,128 +654,175 @@ function AgentCard({
   catalogNote: string | null
   tierChain: string[] | null
   highlighted: boolean
+  open: boolean
+  onToggle: () => void
 }) {
   const planned = agent.status === 'planned'
   const t = agent.today
+  const bodyId = `agent-${agent.key}-details`
+  const first = agent.chain[0]
   return (
-    <article id={`agent-${agent.key}`} className={`ai-agent ai-agent--${agent.status} ${highlighted ? 'ai-agent--target' : ''}`}>
-      <header className="ai-agent__head">
-        <span className="ai-agent__num">#{agent.number}</span>
-        <h3 className="ai-agent__name">{agent.name}</h3>
-        <StatusPill status={agent.status} phase={agent.phase} />
-        <span className="ai-agent__tag faint">
-          {!planned && `phase ${agent.phase} · `}
-          {agent.tierLabel} tier
-        </span>
+    <article id={`agent-${agent.key}`} className={`ai-agent ai-agent--${agent.status} ${highlighted ? 'ai-agent--target' : ''} ${open ? 'is-open' : ''}`}>
+      <header className="ai-agent__row">
+        <h3 className="ai-agent__title">
+          <button type="button" className="ai-agent__toggle" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>
+            {open ? <IconChevronDown className="ai-agent__chev" aria-hidden="true" /> : <IconChevronRight className="ai-agent__chev" aria-hidden="true" />}
+            <span className="ai-agent__num">#{agent.number}</span>
+            <span className="ai-agent__name">{agent.name}</span>
+          </button>
+        </h3>
+        <div className="ai-agent__meta">
+          <span className="ai-agent__cell ai-agent__cell--state">
+            <StatusPill status={agent.status} />
+          </span>
+          <span className="ai-agent__cell ai-agent__cell--job" title={agent.job}>
+            {agent.job}
+          </span>
+          <span className="ai-agent__cell ai-agent__cell--model" title={agent.chain.map((m) => modelName(m)).join(' → ') || undefined}>
+            <span className="faint">{agent.tierLabel}</span> {first ? modelName(first) : '—'}
+            {agent.chain.length > 1 && <span className="faint"> +{agent.chain.length - 1}</span>}
+          </span>
+          <span className="ai-agent__cell ai-agent__cell--last">
+            <LastCallBrief agent={agent} now={now} />
+          </span>
+          <span className="ai-agent__cell ai-agent__cell--today">
+            {planned ? (
+              <span className="faint">phase {agent.phase}</span>
+            ) : t ? (
+              <>
+                {t.calls} call{t.calls === 1 ? '' : 's'}
+                {t.failed > 0 && (
+                  <span className="neg">
+                    {' '}
+                    · {t.failed} error{t.failed === 1 ? '' : 's'}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="faint">not known</span>
+            )}
+          </span>
+        </div>
         {agent.built && <AgentSwitch agent={agent} />}
       </header>
-      <p className="ai-agent__job">{agent.job}</p>
-      {agent.useCase && <p className="ai-agent__use muted">{agent.useCase}</p>}
-      <dl className="ai-facts">
-        <div>
-          <dt>Runs</dt>
-          <dd>
-            {agent.schedule}
-            {agent.nextRunUtc && <span className="faint"> · next {callTime(agent.nextRunUtc, now)}</span>}
-          </dd>
-        </div>
-        <div>
-          <dt>Models</dt>
-          <dd>
-            <AgentChain agent={agent} catalog={catalog} catalogNote={catalogNote} tierChain={tierChain} />
-          </dd>
-        </div>
-        <div>
-          <dt>Reads</dt>
-          <dd>{agent.reads}</dd>
-        </div>
-        {agent.built && SCHEDULED_AGENTS[agent.key] && (
-          <>
+      {open && (
+        <div id={bodyId} className="ai-agent__body">
+          <p className="ai-agent__job">
+            {agent.job}
+            <span className="ai-agent__tag faint">
+              {' '}
+              · {!planned && `phase ${agent.phase} · `}
+              {agent.tierLabel} tier
+            </span>
+          </p>
+          {agent.useCase && <p className="ai-agent__use muted">{agent.useCase}</p>}
+          <dl className="ai-facts">
             <div>
-              <dt>Writes</dt>
+              <dt>Runs</dt>
               <dd>
-                {SCHEDULED_AGENTS[agent.key].decisions ? (
-                  <>
-                    Decisions: {SCHEDULED_AGENTS[agent.key].writes}. <a href="#ai-trader">Its decisions</a>
-                  </>
-                ) : (
-                  <>
-                    Reports: {SCHEDULED_AGENTS[agent.key].writes}.{' '}
-                    <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Its reports</Link>
-                  </>
-                )}
+                {agent.schedule}
+                {agent.nextRunUtc && <span className="faint"> · next {callTime(agent.nextRunUtc, now)}</span>}
               </dd>
             </div>
             <div>
-              <dt>By hand</dt>
+              <dt>Models</dt>
               <dd>
-                <RunNow agentKey={agent.key} />
-              </dd>
-            </div>
-          </>
-        )}
-        {agent.tools.length > 0 && (
-          <div>
-            <dt>Tools</dt>
-            <dd>
-              <AgentTools tools={agent.tools} />
-            </dd>
-          </div>
-        )}
-        {agent.chat && agent.key !== DESK_ASSISTANT && (
-          <div>
-            <dt>In a chat</dt>
-            <dd>
-              <AgentTools tools={agent.chatTools} />
-              <Link to={`/ai/assistant?agent=${encodeURIComponent(agent.key)}`}>Talk with it →</Link>
-            </dd>
-          </div>
-        )}
-        <div>
-          <dt>Never</dt>
-          <dd>{agent.limits}</dd>
-        </div>
-        {!planned && (
-          <>
-            <div>
-              <dt>Last call</dt>
-              <dd>
-                <LastCall agent={agent} now={now} />
+                <AgentChain agent={agent} catalog={catalog} catalogNote={catalogNote} tierChain={tierChain} />
               </dd>
             </div>
             <div>
-              <dt>Today</dt>
-              <dd>
-                {t ? (
-                  <>
-                    {t.calls} call{t.calls === 1 ? '' : 's'} · {formatTokens(t.totalTokens)} tokens ·{' '}
-                    <span className={t.failed > 0 ? 'neg' : ''}>
-                      {t.failed} error{t.failed === 1 ? '' : 's'}
-                    </span>
-                    {t.calls > 0 && (
+              <dt>Reads</dt>
+              <dd>{agent.reads}</dd>
+            </div>
+            {agent.built && SCHEDULED_AGENTS[agent.key] && (
+              <>
+                <div>
+                  <dt>Writes</dt>
+                  <dd>
+                    {SCHEDULED_AGENTS[agent.key].decisions ? (
                       <>
-                        {' · '}
-                        <Link to={`/ai/calls?agent=${encodeURIComponent(agent.key)}`}>its calls</Link>
+                        Decisions: {SCHEDULED_AGENTS[agent.key].writes}. <a href="#ai-trader">Its decisions</a>
+                      </>
+                    ) : (
+                      <>
+                        Reports: {SCHEDULED_AGENTS[agent.key].writes}.{' '}
+                        <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Its reports</Link>
                       </>
                     )}
-                  </>
-                ) : (
-                  <span className="faint">not known yet</span>
-                )}
-              </dd>
+                  </dd>
+                </div>
+                <div>
+                  <dt>By hand</dt>
+                  <dd>
+                    <RunNow agentKey={agent.key} />
+                  </dd>
+                </div>
+              </>
+            )}
+            {agent.tools.length > 0 && (
+              <div>
+                <dt>Tools</dt>
+                <dd>
+                  <AgentTools tools={agent.tools} />
+                </dd>
+              </div>
+            )}
+            {agent.chat && agent.key !== DESK_ASSISTANT && (
+              <div>
+                <dt>In a chat</dt>
+                <dd>
+                  <AgentTools tools={agent.chatTools} />
+                  <Link to={`/ai/assistant?agent=${encodeURIComponent(agent.key)}`}>Talk with it →</Link>
+                </dd>
+              </div>
+            )}
+            <div>
+              <dt>Never</dt>
+              <dd>{agent.limits}</dd>
             </div>
-          </>
-        )}
-        {agent.updatedUtc && (
-          <div>
-            <dt>Changed</dt>
-            <dd>
-              {formatDateTime(agent.updatedUtc)} IST{agent.updatedBy ? ` by ${agent.updatedBy}` : ''}
-              {agent.reason ? <span className="muted">: {agent.reason}</span> : ''}
-            </dd>
-          </div>
-        )}
-      </dl>
+            {!planned && (
+              <>
+                <div>
+                  <dt>Last call</dt>
+                  <dd>
+                    <LastCall agent={agent} now={now} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Today</dt>
+                  <dd>
+                    {t ? (
+                      <>
+                        {t.calls} call{t.calls === 1 ? '' : 's'} · {formatTokens(t.totalTokens)} tokens ·{' '}
+                        <span className={t.failed > 0 ? 'neg' : ''}>
+                          {t.failed} error{t.failed === 1 ? '' : 's'}
+                        </span>
+                        {t.calls > 0 && (
+                          <>
+                            {' · '}
+                            <Link to={`/ai/calls?agent=${encodeURIComponent(agent.key)}`}>its calls</Link>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <span className="faint">not known yet</span>
+                    )}
+                  </dd>
+                </div>
+              </>
+            )}
+            {agent.updatedUtc && (
+              <div>
+                <dt>Changed</dt>
+                <dd>
+                  {formatDateTime(agent.updatedUtc)} IST{agent.updatedBy ? ` by ${agent.updatedBy}` : ''}
+                  {agent.reason ? <span className="muted">: {agent.reason}</span> : ''}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      )}
     </article>
   )
 }
@@ -713,6 +873,19 @@ export function AiAgentsPage() {
     return () => window.clearTimeout(timer)
   }, [scrollTo, data])
 
+  // Which rows are open. A link to an agent opens its row, so what it points at is in view.
+  const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(() => new Set())
+  useEffect(() => {
+    if (target) setOpenKeys((was) => (was.has(target) ? was : new Set(was).add(target)))
+  }, [target])
+  const toggle = (key: string) =>
+    setOpenKeys((was) => {
+      const next = new Set(was)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const [rulesOpen, setRulesOpen] = useState(false)
+
   const counts: Record<Filter, number> = { all: data?.agents.length ?? 0, on: 0, off: 0, planned: 0 }
   for (const a of data?.agents ?? []) if (a.status in counts) counts[a.status]++
   const shown = (data?.agents ?? []).filter((a) => filter === 'all' || a.status === filter).sort((a, b) => a.number - b.number)
@@ -752,6 +925,15 @@ export function AiAgentsPage() {
             </button>
           ))}
         </div>
+        {shown.length > 0 && (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => setOpenKeys(shown.every((a) => openKeys.has(a.key)) ? new Set() : new Set(shown.map((a) => a.key)))}
+          >
+            {shown.every((a) => openKeys.has(a.key)) ? 'Close all details' : 'Open all details'}
+          </button>
+        )}
         {agents.isError && data && <span className="small warn">Refresh failed: showing the last list.</span>}
       </div>
 
@@ -763,6 +945,15 @@ export function AiAgentsPage() {
         <EmptyState>{filter === 'all' ? 'The API listed no agents.' : `No agent is ${agentStatus(filter).label.toLowerCase()}.`}</EmptyState>
       ) : (
         <div className="ai-agents">
+          <div className="ai-agents__head" aria-hidden="true">
+            <span>Agent</span>
+            <span>State</span>
+            <span>What it does</span>
+            <span>Model</span>
+            <span>Last call</span>
+            <span>Today</span>
+            <span>Switch</span>
+          </div>
           {shown.map((a) => (
             <AgentCard
               key={a.key}
@@ -772,17 +963,25 @@ export function AiAgentsPage() {
               catalogNote={catalogNote}
               tierChain={tierChains.get(a.tier) ?? null}
               highlighted={target === a.key}
+              open={openKeys.has(a.key)}
+              onToggle={() => toggle(a.key)}
             />
           ))}
         </div>
       )}
 
-      {data && filter === 'all' && <AiTraderPanel now={now} />}
+      {data && filter === 'all' && <AiTraderPanel now={now} wanted={toTrader || toScore} />}
       {data && filter === 'all' && <AssistantCheckPanel now={now} />}
       {data && filter === 'all' && <AssistantExamPanel now={now} />}
 
       {data && (
-        <Panel title={<>Also on the desk, not AI</>} className="ai-rules">
+        <Fold
+          title={<>Also on the desk, not AI</>}
+          summary={data.ruleBased.length === 0 ? 'none listed' : <>rules in code, no model: {data.ruleBased.map((r) => r.name).join(', ')}</>}
+          open={rulesOpen}
+          onToggle={() => setRulesOpen((v) => !v)}
+          className="ai-rules"
+        >
           {data.ruleBased.length === 0 ? (
             <EmptyState>None listed.</EmptyState>
           ) : (
@@ -801,7 +1000,7 @@ export function AiAgentsPage() {
             These watch, page and forecast with rules and statistics written in code. None of them calls a language model, and
             none is switched from here.
           </p>
-        </Panel>
+        </Fold>
       )}
     </div>
   )

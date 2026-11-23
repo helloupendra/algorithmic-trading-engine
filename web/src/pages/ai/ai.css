@@ -685,40 +685,113 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-md > .ai-md__rule { margin: 12px 0; border: 0; border-top: 1px solid var(--line); }
 
 /* --- agents ------------------------------------------------------------------------ */
+/* One row an agent in one list, so the state of all fifteen is a screen (as a full card each, nine agents were a
+   4,800px page). The columns are fixed, so the eye runs down them: name, state, what it does, first model, last
+   call, today, switch. A row's details open under it. */
 .ai-agents {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
-  gap: 10px;
-}
-.ai-agent {
-  min-width: 0;
-  padding: 12px 14px;
+  --ai-agent-cols: minmax(170px, 232px) 84px minmax(0, 1fr) minmax(0, 190px) minmax(0, 132px) minmax(0, 118px) 70px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.ai-agents__head,
+.ai-agent__row {
+  display: grid;
+  grid-template-columns: var(--ai-agent-cols);
+  align-items: center;
+  column-gap: 12px;
+  padding: 0 12px;
+}
+.ai-agents__head {
+  min-height: 30px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.ai-agents__head > span:last-child { text-align: right; }
+.ai-agent {
+  min-width: 0;
+  border-top: 1px solid var(--line-soft);
   scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px);
 }
-/* A built agent takes the row: it has the switch, the chain editor and a history. */
-.ai-agent--on,
-.ai-agent--off { grid-column: 1 / -1; }
-.ai-agent--on { border-left: 2px solid color-mix(in srgb, var(--pos) 55%, transparent); }
-.ai-agent--off { border-left: 2px solid color-mix(in srgb, var(--warn) 60%, transparent); }
-.ai-agent--planned { background: transparent; border-style: dashed; }
-.ai-agent--planned .ai-agent__name,
-.ai-agent--planned .ai-agent__job { color: var(--text-2); }
-.ai-agent--planned .ai-facts > div > dd { color: var(--text-3); }
-.ai-agent--target { border-color: var(--brand-line); }
-.ai-agent__head {
+.ai-agents__head + .ai-agent { border-top: 0; }
+.ai-agent:last-child,
+.ai-agent:last-child > .ai-agent__row { border-radius: 0 0 var(--radius) var(--radius); }
+.ai-agent__row { min-height: 40px; }
+/* On or off at a glance down the left edge; a planned agent has neither. */
+.ai-agent--on > .ai-agent__row { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--pos) 55%, transparent); }
+.ai-agent--off > .ai-agent__row { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--warn) 60%, transparent); }
+.ai-agent.is-open > .ai-agent__row { background: var(--surface2); border-radius: 0; }
+.ai-agent--target > .ai-agent__row { background: var(--brand-soft); }
+.ai-agent__title { margin: 0; min-width: 0; font-size: inherit; font-weight: inherit; }
+.ai-agent__toggle {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.ai-agent__num { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-.ai-agent__name { margin: 0; font-size: 13.5px; font-weight: 650; }
+.ai-agent__toggle:hover .ai-agent__name { color: var(--brand-hi); }
+.ai-agent__chev { flex: none; width: 13px; height: 13px; color: var(--text-3); }
+.ai-agent__num { flex: none; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ai-agent__name { min-width: 0; font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The row's cells are the grid's own columns on a desk; a phone lays them out as one wrapping line (below). */
+.ai-agent__meta { display: contents; }
+.ai-agent__cell { min-width: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-agent__cell--state { overflow: visible; }
+.ai-agent__cell--last { display: inline-flex; align-items: center; gap: 6px; }
+.ai-agent__cell--today { font-variant-numeric: tabular-nums; }
+.ai-agent--planned .ai-agent__name,
+.ai-agent--planned .ai-agent__cell { color: var(--text-3); }
+.ai-agent__row .ai-switch > .oc-toggle { justify-self: end; margin-left: 0; }
+.ai-agent__row .ai-switch__ask { grid-column: 1 / -1; margin: 0 0 10px; }
+.ai-agent__body { padding: 10px 14px 14px 41px; border-top: 1px dashed var(--line-soft); }
+.ai-agent--planned .ai-facts > div > dd { color: var(--text-3); }
 .ai-agent__tag { font-size: 11.5px; }
-.ai-agent__job { margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
+.ai-agent__job { margin: 0; font-size: 13px; line-height: 1.5; }
 .ai-agent__use { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; }
+
+/* A panel that is one line until it is opened (the AI Trader's record, the check, the exam, the rule-based
+   parts): its title, what is inside in a few words, and what must be seen without opening it. */
+/* Three classes, to win over the page's own panel padding (.hp .panel). */
+.page .panel.ai-fold { padding: 0; }
+.page > .atr-anchor + .ai-fold,
+.page > .ai-fold + .ai-fold { margin-top: 8px; }
+.ai-fold__head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 44px; padding: 4px 14px; }
+.ai-fold__title { margin: 0; }
+.ai-fold__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.ai-fold__btn:hover { color: var(--brand-hi); }
+.ai-fold__chev { flex: none; width: 13px; height: 13px; color: var(--text-3); }
+.ai-fold__sum { flex: 1 1 220px; min-width: 0; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-fold.is-open .ai-fold__sum { visibility: hidden; }
+.ai-fold__actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.ai-fold__body { padding: 12px 16px 14px; border-top: 1px solid var(--line-soft); }
 .ai-agent__chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .ai-agent__chainwhose { font-size: 11.5px; }
 .ai-agent__last { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
@@ -1266,6 +1339,25 @@ a.ai-subject:hover { text-decoration: underline; }
   .ai-a { padding: 8px 11px 11px; }
   .ai-tool__body { padding-left: 10px; }
   .ai-tool__summary { padding-left: 0; }
+
+  /* Agents on a phone: the name and the switch on one line, the row's cells as one wrapping line under it. */
+  .ai-agents__head { display: none; }
+  .ai-agent__row { grid-template-columns: minmax(0, 1fr) auto; padding: 0 10px 8px; }
+  .ai-agent:first-of-type { border-top: 0; }
+  .ai-agent__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; grid-column: 1 / -1; grid-row: 2; padding-left: 17px; }
+  .ai-agent__cell { overflow: visible; }
+  .ai-agent__cell--job { display: none; }
+  /* The switch beside the name already says on or off; only a planned agent, which has none, keeps its pill. */
+  .ai-agent--on .ai-agent__cell--state,
+  .ai-agent--off .ai-agent__cell--state { display: none; }
+  .ai-agent__cell--model { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+  .ai-agent__meta { padding-left: 20px; }
+  .ai-agent__row .ai-switch > .oc-toggle { grid-column: 2; grid-row: 1; }
+  .ai-agent__body { padding: 10px 10px 12px; }
+  .ai-fold__head { padding: 4px 10px; }
+  .ai-fold__sum { flex-basis: 100%; order: 3; white-space: normal; padding: 0 0 6px 21px; }
+  .ai-fold.is-open .ai-fold__sum { display: none; }
+  .ai-fold__body { padding: 10px 10px 12px; }
 
   .ai-facts { grid-template-columns: minmax(0, 1fr); gap: 1px; }
   .ai-facts > div + div > dt { margin-top: 7px; }
