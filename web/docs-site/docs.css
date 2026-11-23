@@ -127,7 +127,9 @@ img { max-width: 100%; height: auto; }
 .doc h2:hover .anchor, .doc h3:hover .anchor, .doc h4:hover .anchor { opacity: 1; }
 .anchor:hover { text-decoration: none; color: var(--brand-hi); }
 
-code { font-family: var(--mono); font-size: 0.88em; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; padding: 1px 6px; color: var(--text); }
+/* A path or a metric name in a sentence breaks where it must: unbroken, one
+   long name made the whole page scroll sideways on a phone. */
+code { font-family: var(--mono); font-size: 0.88em; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; padding: 1px 6px; color: var(--text); overflow-wrap: anywhere; }
 pre { background: var(--bg1); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; font-size: 13px; line-height: 1.55; }
 pre code { background: none; border: 0; padding: 0; font-size: inherit; color: var(--text); }
 pre.mermaid { background: var(--surface); text-align: center; color: transparent; }

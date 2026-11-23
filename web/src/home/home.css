@@ -77,3 +77,29 @@
   --leaf: #4fd9a5;
   --candle: #e8ecf1;
 }
+
+/* A phone reads the page's sentences at 13px and its notes at 12px. The page
+   is set small on purpose, but at 390 wide 92% of its text was under 12px
+   (11px paragraphs, 10px spec lines, 9px notes), which a phone reader has to
+   pinch-zoom and a search engine reports as "text too small to read". The
+   labels inside the drawn panels (tables, the terminal, eyebrows) keep their
+   size: they are part of the picture. */
+@media (max-width: 800px) {
+  .home-page .section-intro > p,
+  .home-page .sc-copy p,
+  .home-page .proof-heading p,
+  .home-page .home-cta p,
+  .home-page .ownership-copy > p { font-size: 13px; line-height: 1.65; }
+  .home-page .layer-specs dd,
+  .home-page .section-intro > .section-note,
+  .home-page .proof-research,
+  .home-page .proof-ledger figcaption,
+  .home-page .ownership-tests,
+  .home-page .ownership-stack,
+  .home-page .home-cta .source-licence,
+  .home-page .hero-fineprint,
+  .home-page .footer-note,
+  .home-page .footer-risk,
+  .home-page .footer-links { font-size: 12px; }
+  .home-page .footer-links { gap: 10px 18px; }
+}

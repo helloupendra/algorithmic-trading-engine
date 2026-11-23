@@ -409,6 +409,8 @@ ${canonical === url ? `<link rel="alternate" hreflang="${SITE.lang}" href="${url
 <meta name="twitter:image" content="${SITE.url}/brand/og-image.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/geist-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/docs/assets/docs.css">
 ${page.hasMath ? '<link rel="stylesheet" href="/docs/assets/katex/katex.min.css">' : ''}
 ${jsonLd({
