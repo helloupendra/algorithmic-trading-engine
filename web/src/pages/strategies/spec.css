@@ -426,7 +426,6 @@
   letter-spacing: 0;
   font-weight: 450;
   color: var(--text-3);
-  opacity: 0.8;
 }
 
 .track { display: grid; gap: 14px; }

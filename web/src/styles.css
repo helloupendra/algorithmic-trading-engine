@@ -164,19 +164,21 @@
   --brand-soft: rgba(98, 82, 224, 0.09);
   --brand-line: rgba(98, 82, 224, 0.38);
   --selection: rgba(98, 82, 224, 0.2);
-  --live: #087379; /* 4.9:1 on --bg1, 5.5:1 on --surface */
+  --live: #086e74; /* 5.3:1 on --bg1, 4.6:1 on its own soft fill over --bg1 */
   --live-soft: rgba(8, 115, 121, 0.1);
   --leaf: #2fbf8a;
   --candle: #353b52;
 
-  --pos: #127a52;
+  /* Each accent also carries 11px badge text on its own soft fill over --bg1
+     (a table's ground), the darkest place it sits: 4.6:1 or better there. */
+  --pos: #11714c;
   --pos-soft: rgba(18, 122, 82, 0.09);
   --on-pos: #ffffff;
   --on-brand: #ffffff;
   --on-neg: #ffffff;
-  --neg: #bf3446;
+  --neg: #b73243;
   --neg-soft: rgba(191, 52, 70, 0.08);
-  --warn: #916100;
+  --warn: #875a00;
   --warn-soft: rgba(145, 97, 0, 0.1);
 
   --acct-1: #2f5fd8;
@@ -2404,6 +2406,7 @@ a.pill:hover { border-color: var(--line-strong); }
   color: var(--text-3);
   white-space: nowrap;
 }
+.rollup__chip.is-active .rollup__meta { color: var(--text-2); }
 .rollup__active { color: var(--live); font-weight: 600; margin-left: 4px; }
 
 /* Run history table: live rows, status cell with the short reason under it. */
@@ -2976,7 +2979,11 @@ a.oc-tab { text-decoration: none; }
 
 .oc-sub { font-size: 10px; margin-left: 2px; }
 .oc-itm { background: color-mix(in srgb, var(--warn) 10%, transparent); }
-.oc-table tbody tr.oc-row--atm td { background: var(--brand-soft); }
+/* One tint for the ATM row. The row's and the cell's --brand-soft used to
+   stack, which on dark left a red figure at 4.0:1; 16% over the panel is the
+   same violet on light and keeps every figure at AA on dark. */
+.oc-table tbody tr.oc-row--atm { background: none; }
+.oc-table tbody tr.oc-row--atm td { background: color-mix(in srgb, var(--brand) 16%, var(--surface)); }
 .oc-table tbody tr.oc-row--atm td.oc-strike { background: color-mix(in srgb, var(--brand) 26%, var(--bg1)); }
 .oc-table tbody tr.oc-row--atm td.oc-strike b { color: var(--text); }
 
@@ -3014,7 +3021,7 @@ a.oc-tab { text-decoration: none; }
   padding: 2px 10px;
   border-radius: 999px;
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
   font-size: 11.5px;
   font-weight: 650;
   white-space: nowrap;

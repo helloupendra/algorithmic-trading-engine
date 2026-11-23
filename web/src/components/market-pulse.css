@@ -32,7 +32,6 @@
   letter-spacing: 0;
   font-weight: 500;
   color: var(--text-3);
-  opacity: 0.8;
 }
 .pulse__empty { margin: 0; font-size: 12px; color: var(--text-3); }
 
