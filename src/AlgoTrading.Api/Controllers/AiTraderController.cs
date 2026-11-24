@@ -53,6 +53,81 @@ public class AiTraderController(
     }
 
     /// <summary>
+    /// The AI Trader's own desk in one read, for its page (AI → AI Trader). Its switch and limits, the hours it may
+    /// open in and whether they are now, today's net in its account, its manual book's positions (open now or closed
+    /// today), the strategy runs it started (running, or started today) with their net, and its last look.
+    /// </summary>
+    /// <remarks>
+    /// The owner, 24 Nov 2026: "mujhe ek pura section chaiye jismai ai trader trade karta hua dikhey aur apna sb manage
+    /// krey". Today's net is figured as the rules figure it (<see cref="AiTraderBookReader.ReadAsync"/>): the manual
+    /// book's part of today after charges, plus the net of the runs started today. Nothing is created here: with no
+    /// account yet the book is empty.
+    /// </remarks>
+    [HttpGet("desk")]
+    public async Task<IActionResult> Desk(
+        [FromServices] IAiTraderBooks books,
+        [FromServices] AlgoTrading.Api.Services.RunPnl pnl,
+        [FromServices] AlgoTrading.Api.Services.StrategyProcessRegistry registry,
+        [FromServices] AlgoTrading.Application.Interfaces.IMarketSessionService sessions,
+        CancellationToken cancellationToken)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var state = await store.LoadAsync(cancellationToken);
+        var s = settings.CurrentValue;
+        var rules = AiTraderAgent.Rules;
+        bool tradingDay = sessions.GetSessionInfo(now, "NSE", "FO").IsTradingDay;
+        var clock = TimeOnly.FromDateTime(IstTime.ToIst(now));
+        bool openNow = tradingDay && clock >= rules.OpenFrom && clock <= rules.OpenUntil;
+
+        var user = await AiTraderAccount.FindAsync(db, cancellationToken);
+        var day = await books.DayAsync(now, cancellationToken);
+        var dayStart = IstTime.StartOfDayUtc(IstTime.DateOf(now));
+
+        var runRows = user is null
+            ? []
+            : await db.SimulationRuns.AsNoTracking()
+                .Where(r => r.UserId == user.Id
+                            && r.Mode == AlgoTrading.Api.Services.StrategyRunControl.LivePaperMode
+                            && r.StrategyName != ManualOrdersController.BookStrategyName
+                            && (r.Status == AlgoTrading.Api.Services.StrategyRunControl.RunStatusRunning || r.CreatedUtc >= dayStart))
+                .OrderByDescending(r => r.Id)
+                .Take(20)
+                .ToListAsync(cancellationToken);
+        var live = user is null ? [] : registry.List().Where(r => r.UserId == user.Id).Select(r => r.RunId).ToHashSet();
+        var figures = runRows.Count == 0
+            ? new Dictionary<long, AlgoTrading.Api.Services.RunPnl.Figures>()
+            : await pnl.FiguresAsync(runRows.Select(r => r.Id).ToList(), live, cancellationToken);
+        var runs = runRows
+            .Select(r => new AiTraderDeskRun(r.Id, r.StrategyName, r.Symbol, r.Status, r.StartedUtc ?? r.CreatedUtc, r.CompletedUtc,
+                figures.TryGetValue(r.Id, out var f) ? Math.Round(f.Net, 2) : 0m, live.Contains(r.Id)))
+            .ToList();
+        decimal runsToday = runs.Where(r => r.StartedUtc >= dayStart).Sum(r => r.Net);
+        decimal net = Math.Round(day.Net + runsToday, 2);
+
+        var last = (await Summaries(db.AiTraderDecisions.AsNoTracking().Where(d => d.ReplaySessionId == null), 1, cancellationToken))
+            .FirstOrDefault();
+
+        return Ok(new AiTraderDesk(
+            state.Agent(AiCatalog.AiTrader)?.Status ?? "off",
+            s.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow,
+            s.AiTraderEveryMinutes,
+            IstTime.ToIst(now).ToString("HH:mm"),
+            tradingDay,
+            openNow,
+            $"{rules.OpenFrom:HH:mm}–{rules.OpenUntil:HH:mm}",
+            rules,
+            user?.Id,
+            user?.UserName ?? AiTraderAccount.UserName,
+            net,
+            day.Charges,
+            day.OpenedToday,
+            Math.Max(0m, rules.DailyLossLimit + Math.Min(0m, net)),
+            day.Positions,
+            runs,
+            last));
+    }
+
+    /// <summary>
     /// The shadow book: a day's positions (IST) or a replay's, oldest first, with the net after charges (open
     /// ones as if sold at their marks).
     /// </summary>
@@ -378,6 +453,19 @@ public class AiTraderController(
 /// <c>Chain</c> forces the models asked (null or empty: each agent's own).
 /// </summary>
 public sealed record AiTraderChecksDryRunRequest(IReadOnlyList<long>? DecisionIds, int? Take, IReadOnlyList<string>? Chain);
+
+/// <summary>
+/// The AI Trader's desk (<see cref="AiTraderController.Desk"/>). <c>LossLeft</c> is how much more it may lose today
+/// before the daily limit stops new trades.
+/// </summary>
+public sealed record AiTraderDesk(
+    string Status, string Mode, int EveryMinutes, string ClockIst, bool TradingDay, bool OpenNow, string Hours, AiTraderRules Rules,
+    long? AccountId, string AccountName, decimal NetToday, decimal ChargesToday, int OpenedToday, decimal LossLeft,
+    IReadOnlyList<AiTraderLivePosition> Positions, IReadOnlyList<AiTraderDeskRun> Runs, AiTraderDecisionSummary? LastLook);
+
+/// <summary>A strategy run the AI Trader started: running now, or started today; its net after charges, all of its life.</summary>
+public sealed record AiTraderDeskRun(long RunId, string Strategy, string Underlying, string Status, DateTime StartedUtc, DateTime? EndedUtc,
+    decimal Net, bool Running);
 
 public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes, AiTraderRules Rules, AiTraderDay Today,
     IReadOnlyList<AiTraderDecisionSummary> Latest, AiTraderShadowDay Shadow);

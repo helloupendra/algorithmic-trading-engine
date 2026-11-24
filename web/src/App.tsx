@@ -65,6 +65,7 @@ const AiOverviewPage = lazy(() => import('./pages/ai/AiOverviewPage').then((m) =
 const AiAssistantPage = lazy(() => import('./pages/ai/AiAssistantPage').then((m) => ({ default: m.AiAssistantPage })))
 const AiMemoryPage = lazy(() => import('./pages/ai/AiMemoryPage').then((m) => ({ default: m.AiMemoryPage })))
 const AiAgentsPage = lazy(() => import('./pages/ai/AiAgentsPage').then((m) => ({ default: m.AiAgentsPage })))
+const AiTraderPage = lazy(() => import('./pages/ai/AiTraderPage').then((m) => ({ default: m.AiTraderPage })))
 const AiReportsPage = lazy(() => import('./pages/ai/AiReportsPage').then((m) => ({ default: m.AiReportsPage })))
 const AiModelsPage = lazy(() => import('./pages/ai/AiModelsPage').then((m) => ({ default: m.AiModelsPage })))
 const AiCallsPage = lazy(() => import('./pages/ai/AiCallsPage').then((m) => ({ default: m.AiCallsPage })))
@@ -209,6 +210,7 @@ export default function App() {
                     <Route path="/ai/assistant" element={<AiAssistantPage />} />
                     {/* What the agents read before every answer; a memory is named by its anchor (#memory-12). */}
                     <Route path="/ai/memory" element={<AiMemoryPage />} />
+                    <Route path="/ai/trader" element={<AiTraderPage />} />
                     <Route path="/ai/agents" element={<AiAgentsPage />} />
                     {/* What the scheduled agents wrote; a report opens in place (?id=). */}
                     <Route path="/ai/reports" element={<AiReportsPage />} />

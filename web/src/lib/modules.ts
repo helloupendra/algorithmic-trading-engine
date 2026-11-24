@@ -395,6 +395,14 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         pages: [{ label: 'Overview', to: '/ai', exact: true, keywords: ['ai', 'llm', 'nvidia', 'nim', 'usage', 'tokens', 'rate limit'] }],
       },
       {
+        // Its own desk: its trades, the scripts it runs and every look, on one page (24 Nov 2026).
+        key: 'ai-trader',
+        label: 'AI Trader',
+        home: '/ai/trader',
+        requires: 'admin',
+        pages: [{ label: 'AI Trader', to: '/ai/trader', keywords: ['ai trader', 'trades', 'practice', 'replay', 'own account', 'scripts'] }],
+      },
+      {
         key: 'ai-assistant',
         label: 'Assistant',
         home: '/ai/assistant',

@@ -183,10 +183,13 @@ public class AiTraderGuardTests
     {
         var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, null, null, null, "TrendRiderV2BE", null, null, "Trend day.", 0.5);
         Assert.True(AiTraderGuard.Check(start, Book(), Rules).Allowed);
+        // From the night of 24 Nov 2026 any option-buying script (owner: "koi si bhi script ... apne liye chala sakey"),
+        // and still no seller: Fulcrum sells its straddle, the short straddle and the spreads sell a leg.
+        Assert.True(AiTraderGuard.Check(start with { Strategy = "ChainFlowBuy" }, Book(), Rules).Allowed);
+        Assert.True(AiTraderGuard.Check(start with { Strategy = "FulcrumBuy" }, Book(), Rules).Allowed);
         Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "Fulcrum" }, Book(), Rules));
-        // Its first two strategies lost on two years of real premiums; from 24 Nov 2026 only the TrendRider family.
-        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "ChainFlowBuy" }, Book(), Rules));
-        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "GhostTangentCrossings" }, Book(), Rules));
+        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "ShortStraddle" }, Book(), Rules));
+        Refused("strategy-list", AiTraderGuard.Check(start with { Strategy = "BullCallSpread" }, Book(), Rules));
         Refused("strategy-runs", AiTraderGuard.Check(start, Book(runs: [new(1, "Ghost", "NIFTY", 0), new(2, "Ghost", "SENSEX", 0), new(3, "ChainFlowBuy", "BANKNIFTY", 0)]), Rules));
         Refused("daily-loss", AiTraderGuard.Check(start, Book(net: -10_500m), Rules));
 

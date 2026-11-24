@@ -226,11 +226,46 @@ public sealed class AiTraderRules
     public TimeOnly OpenUntil { get; init; } = new(14, 45);
     public int MaxTradesPerDay { get; init; } = 10;
     /// <summary>
-    /// The strategies it may start in its own account. From 24 Nov 2026 (owner: "ready karo trading ke liye") the
-    /// TrendRider family, the one intraday NIFTY option-buying method that held over six years of tests (2020–2026);
-    /// GhostTangentCrossings and ChainFlowBuy, its first two, lost on two years of real premiums and are no longer
-    /// allowed (their old grants stay in the database, but this list is what a start is checked against).
+    /// The strategies it may start in its own account, each with the one line its brief reads about it.
     /// </summary>
-    public IReadOnlyList<string> Strategies { get; init; } = ["TrendRider", "TrendRiderV2", "TrendRiderV2BE", "TrendRiderV2OB"];
+    /// <remarks>
+    /// <para>
+    /// From the night of 24 Nov 2026 every option-buying script in the catalog. The owner: "agar usko chahiye toh vo koi
+    /// si bhi script use karke apne liye chala sake". That morning it was the TrendRider family alone.
+    /// </para>
+    /// <para>
+    /// The owner's standing rule is option buyer only, so no seller is here: Fulcrum's sell variants, the short
+    /// straddle and strangle, the iron butterfly, and the two spreads (each sells a leg). Nor are the rule builders,
+    /// SignalBuilder and LogicEngine, which do nothing without a rule written for them, nor CrudeMomentum, which is
+    /// MCX's.
+    /// </para>
+    /// <para>
+    /// Each line says what the tests found, so it can choose by the record and not by the name. The record is from
+    /// the studies in the owner's Research Notebook.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> StrategyNotes { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["TrendRiderV2OB"] = "V2 Breakeven with the NIFTY stop at the last order block; the best of the family over six years (2020-2026)",
+        ["TrendRiderV2BE"] = "V2 plus a breakeven step once NIFTY moves 0.25 x ADR its way; held over six years",
+        ["TrendRiderV2"] = "buys the 1-strike ITM option when a 5-minute candle closes past yesterday's high or low and the day's open, from 09:20; NIFTY stop 0.5 x ADR and a trail; held over six years",
+        ["TrendRider"] = "Version 1: buys when a 5-minute candle breaks the 09:15-09:45 range on the open's side; held over six years, about a third of V2's profit",
+        ["SmcStructureBreak"] = "buys the ATM option on a break of market structure (BOS/CHoCH); lost in 2024-2026",
+        ["GhostTangentCrossings"] = "many small ATM buys on short pivot crossings; lost on two years of real premiums",
+        ["GhostTangentCrossingsV2"] = "Ghost's second version (office review); lost less than Ghost, still lost",
+        ["ChainFlowBuy"] = "buys on a trend candle the option chain's flow confirms; lost on real premiums",
+        ["ChainFlowBuyV2"] = "ChainFlowBuy's second version (office review); lost less, still lost",
+        ["FulcrumBuy"] = "buys an ATM straddle and rolls it when the index moves two strikes or 45 minutes pass; lost in its test (about -2.66 lakh)",
+        ["FulcrumMultiBuy50"] = "buys straddles at the two strikes around spot, re-centres at 0.5 strike; untested over a long period",
+        ["FulcrumMultiBuy70"] = "the same, re-centred at 0.7 strike; untested over a long period",
+        ["FulcrumMultiBuy90"] = "the same, re-centred at 0.9 strike; untested over a long period",
+        ["Fulcrum2StraddleBuy20"] = "buys straddles at two strikes, re-centred when spot leaves the bracket; untested over a long period",
+        ["Fulcrum3StraddleBuy175"] = "buys straddles at three strikes, re-centred away from the centre; untested over a long period",
+        ["FulcrumQtyAdjustmentBuy"] = "MultiBuy70 that adds a third straddle and doubles the lots when a strike is crossed; untested over a long period",
+    };
+
+    /// <summary>The strategies it may start: <see cref="StrategyNotes"/>'s names, best record first.</summary>
+    public IReadOnlyList<string> Strategies => [.. StrategyNotes.Keys];
+
     public int MaxStrategyRuns { get; init; } = 3;
 }

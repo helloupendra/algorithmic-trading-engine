@@ -65,6 +65,7 @@ import {
   readAiTraderShadowBook,
   readAiTraderStatus,
 } from './aiTrader'
+import { readAiTraderDesk } from './aiTraderDesk'
 import type { AiTraderDecisionFilter, AiTraderDecisionsPage, AiTraderPoll } from './aiTrader'
 import type { IvHistory, StraddleSeries } from './straddle'
 import type {
@@ -3231,6 +3232,18 @@ export function useReplayControl() {
  * words). Keyed under ['ai', ...] so switching an agent on AI → Agents, which
  * invalidates ['ai'], reads its on/off here again at once.
  */
+
+/**
+ * Its own desk for AI → AI Trader: the switch and the hours, today's net,
+ * its positions, the scripts it runs and its last look. Read every 30 s.
+ */
+export function useAiTraderDesk() {
+  return useQuery({
+    queryKey: ['ai', 'trader', 'desk'],
+    queryFn: async () => readAiTraderDesk(await api.get<unknown>('/api/AiTrader/desk')),
+    refetchInterval: AI_TRADER_POLL_MS,
+  })
+}
 
 /** On or off, shadow or live, its limits, today's counts and the last three decisions. */
 export function useAiTraderStatus(enabled = true) {

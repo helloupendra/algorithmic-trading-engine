@@ -114,7 +114,7 @@ describe('navFor', () => {
     expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Compare', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
-    expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
+    expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'AI Trader', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
     expect(pagesOf(nav, 'data')).toEqual(['Overview', 'Feeds', 'Historical', 'Instruments', 'Mutual funds', 'Replay'])
   })
 

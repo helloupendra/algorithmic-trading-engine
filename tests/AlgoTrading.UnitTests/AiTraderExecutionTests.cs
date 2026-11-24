@@ -556,11 +556,12 @@ public sealed class AiTraderExecutionTests : IDisposable
         await AiTraderAccount.EnsureAsync(db, default);
 
         Assert.Equal(PlatformModules.Strategies, Assert.Single(db.UserModuleGrants.AsNoTracking().Where(g => g.UserId == user.Id)).ModuleKey);
-        Assert.Equal(new[] { "TrendRider", "TrendRiderV2", "TrendRiderV2BE", "TrendRiderV2OB" },
+        Assert.Equal(AiTraderAgent.Rules.Strategies.Order(StringComparer.Ordinal).ToList(),
             db.UserStrategyGrants.AsNoTracking().Where(g => g.UserId == user.Id).Select(g => g.StrategyName).OrderBy(n => n).ToList());
         var access = await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "TrendRiderV2BE", "NIFTY", 1, "LivePaper", 1);
         Assert.True(access.Allowed);
-        Assert.False((await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "Ghost", "NIFTY", 1, "LivePaper", 1)).Allowed);
+        // A seller is never granted (the owner's buyer-only rule).
+        Assert.False((await new StrategyAccessService(db, new NoLimits()).CanDeployAsync(user.Id, "ShortStraddle", "NIFTY", 1, "LivePaper", 1)).Allowed);
     }
 
     // ---------- harness ----------

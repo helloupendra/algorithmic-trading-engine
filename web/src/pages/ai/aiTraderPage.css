@@ -1,0 +1,173 @@
+/* AI → AI Trader: its own desk. Built on the console's panel, stat tile, badge and table; every
+   selector is prefixed atp- (the page sits in the eager bundle) and uses the theme tokens only. */
+
+.atp-now {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  line-height: 1.5;
+}
+.atp-now--live { border-color: color-mix(in srgb, var(--live) 45%, transparent); background: var(--live-soft); }
+
+.atp-stats { margin-bottom: 16px; }
+
+.atp-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.atp-modes__tab {
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-s);
+  cursor: pointer;
+}
+.atp-modes__tab:hover { border-color: var(--line-hover); color: var(--text); }
+.atp-modes__tab.is-on { border-color: var(--brand-line); background: var(--brand-soft); color: var(--brand-hi); font-weight: 600; }
+
+.atp-practice {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--brand);
+  background: var(--brand-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  line-height: 1.55;
+}
+
+.atp-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.atp-last__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.atp-last__why { margin: 8px 0 4px; font-size: var(--fs); line-height: 1.6; color: var(--text); }
+
+.atp-table td, .atp-table th { white-space: nowrap; }
+.atp-table td.pos { color: var(--pos); }
+.atp-table td.neg { color: var(--neg); }
+
+.atp-sub {
+  margin: 14px 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.atp-scripts { border-top: 1px solid var(--line-soft); margin-top: 12px; }
+.atp-scripts__list { margin: 0; padding-left: 18px; line-height: 1.6; font-size: var(--fs-s); }
+
+.atp-looks { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-soft); }
+.atp-look { border-bottom: 1px solid var(--line-soft); }
+.atp-look__btn {
+  display: grid;
+  grid-template-columns: 44px auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-s);
+  text-align: left;
+  cursor: pointer;
+}
+.atp-look__btn:hover, .atp-look.is-open > .atp-look__btn { background: var(--brand-soft); }
+.atp-look__why { color: var(--text-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.atp-look.is-open .atp-look__why { -webkit-line-clamp: unset; display: block; color: var(--text); }
+.atp-look__more { padding: 0 6px 10px 60px; }
+
+.atp-limits { margin-top: 4px; line-height: 1.55; }
+
+@media (max-width: 640px) {
+  .atp-look__btn { grid-template-columns: 40px minmax(0, 1fr); }
+  .atp-look__btn .badge { grid-column: 2; justify-self: start; }
+  .atp-look__why { grid-column: 1 / -1; }
+  .atp-look__more { padding-left: 6px; }
+}
+
+/* --- a trade as a card: what, the result, where the price sits from stop to target, and why --- */
+.atp-trades { display: grid; gap: 12px; }
+.atp-trade {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.atp-trade.is-open { border-color: color-mix(in srgb, var(--live) 45%, transparent); }
+.atp-trade__head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.atp-trade__what { font-size: 17px; font-weight: 650; color: var(--text); }
+.atp-trade__when { font-size: var(--fs-s); margin-top: 2px; }
+.atp-trade__result { text-align: right; }
+.atp-trade__money { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.atp-trade__money.pos { color: var(--pos); }
+.atp-trade__money.neg { color: var(--neg); }
+.atp-trade__note { font-size: var(--fs-xs); }
+.atp-trade__why { margin: 10px 0 0; font-size: var(--fs-s); line-height: 1.55; color: var(--text-2); }
+.atp-trade__label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.atp-bar { margin-top: 14px; }
+.atp-bar__track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--neg-soft), var(--line-soft) 50%, var(--pos-soft));
+  border: 1px solid var(--line);
+}
+.atp-bar__entry {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  background: var(--text-3);
+}
+.atp-bar__now {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  background: var(--text-2);
+}
+.atp-bar__now.pos { background: var(--pos); }
+.atp-bar__now.neg { background: var(--neg); }
+.atp-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.atp-bar__labels .pos { color: var(--pos); }
+.atp-bar__labels .neg { color: var(--neg); }
+
+@media (max-width: 640px) {
+  .atp-trade__head { flex-direction: column; }
+  .atp-trade__result { text-align: left; }
+}

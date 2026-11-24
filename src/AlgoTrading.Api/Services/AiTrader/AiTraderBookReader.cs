@@ -260,7 +260,11 @@ public sealed class AiTraderBookReader(
                 : "Your strategies running: " + string.Join("; ", book.Runs.Select(r => $"run {r.RunId} {r.Strategy} on {r.Underlying}, net {AiTraderGuard.Rupees(r.NetPnl)}")) + "."
             : "Strategy runs are not simulated in shadow: a start or stop is recorded only.");
         text.Append('\n');
-        text.Append(CultureInfo.InvariantCulture, $"Strategies you may start: {string.Join(", ", rules.Strategies)} (at most {rules.MaxStrategyRuns} running).\n");
+        text.Append(CultureInfo.InvariantCulture, $"Strategies you may start (at most {rules.MaxStrategyRuns} running), with what the tests found:\n");
+        foreach (var name in rules.Strategies)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"- {name}: {(rules.StrategyNotes.TryGetValue(name, out var note) ? note : "no note")}\n");
+        }
         if (book.KillSwitch) text.Append("The desk's kill switch is ON: nothing new will be placed.\n");
         return text.ToString();
     }
