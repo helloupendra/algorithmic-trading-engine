@@ -1,4 +1,5 @@
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services.LiveFeed;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Domain.Constants;
@@ -97,6 +98,9 @@ public class WatchlistController : ControllerBase
 
     public record AddSymbolRequest(string Symbol);
 
+    /// <summary>The most symbols one trader's own list holds.</summary>
+    public const int MaxOwnSymbols = 50;
+
     /// <summary>Adds a symbol, and makes sure the feed will actually carry it.</summary>
     [HttpPost("me")]
     public async Task<IActionResult> AddMine(
@@ -118,6 +122,24 @@ public class WatchlistController : ControllerBase
             return Ok(new { message = $"{symbol} is already on your watchlist." });
         }
 
+        // Only real, live instruments (24 Nov 2026 review: any string went onto
+        // the recording list), or what the feed already carries, such as the
+        // indices.
+        var todayIst = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5.5));
+        bool known = await _dbContext.LiveWatchlistItems.AnyAsync(x => x.Symbol == symbol && x.IsActive, cancellationToken)
+            || await _dbContext.Instruments.AnyAsync(
+                x => x.Symbol == symbol && x.IsEnabled && (x.ExpiryDate == null || x.ExpiryDate >= todayIst), cancellationToken);
+        if (!known)
+        {
+            return BadRequest(new { message = $"{symbol} is not a live instrument. Pick it from the search." });
+        }
+
+        int held = await _dbContext.UserWatchlistItems.CountAsync(x => x.UserId == userId, cancellationToken);
+        if (held >= MaxOwnSymbols)
+        {
+            return BadRequest(new { message = $"Your watchlist holds {MaxOwnSymbols} symbols, the most it can. Remove one first." });
+        }
+
         int nextOrder = await _dbContext.UserWatchlistItems
             .Where(x => x.UserId == userId)
             .Select(x => (int?)x.SortOrder)
@@ -134,11 +156,20 @@ public class WatchlistController : ControllerBase
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         // Without a subscription the row would sit there showing nothing forever.
-        await _liveData.UpsertWatchlistItemAsync(
-            new UpsertWatchlistItemRequest { Symbol = symbol, IsActive = true, Priority = 10 },
+        // A trader's symbol goes on at the lowest priority, within a daily
+        // allowance, and one already carried is left as it is.
+        var outcome = await PersonFeedRequests.RequestAsync(_dbContext, User, symbol,
+            priority => _liveData.UpsertWatchlistItemAsync(
+                new UpsertWatchlistItemRequest { Symbol = symbol, IsActive = true, Priority = priority },
+                cancellationToken),
             cancellationToken);
 
-        return Ok(new { message = $"{symbol} added. The feed will pick it up on its next refresh." });
+        return Ok(new
+        {
+            message = outcome == FeedRequestOutcome.OverDailyLimit
+                ? $"{symbol} added to your list. The live feed takes {PersonFeedRequests.PerTraderPerDay} new symbols a day from you, so it shows no price until tomorrow."
+                : $"{symbol} added. The feed will pick it up on its next refresh.",
+        });
     }
 
     /// <summary>

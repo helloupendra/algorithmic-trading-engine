@@ -33,13 +33,24 @@ internal static class IraActionsTestKit
     /// <summary>PBKDF2 at a test's pace: a stored hash keeps its own count, so production's is untouched.</summary>
     public static void FastPins() => IraPin.Iterations = 1_000;
 
-    /// <summary>The owner (upendra, admin), a second admin (ravi) and a trader (coderforchange).</summary>
+    /// <summary>The owner (upendra, admin), a second admin (ravi) and a trader (coderforchange); one already there is kept.</summary>
     public static void SeedUsers(TradingDbContext db)
     {
-        db.AppUsers.AddRange(
+        var have = db.AppUsers.Select(u => u.Id).ToHashSet();
+        db.AppUsers.AddRange(new[]
+        {
             new AppUser { Id = Admin, UserName = "upendra", Role = UserRoles.Admin, IsActive = true },
             new AppUser { Id = OtherAdmin, UserName = "ravi", Role = UserRoles.Admin, IsActive = true },
-            new AppUser { Id = Trader, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true });
+            new AppUser { Id = Trader, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true },
+        }.Where(u => !have.Contains(u.Id)));
+        db.SaveChanges();
+    }
+
+    /// <summary>The owner's account (upendra, an active admin). A Telegram link counts only for one (24 Nov 2026).</summary>
+    public static void EnsureOwner(TradingDbContext db)
+    {
+        if (db.AppUsers.Any(u => u.Id == Admin)) return;
+        db.AppUsers.Add(new AppUser { Id = Admin, UserName = "upendra", Role = UserRoles.Admin, IsActive = true });
         db.SaveChanges();
     }
 

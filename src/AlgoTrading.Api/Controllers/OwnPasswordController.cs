@@ -42,12 +42,24 @@ public class OwnPasswordController : ControllerBase
 
     private readonly IUserAdminService _users;
     private readonly IMemoryCache _cache;
+    private readonly IConfiguration _configuration;
 
-    public OwnPasswordController(IUserAdminService users, IMemoryCache cache)
+    public OwnPasswordController(IUserAdminService users, IMemoryCache cache, IConfiguration configuration)
     {
         _users = users;
         _cache = cache;
+        _configuration = configuration;
     }
+
+    /// <summary>
+    /// Whether the caller is the admin whose password the server's .env sets (Bootstrap:AdminPassword). That account's
+    /// password cannot be changed here: every start puts the .env password back (AdminBootstrapper), and the desk's
+    /// own scripts sign in with it, so a change would lock them out until the next start and then quietly undo itself.
+    /// </summary>
+    private bool IsConfiguredAdmin() =>
+        !string.IsNullOrWhiteSpace(_configuration["Bootstrap:AdminPassword"])
+        && User.IsAdmin()
+        && string.Equals(User.GetUserName(), _configuration["Bootstrap:AdminUserName"]?.Trim() ?? "admin", StringComparison.Ordinal);
 
     /// <summary>
     /// Changes the password and ends every session of the account, this one
@@ -64,6 +76,15 @@ public class OwnPasswordController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
         {
             return BadRequest(new { message = "The new password must be at least 8 characters." });
+        }
+
+        if (IsConfiguredAdmin())
+        {
+            return Conflict(new
+            {
+                message = "This admin's password is set by ADMIN_PASSWORD in the server's .env, and the desk's own scripts " +
+                          "sign in with it. Change it there and restart the API.",
+            });
         }
 
         long userId = User.GetRequiredUserId();

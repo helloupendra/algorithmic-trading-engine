@@ -929,6 +929,11 @@ public sealed class IraAlertTests : IDisposable
     private void Link(long telegramUserId, string consoleUser)
     {
         using var db = Db();
+        // A link counts only for an active admin's account (24 Nov 2026).
+        if (!db.AppUsers.Any(u => u.UserName == consoleUser))
+        {
+            db.AppUsers.Add(new AppUser { Id = 901 + db.AppUsers.Count(u => u.Id > 900), UserName = consoleUser, Role = UserRoles.Admin, IsActive = true });
+        }
         db.SystemSettings.Add(new SystemSetting
         {
             Key = TelegramAssistant.OwnerPrefix + telegramUserId.ToString(CultureInfo.InvariantCulture), Value = consoleUser, Reason = "@" + consoleUser,

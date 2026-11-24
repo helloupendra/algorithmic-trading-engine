@@ -1049,6 +1049,7 @@ public sealed class AiVoiceTests
         ILogger<TelegramVoice>? log = null, Action<IServiceCollection, Services>? more = null, string provider = AiVoiceSettings.Voxtral)
     {
         var ai = Build(null, NewDb(_dbName));
+        using (var owners = NewDb(_dbName)) IraActionsTestKit.EnsureOwner(owners);
         ai.Options.CurrentValue.Voice.TranscribeProvider = provider;
         var aws = new FakeAws();
         var bot = new VoiceBot();

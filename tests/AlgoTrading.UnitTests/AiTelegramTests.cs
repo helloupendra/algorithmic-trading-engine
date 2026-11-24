@@ -110,6 +110,84 @@ public sealed class AiTelegramTests
         Assert.Equal((Owner, "upendra", "@owner"), (linked.TelegramUserId, linked.ConsoleUser, linked.TelegramName));
     }
 
+    [Fact]
+    public void A_pairing_code_is_eight_characters_that_cannot_be_misread()
+    {
+        var code = new TelegramPairing().Create("upendra").Code;
+
+        Assert.Equal(TelegramPairing.CodeLength, code.Length);
+        Assert.All(code, c => Assert.Contains(c, TelegramPairing.Alphabet));
+    }
+
+    [Fact]
+    public void A_sender_who_keeps_guessing_is_locked_out_for_an_hour_even_with_the_right_code()
+    {
+        var time = new IraActionsTestKit.MovableTime(DateTime.UtcNow);
+        var pairing = new TelegramPairing(time);
+        var code = pairing.Create("upendra").Code;
+
+        for (int i = 0; i < TelegramPairing.MaxWrongPerSender; i++)
+        {
+            Assert.Equal(TelegramPairOutcome.Wrong, pairing.Attempt(Stranger, $"WRONG{i:000}").Outcome);
+        }
+
+        Assert.Equal((TelegramPairOutcome.Locked, null), pairing.Attempt(Stranger, code));
+        // The owner, on their own account, is not held up by the stranger.
+        Assert.Equal((TelegramPairOutcome.Linked, "upendra"), pairing.Attempt(Owner, code.ToLowerInvariant()));
+
+        time.Advance(TelegramPairing.LockFor);
+        var next = pairing.Create("upendra").Code;
+        Assert.Equal(TelegramPairOutcome.Wrong, pairing.Attempt(Stranger, "WRONG999").Outcome);
+        Assert.Equal((TelegramPairOutcome.Linked, "upendra"), pairing.Attempt(Owner, next));
+    }
+
+    [Fact]
+    public void Many_senders_guessing_together_drop_every_outstanding_code()
+    {
+        var pairing = new TelegramPairing();
+        var code = pairing.Create("upendra").Code;
+
+        for (int i = 0; i < TelegramPairing.MaxWrongTotal; i++)
+        {
+            pairing.Attempt(9_000_000 + i, "WRONG000");
+        }
+
+        Assert.Equal(TelegramPairOutcome.Wrong, pairing.Attempt(Owner, code).Outcome);
+    }
+
+    [Fact]
+    public async Task The_bot_tells_a_locked_out_sender_to_wait_and_links_nothing()
+    {
+        var (_, bot, assistant) = Setup(out var pairing);
+        var code = pairing.Create("upendra");
+
+        for (int i = 0; i < TelegramPairing.MaxWrongPerSender; i++)
+        {
+            await assistant.HandleAsync(Private(Stranger, "/pair WRONG000"), CancellationToken.None);
+        }
+        await assistant.HandleAsync(Private(Stranger, $"/pair {code.Code}"), CancellationToken.None);
+
+        Assert.StartsWith("Too many wrong codes", bot.Texts[^1]);
+        Assert.Empty(await assistant.OwnersAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_link_counts_only_while_its_console_account_is_an_active_admin()
+    {
+        var (_, _, assistant) = Setup();
+        await Link(assistant, Owner);
+        Assert.Single(await assistant.OwnersAsync(CancellationToken.None));
+
+        await using (var db = NewDb(_dbName))
+        {
+            var owner = await db.AppUsers.SingleAsync(u => u.UserName == "upendra");
+            owner.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Empty(await assistant.OwnersAsync(CancellationToken.None));
+    }
+
     // ---------- answering ----------
 
     [Fact]
@@ -354,6 +432,7 @@ public sealed class AiTelegramTests
     private (Services Ai, FakeBot Bot, TelegramAssistant Assistant) Setup(out TelegramPairing pairing)
     {
         var ai = Build(null, NewDb(_dbName));
+        using (var owners = NewDb(_dbName)) IraActionsTestKit.EnsureOwner(owners);
         var bot = new FakeBot();
         var services = new ServiceCollection();
         services.AddScoped(_ => NewDb(_dbName));

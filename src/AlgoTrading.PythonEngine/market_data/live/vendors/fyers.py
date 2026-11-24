@@ -163,6 +163,9 @@ class FyersFeed(VendorFeed):
         self.max_symbols = max_symbols if max_symbols and max_symbols > 0 else _max_symbols_from_env()
         #: What is on the wire now: the plan's limit counts these.
         self._subscribed: set[str] = set()
+        # Symbols only a person asked for (the runner says which): they come after
+        # every other symbol when not all fit.
+        self._requested: set[str] = set()
 
     @classmethod
     def from_env(cls):
@@ -252,12 +255,17 @@ class FyersFeed(VendorFeed):
         finally:
             self._socket = None
 
+    def set_requested(self, symbols):
+        """The watchlist symbols only a person asked for; they are offered last."""
+        self._requested = {str(s).strip() for s in symbols or ()}
+
     def subscribe(self, symbols):
         """
         Subscribe what fits under the plan's limit and return those. FYERS
         refuses a request that would take the socket past the limit outright,
-        so the rest is left out here: indices, futures and NIFTY's contracts
-        first (`_priority`), the runner's order within each.
+        so the rest is left out here: the desk's symbols before any a person
+        asked for, then indices, futures and NIFTY's contracts first
+        (`_priority`), the runner's order within each.
         """
         if not symbols or self._socket is None:
             return []
@@ -267,7 +275,7 @@ class FyersFeed(VendorFeed):
             if name and name not in seen:
                 seen.add(name)
                 wanted.append(name)
-        wanted.sort(key=_priority)
+        wanted.sort(key=lambda name: (name in self._requested, _priority(name)))
         room = max(self.max_symbols - len(self._subscribed), 0)
         if len(wanted) > room:
             left_out = wanted[room:]

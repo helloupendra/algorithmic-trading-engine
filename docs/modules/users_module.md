@@ -52,6 +52,9 @@ passes only with a grant, and a **disabled account never passes**.
   cannot keep a live session. A person (an admin or a trader, not the Service account) changes their
   own via `POST /api/Users/me/password`, which signs them out everywhere too, the session that asked
   included: they sign in again with the new password. Five attempts per account in 15 minutes.
+  The one exception: while the server's `.env` sets `ADMIN_PASSWORD`, the admin it names
+  (`ADMIN_USERNAME`) gets 409. That password is put back at every start, and the desk's own scripts
+  sign in with it, so it is changed in the `.env` and the API restarted.
 * **Sessions** — how many refresh tokens are live, and a button to revoke them.
 
 Accounts are **disabled, not deleted**: the runs and orders they made keep their owner.
@@ -72,7 +75,8 @@ is harmless. The endpoint uses the sign-in rate limit.
 
 Changing role/password, disabling an account or choosing **Revoke sessions**
 sets `AppUser.TokensValidFromUtc` and revokes all persisted sessions and refresh
-tokens. JWT `iat` is compared at whole-second resolution; a token issued in the
+tokens. It also revokes the account's Ira phone tokens and deletes its linked
+Telegram chats (24 Nov 2026), so the phone and Telegram are paired again after. JWT `iat` is compared at whole-second resolution; a token issued in the
 cutoff second is refused and may require another sign-in. The legacy account-only
 check retains a 30-second cache, but JWT authentication does not use that cache.
 

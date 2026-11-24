@@ -476,7 +476,7 @@ public class AiController : ControllerBase
             owners.Select(o => new AiTelegramOwnerDto(o.TelegramUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), o.TelegramName, o.ConsoleUser, o.LinkedUtc)).ToList()));
     }
 
-    /// <summary>A six-digit code for the signed-in admin, valid ten minutes: sent to the bot as "/pair CODE", it links that Telegram account.</summary>
+    /// <summary>An eight-character code for the signed-in admin, valid ten minutes: sent to the bot as "/pair CODE", it links that Telegram account.</summary>
     [HttpPost("telegram/pair")]
     public async Task<IActionResult> PairTelegram(
         [FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramPairing pairing,

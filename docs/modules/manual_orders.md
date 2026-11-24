@@ -188,6 +188,12 @@ The table scrolls sideways inside its frame on a phone, like every table in the 
 
 `GET /api/ManualOrders/instrument`: `buyAt` / `sellAt` are what a market order would fill at now, null when it would be refused; `tradable` is true when either side has a price; `untradableReason` says why a quote that exists gives none (e.g. `its latest quote is 300 s old; while the market is open a fill needs one under 60 s`).
 
+An instrument with no quote is put on the live feed so its first tick arrives (`subscribing`).
+- **Admin:** at the desk's priority.
+- **Trader:** at the lowest priority, and at most 25 new symbols a day. Past that, `feedNote` says why it was not
+  added.
+- **Already on the feed:** it is left as it is. Before 24 Nov 2026 a lookup lowered a run contract's priority.
+
 `PUT /api/Strategy/runs/{runId}/positions/{positionId}/carry-forward` with `{ "carryForward": true | false }` ticks or unticks one position, in the book or in a strategy run. Admin, or the owner of the run (403 otherwise). Only an **open** position of a **running, non-recap** run: anything else answers 409 and changes nothing. Asking for the value it already has answers 200 with `changed: false` and writes nothing.
 
 `GET /api/Strategy/runs/{runId}/live` (the manual book's run id comes from `GET /api/ManualOrders/book`):

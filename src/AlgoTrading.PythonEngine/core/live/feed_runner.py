@@ -40,6 +40,14 @@ from core.live import watchdog_alerts
 from core.live.watchdog_alerts import WatchdogAlerts
 from messaging.redis_publisher import normalize_tick
 
+#: Watchlist rows at or below this priority are symbols a person asked for: a
+#: manual-order ticket or a trader's own list (WatchlistPriorities.PersonRequested
+#: in the API). They are offered after everything the desk needs, and on a socket
+#: with a symbol limit they give up their place to a desk symbol that does not fit
+#: (24 Nov 2026 security review: a trader could fill FYERS's 100 symbols with stock
+#: futures ahead of every contract the runs trade).
+REQUESTED_MAX_PRIORITY = 1
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -161,6 +169,8 @@ class FeedRunner:
         # the answer.
         self.subscribed: set[str] = set()
         self.declined: set[str] = set()
+        # Watchlist symbols only a person asked for (REQUESTED_MAX_PRIORITY).
+        self.requested: set[str] = set()
 
         # {symbol: (subscribed_at_walltime, monotonic deadline)}. The wall time
         # keeps the proof honest: last_real_tick keeps a symbol's last tick
@@ -462,12 +472,22 @@ class FeedRunner:
             return list(self._fixed_symbols)
         response = self._http.get(f"{self._api}/api/LiveData/watchlist", verify=self._verify, timeout=30)
         response.raise_for_status()
-        return sorted({
-            row["symbol"] for row in response.json()
-            if row.get("isActive")
-            and (row.get("dataType") or "").lower() == "symbolupdate"
-            and row.get("symbol")
-        })
+        desk, requested = set(), set()
+        for row in response.json():
+            if not (row.get("isActive") and (row.get("dataType") or "").lower() == "symbolupdate" and row.get("symbol")):
+                continue
+            try:
+                priority = int(row.get("priority") or 0)
+            except (TypeError, ValueError):
+                priority = 0
+            # A row without a priority (0) is the desk's, as every row was before.
+            (requested if 0 < priority <= REQUESTED_MAX_PRIORITY else desk).add(row["symbol"])
+        requested -= desk
+        self.requested = requested
+        tell = getattr(self._feed, "set_requested", None)
+        if callable(tell):
+            tell(requested)
+        return sorted(desk) + sorted(requested)
 
     def desired_symbols(self) -> tuple[list[str], list[str]]:
         """
@@ -570,6 +590,7 @@ class FeedRunner:
                     taken = set(self._feed.subscribe(added))
                     self.subscribed |= taken
                     self.declined |= set(added) - taken
+                    taken |= self._make_room_for_desk([s for s in added if s not in taken])
                     marker = (time.time(), time.monotonic() + self.SUBSCRIBE_PROOF_SECONDS)
                     for symbol in taken:
                         self.pending_subscriptions[symbol] = marker
@@ -585,6 +606,29 @@ class FeedRunner:
             self.last_error = str(ex)
             print(f"[{self._feed.key}] ERROR SYNCING WATCHLIST: {ex}", flush=True)
             traceback.print_exc()
+
+    def _make_room_for_desk(self, declined: list[str]) -> set[str]:
+        """
+        A desk symbol the vendor declined for want of room takes the place of a
+        subscribed symbol only a person asked for: those are dropped (and kept as
+        declined) and the desk symbols offered again. Returns what was taken.
+        """
+        desk = [s for s in declined if s not in self.requested]
+        evictable = sorted(s for s in self.subscribed if s in self.requested)[:len(desk)]
+        if not desk or not evictable:
+            return set()
+        if not self._feed.unsubscribe(evictable):
+            return set()
+        self.subscribed -= set(evictable)
+        self.declined |= set(evictable)
+        for symbol in evictable:
+            self.pending_subscriptions.pop(symbol, None)
+        taken = set(self._feed.subscribe(desk))
+        self.subscribed |= taken
+        self.declined -= taken
+        print(f"[{self._feed.key}] made room for {len(taken)} desk symbol(s) by dropping {len(evictable)} that "
+              f"only a person asked for: {_shown(evictable)}", flush=True)
+        return taken
 
     def check_pending_subscriptions(self) -> None:
         """

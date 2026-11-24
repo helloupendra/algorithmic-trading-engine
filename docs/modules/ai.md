@@ -1048,8 +1048,12 @@ asks, a few hours on the free tier.
 
 The desk's bot answers its linked owner in a private chat, as the Assistant tab does (`TelegramAssistant`).
 
-- **Linking.** The console hands the admin a six-digit code (`POST telegram/pair`), valid ten minutes and used once.
-  Sent to the bot as `/pair CODE`, it links that Telegram account to that console user, kept in `system_settings`.
+- **Linking.** The console hands the admin an eight-character code (`POST telegram/pair`, 32 letters and digits that
+  cannot be misread), valid ten minutes and used once. Sent to the bot as `/pair CODE`, it links that Telegram account
+  to that console user, kept in `system_settings`.
+  - **Wrong codes:** one Telegram account gets five, then is ignored for an hour. Twenty from anyone drop every
+    outstanding code (`TelegramPairing`).
+  - **Which links count:** only those of an active admin. Revoking an account's sessions deletes its links.
 - **Everyone else.** Strangers get "This bot is private." to `/start` and nothing else. Group chats are ignored: the
   bot posts the desk's notices there.
 - **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns

@@ -1,6 +1,7 @@
 ﻿// src/AlgoTrading.Api/Controllers/ManualOrdersController.cs
 
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services.LiveFeed;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
@@ -145,20 +146,35 @@ public class ManualOrdersController : ControllerBase
         var todayIst = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5.5));
         bool expired = instrument.ExpiryDate is { } expiry && expiry < todayIst;
 
+        // A trader's lookup goes on at the lowest priority and within a daily
+        // allowance, and a symbol already carried is left as it is (24 Nov 2026
+        // review: this GET let a trader fill FYERS's 100-symbol socket).
         bool subscribing = false;
+        string? feedNote = null;
         if (quote is null && !expired)
         {
             try
             {
-                await _upsertWatchlistItem.ExecuteAsync(new UpsertWatchlistItemRequest
+                var outcome = await PersonFeedRequests.RequestAsync(_dbContext, User, symbol,
+                    priority => _upsertWatchlistItem.ExecuteAsync(new UpsertWatchlistItemRequest
+                    {
+                        Symbol = symbol,
+                        DataType = "symbolUpdate",
+                        IsActive = true,
+                        Priority = priority
+                    }, cancellationToken), cancellationToken);
+                subscribing = outcome != FeedRequestOutcome.OverDailyLimit;
+                if (outcome == FeedRequestOutcome.OverDailyLimit)
                 {
-                    Symbol = symbol,
-                    DataType = "symbolUpdate",
-                    IsActive = true,
-                    Priority = 10
-                }, cancellationToken);
-                subscribing = true;
-                _logger.LogInformation("Manual ticket subscribed {Symbol} to the live feed.", symbol);
+                    feedNote = $"Not added to the live feed: {PersonFeedRequests.PerTraderPerDay} new symbols a day is the limit.";
+                    _logger.LogWarning("Manual ticket for {Symbol} not subscribed: user {UserId} reached the daily limit.",
+                        symbol, User.GetUserId());
+                }
+                else if (outcome == FeedRequestOutcome.Added)
+                {
+                    _logger.LogInformation("Manual ticket subscribed {Symbol} to the live feed for user {UserId}.",
+                        symbol, User.GetUserId());
+                }
             }
             catch (Exception ex)
             {
@@ -225,9 +241,11 @@ public class ManualOrdersController : ControllerBase
             change,
             changePercent,
             quoteUpdatedUtc = quote?.UpdatedUtc,
-            // True when this request put the symbol on the feed: the ticket
-            // says "waiting for the first tick" instead of showing blanks.
+            // True when the symbol is on the feed and its first tick is awaited:
+            // the ticket says "waiting for the first tick" instead of showing blanks.
             subscribing,
+            // Why it is not on the feed, when a trader's daily allowance is used.
+            feedNote,
             // A contract the calendar has already retired. It will never quote
             // again, so the ticket says so plainly instead of waiting.
             expired,

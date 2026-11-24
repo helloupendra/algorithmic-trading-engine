@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AgentMemory;
 using AlgoTrading.Api.Services.AiActions;
 using AlgoTrading.Api.Services.AiVoice;
+using AlgoTrading.Domain.Constants;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -18,27 +19,80 @@ namespace AlgoTrading.Api.Services.AiTelegram;
 /// <summary>A code the console hands the owner, sent to the bot as "/pair CODE" to link their Telegram account.</summary>
 public sealed record TelegramPairingCode(string Code, string ForUser, DateTime ExpiresUtc);
 
-/// <summary>Codes waiting to be sent to the bot. In memory: a code outlives neither ten minutes nor a restart.</summary>
+/// <summary>What became of a <c>/pair</c> attempt.</summary>
+public enum TelegramPairOutcome { Linked, Wrong, Locked }
+
+/// <summary>
+/// Codes waiting to be sent to the bot. In memory: a code outlives neither ten minutes nor a restart.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A code is eight characters from 32 that cannot be misread (no 0/O, 1/I), one per admin: about 10^12 values, where
+/// the six digits used until 24 Nov 2026 were 900,000. <c>/pair</c> is the one command a stranger's message reaches,
+/// and a hit links the stranger as an owner of the desk's assistant.
+/// </para>
+/// <para>
+/// Wrong attempts are counted. One Telegram account gets <see cref="MaxWrongPerSender"/> and is then ignored for
+/// <see cref="LockFor"/>; <see cref="MaxWrongTotal"/> wrong attempts from anyone drop every outstanding code, so many
+/// accounts guessing together cannot keep going either. The owner then makes a new code on the console.
+/// </para>
+/// </remarks>
 public sealed class TelegramPairing(TimeProvider? time = null)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
+    public const int CodeLength = 8;
+    public const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    public const int MaxWrongPerSender = 5;
+    public const int MaxWrongTotal = 20;
+    public static readonly TimeSpan LockFor = TimeSpan.FromHours(1);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, TelegramPairingCode> _codes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<long, (int Count, DateTime Since)> _wrong = new();
+    private readonly object _totalLock = new();
+    private int _wrongTotal;
 
     public TelegramPairingCode Create(string forUser)
     {
         var now = _time.GetUtcNow().UtcDateTime;
         foreach (var old in _codes.Where(kv => kv.Value.ExpiresUtc <= now || kv.Value.ForUser == forUser)) _codes.TryRemove(old.Key, out _);
-        string code = RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString(CultureInfo.InvariantCulture);
+        string code = RandomNumberGenerator.GetString(Alphabet, CodeLength);
         var entry = new TelegramPairingCode(code, forUser, now + Lifetime);
         _codes[code] = entry;
         return entry;
     }
 
-    /// <summary>The console user a live code was made for; the code is used up.</summary>
-    public string? Take(string code) =>
-        _codes.TryRemove(code.Trim(), out var entry) && entry.ExpiresUtc > _time.GetUtcNow().UtcDateTime ? entry.ForUser : null;
+    /// <summary>
+    /// A <c>/pair</c> from one Telegram account: the console user a live code was made for (the code is used up), a
+    /// wrong code (counted), or nothing at all while that account is locked out.
+    /// </summary>
+    public (TelegramPairOutcome Outcome, string? ForUser) Attempt(long telegramUserId, string code)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (_wrong.TryGetValue(telegramUserId, out var wrong) && wrong.Count >= MaxWrongPerSender && now - wrong.Since < LockFor)
+        {
+            return (TelegramPairOutcome.Locked, null);
+        }
+
+        string normalized = (code ?? string.Empty).Trim().ToUpperInvariant();
+        if (normalized.Length == CodeLength && _codes.TryRemove(normalized, out var entry) && entry.ExpiresUtc > now)
+        {
+            _wrong.TryRemove(telegramUserId, out _);
+            return (TelegramPairOutcome.Linked, entry.ForUser);
+        }
+
+        _wrong.AddOrUpdate(telegramUserId, _ => (1, now),
+            (_, w) => now - w.Since >= LockFor ? (1, now) : (w.Count + 1, w.Since));
+        lock (_totalLock)
+        {
+            if (++_wrongTotal >= MaxWrongTotal)
+            {
+                _codes.Clear();
+                _wrongTotal = 0;
+            }
+        }
+        return (TelegramPairOutcome.Wrong, null);
+    }
 }
 
 /// <summary>A Telegram account linked to a console user, as the settings table keeps it.</summary>
@@ -51,7 +105,7 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// <remarks>
 /// <para>
 /// Only a linked account is answered. The console hands its admin a
-/// six-digit code (AI → Assistant); sent to the bot as <c>/pair CODE</c>
+/// eight-character code (AI → Assistant); sent to the bot as <c>/pair CODE</c>
 /// within ten minutes, it links that Telegram account to that console user,
 /// kept in <c>system_settings</c> (<c>ai.telegram.owner.&lt;id&gt;</c>).
 /// Anyone else gets one line to /start and nothing else, and group chats
@@ -129,7 +183,7 @@ public sealed class TelegramAssistant(
 {
     public const string HttpClientName = "telegram-assistant";
     public const string OffsetKey = "ai.telegram.offset";
-    public const string OwnerPrefix = "ai.telegram.owner.";
+    public const string OwnerPrefix = AlgoTrading.Infrastructure.Services.UserAdminService.TelegramOwnerPrefix;
     public const int HistoryMessages = 8;
     public static readonly TimeSpan HistoryIdle = TimeSpan.FromMinutes(30);
 
@@ -281,8 +335,12 @@ public sealed class TelegramAssistant(
 
         if (text.StartsWith("/pair", StringComparison.OrdinalIgnoreCase))
         {
-            string code = text[5..].Trim();
-            string? consoleUser = code.Length == 6 ? pairing.Take(code) : null;
+            var (outcome, consoleUser) = pairing.Attempt(userId, text[5..]);
+            if (outcome == TelegramPairOutcome.Locked)
+            {
+                await SendAsync(chatId, "Too many wrong codes. Try again in an hour.", cancellationToken);
+                return;
+            }
             if (consoleUser is null)
             {
                 await SendAsync(chatId, "That code is not valid or has expired. Make a new one on openfno.com: AI → Assistant → Link Telegram.", cancellationToken);
@@ -1192,7 +1250,16 @@ public sealed class TelegramAssistant(
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
         var rows = await db.SystemSettings.AsNoTracking().Where(s => s.Key.StartsWith(OwnerPrefix)).ToListAsync(cancellationToken);
+        // Only links of an active admin count (24 Nov 2026). A link outlived its account being disabled, demoted or
+        // deleted, and kept getting desk-wide answers and alerts; revoking an account's sessions now deletes its
+        // links as well (UserAdminService), and this check covers a row left from before that.
+        var admins = (await db.AppUsers.AsNoTracking()
+                .Where(u => u.IsActive && u.Role == UserRoles.Admin)
+                .Select(u => u.UserName)
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
         return rows
+            .Where(r => admins.Contains(r.Value))
             .Select(r => long.TryParse(r.Key[OwnerPrefix.Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out long id)
                 ? new TelegramOwner(id, r.Value, r.Reason ?? string.Empty, DateTime.SpecifyKind(r.UpdatedUtc, DateTimeKind.Utc))
                 : null)

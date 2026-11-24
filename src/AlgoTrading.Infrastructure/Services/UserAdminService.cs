@@ -14,6 +14,13 @@ namespace AlgoTrading.Infrastructure.Services;
 /// </summary>
 public class UserAdminService : IUserAdminService
 {
+    /// <summary>
+    /// The <c>system_settings</c> key prefix of a Telegram account linked to a console user (<c>ai.telegram.owner.&lt;id&gt;</c>,
+    /// value the user name). Kept here so revoking an account's sessions can delete its links; the Telegram assistant
+    /// reads the same constant.
+    /// </summary>
+    public const string TelegramOwnerPrefix = "ai.telegram.owner.";
+
     private readonly TradingDbContext _dbContext;
     private readonly PasswordHasher<AppUser> _passwordHasher;
     private readonly ITokenValidityService _tokenValidity;
@@ -289,9 +296,42 @@ public class UserAdminService : IUserAdminService
         // under the same user row lock as refresh rotation.
         await _tokenValidity.InvalidateExistingTokensAsync(userId, cancellationToken);
 
+        // "Every session signed out" has to cover the account's other ways in (24 Nov 2026 review): Ira phone tokens
+        // never expire and were checked against nothing else, and a linked Telegram chat kept getting desk-wide
+        // answers and alerts. Both are cut here, so a password change, a reset, a role change or disabling the account
+        // ends them too; the owner pairs the phone and Telegram again after.
+        await RevokeLinkedAccessAsync(userId, now, cancellationToken);
+
         _liveConnections?.CloseConnectionsOf(userId);
 
         return liveCount;
+    }
+
+    private async Task RevokeLinkedAccessAsync(long userId, DateTime now, CancellationToken cancellationToken)
+    {
+        var phones = await _dbContext.AiPhoneTokens
+            .Where(t => t.UserId == userId && t.RevokedUtc == null)
+            .ToListAsync(cancellationToken);
+        foreach (var phone in phones) phone.RevokedUtc = now;
+
+        string? userName = await _dbContext.AppUsers
+            .Where(u => u.Id == userId)
+            .Select(u => u.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+        var links = userName is null
+            ? []
+            : await _dbContext.SystemSettings
+                .Where(s => s.Key.StartsWith(TelegramOwnerPrefix) && s.Value == userName)
+                .ToListAsync(cancellationToken);
+        _dbContext.SystemSettings.RemoveRange(links);
+
+        if (phones.Count > 0 || links.Count > 0)
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation(
+                "Revoked {Phones} Ira phone token(s) and {Links} Telegram link(s) of user {UserId} with its sessions.",
+                phones.Count, links.Count, userId);
+        }
     }
 
     public async Task<bool> IsModuleAllowedAsync(

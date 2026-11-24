@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -79,6 +80,22 @@ public class SessionLifecycleTests
         }
 
         public Task<bool> VictimsTokenAcceptedAsync() => Validity.IsTokenAcceptableAsync(Victim, IssuedEarlier);
+
+        /// <summary>An Ira phone token and a linked Telegram chat for the account, as the console makes them.</summary>
+        public async Task LinkPhoneAndTelegramAsync(long userId, string userName, long telegramUserId)
+        {
+            _db.AiPhoneTokens.Add(new AiPhoneToken { UserId = userId, UserName = userName, Label = "Pixel", TokenHash = $"phone-{userId}", CreatedUtc = DateTime.UtcNow });
+            _db.SystemSettings.Add(new SystemSetting { Key = UserAdminService.TelegramOwnerPrefix + telegramUserId, Value = userName, Reason = "@" + userName });
+            await _db.SaveChangesAsync();
+        }
+
+        /// <summary>The account's phone tokens still accepted, and its Telegram links still kept.</summary>
+        public async Task<(int Phones, int Links)> LinkedAccessAsync(long userId, string userName)
+        {
+            await using var fresh = new TradingDbContext(_options);
+            return (await fresh.AiPhoneTokens.CountAsync(x => x.UserId == userId && x.RevokedUtc == null),
+                await fresh.SystemSettings.CountAsync(x => x.Key.StartsWith(UserAdminService.TelegramOwnerPrefix) && x.Value == userName));
+        }
 
         /// <summary>Read past the service's context: what a later request would find stored.</summary>
         public async Task<AppUser> StoredVictimAsync()
@@ -270,6 +287,20 @@ public class SessionLifecycleTests
         Assert.Equal(1, await desk.LiveRefreshTokensAsync(AdminId));
     }
 
+    [Fact]
+    public async Task Ending_an_accounts_sessions_also_ends_its_phone_tokens_and_telegram_links()
+    {
+        // 24 Nov 2026 review: "every session signed out" left the Ira phone token and the Telegram chat working.
+        await using var desk = new Desk(UserRoles.Admin);
+        await desk.LinkPhoneAndTelegramAsync(Victim, "victim", 111);
+        await desk.LinkPhoneAndTelegramAsync(AdminId, "admin", 222);
+
+        await desk.Users.ChangeOwnPasswordAsync(Victim, OldPassword, NewPassword);
+
+        Assert.Equal((0, 0), await desk.LinkedAccessAsync(Victim, "victim"));
+        Assert.Equal((1, 1), await desk.LinkedAccessAsync(AdminId, "admin"));
+    }
+
     // ---------------------------------------------------------------- through the API's policies
 
     private const string MyPassword = "/api/Users/me/password";
@@ -278,11 +309,21 @@ public class SessionLifecycleTests
         $$"""{"currentPassword":"{{current}}","newPassword":"{{next}}"}""";
 
     /// <summary>The real controller and account service over a database holding one account of each role.</summary>
-    private static async Task<Host> OwnPasswordHost()
+    private static async Task<Host> OwnPasswordHost(string? configuredAdmin = null)
     {
         string database = $"own-password-{Guid.NewGuid():N}";
         var host = await Host.StartAsync<OwnPasswordController>(s =>
         {
+            if (configuredAdmin is not null)
+            {
+                // ADMIN_USERNAME / ADMIN_PASSWORD in the server's .env.
+                s.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["Bootstrap:AdminUserName"] = configuredAdmin,
+                        ["Bootstrap:AdminPassword"] = "from-the-env-file",
+                    }).Build());
+            }
             s.AddDbContext<TradingDbContext>(o => o.UseInMemoryDatabase(database));
             s.AddMemoryCache();
             s.AddSingleton(new PasswordHasher<AppUser>());
@@ -336,6 +377,23 @@ public class SessionLifecycleTests
 
         Assert.True(Verifies(await StoredAsync(host, AdminId), NewPassword));
         Assert.True(Verifies(await StoredAsync(host, TraderId), OldPassword));
+    }
+
+    [Fact]
+    public async Task The_admin_whose_password_the_env_file_sets_is_told_to_change_it_there()
+    {
+        // 24 Nov 2026 review: a change here locked the desk's scripts out (they sign in with the .env password) and
+        // the next start quietly put the old password back.
+        await using var host = await OwnPasswordHost(configuredAdmin: $"user{AdminId}");
+
+        using var refused = await host.ExchangeAsync("POST", MyPassword, Body(), AdminId);
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Contains("ADMIN_PASSWORD", await refused.Content.ReadAsStringAsync());
+        Assert.True(Verifies(await StoredAsync(host, AdminId), OldPassword));
+
+        // Every other account still can.
+        Assert.Equal(HttpStatusCode.OK, await host.SendAsync("POST", MyPassword, Body(), TraderId));
     }
 
     [Fact]

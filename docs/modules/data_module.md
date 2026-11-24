@@ -90,6 +90,16 @@ The per-user watchlist (`/api/Watchlist/me`, stored against the user id) is sepa
 empty; it is for whatever a trader wants on top of the pulse, and it scrolls in place past eight
 rows.
 
+- **What it takes:** a live instrument from the master, or a symbol the feed already carries. A
+  trader holds at most 50.
+- **The recording list:** a trader's new symbol goes on at priority 1
+  (`WatchlistPriorities.PersonRequested`), and a trader adds at most 25 new symbols a day. The
+  manual-order ticket's lookup follows the same rules.
+- **How the feed treats them:** it offers priority-1 symbols last. On FYERS's 100-symbol socket
+  such a symbol gives up its place to a run's contract that does not fit (`feed_runner.py`,
+  `REQUESTED_MAX_PRIORITY`).
+- **What is not touched:** a symbol already on the list keeps its priority.
+
 ### 6. What Is Kept, and For How Long
 
 Everything the platform sees during a session is written down; the only thing with a shelf life is the raw tick table.
