@@ -556,8 +556,8 @@ class PlanTests(unittest.TestCase):
         # scripts/tests/market-open-plan.test.sh asserts the same number. coderforchange
         # came off the plan on 15 Nov 2026: its runs loaded the box's CPU. From 18 Nov admin
         # runs TrendRider V2 on NIFTY (the owner, 17 Nov evening), and V2BE beside it from the 18 Nov
-        # night: 2.
-        self.assertEqual({"admin": 2}, by_account)
+        # night. From 23 Nov all four TrendRider versions run on NIFTY (a688136d): 4.
+        self.assertEqual({"admin": 4}, by_account)
 
 
 class SeenBeforeTests(unittest.TestCase):
