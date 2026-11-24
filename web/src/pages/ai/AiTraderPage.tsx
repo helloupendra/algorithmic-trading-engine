@@ -155,6 +155,9 @@ function Live({ d }: { d: AiTraderDesk }) {
   return (
     <>
       <Panel title="What it is doing">
+        {d.lastLook && d.lastLook.day && d.lastLook.day !== todayIst() && (
+          <p className="small-note ai-flush">No look today yet; this was its last one.</p>
+        )}
         {d.lastLook ? <LastLook l={d.lastLook} /> : <p className="small-note ai-flush">No look yet. Its first one comes at {d.rules?.openFrom ?? '09:20'} IST on a trading day.</p>}
       </Panel>
 
@@ -202,7 +205,7 @@ function LastLook({ l }: { l: AiTraderDecision }) {
   return (
     <div className="atp-last">
       <div className="atp-last__head">
-        <span className="atp-time">{l.clockIst}</span>
+        <span className="atp-time">{l.day && l.day !== todayIst() ? `${shortDate(l.day)} · ${l.clockIst}` : l.clockIst}</span>
         <Badge tone={b.tone}>{b.label}</Badge>
         {l.placed && <span className="faint">{l.placed.text}</span>}
       </div>
