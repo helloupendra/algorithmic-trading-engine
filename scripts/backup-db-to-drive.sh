@@ -53,7 +53,10 @@ size="$(du -h "$file" | cut -f1)"
 
 {
   echo "uploading $file ($size)"
-  rclone copy "$file" "$REMOTE/" --drive-chunk-size 64M
+  # Google answers a full-speed upload of a 5 GB file from this server with HTTP 429 ("Sorry…", its
+  # automated-traffic page) after about two minutes, at rclone's default chunk size too (23–24 Nov 2026);
+  # at 3 MB/s it goes through (about 27 minutes for 4.8 GB).
+  rclone copy "$file" "$REMOTE/" --bwlimit "${DB_BACKUP_BWLIMIT:-3M}" --retries 2
 } >>"$LOG" 2>&1 || fail "the upload of $file did not finish (the server copy is kept)"
 
 local_md5="$(md5sum "$file" | cut -d' ' -f1)"
