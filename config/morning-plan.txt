@@ -55,11 +55,11 @@
 
 accounts: admin
 
-TrendRider               NIFTY                   2  -   day_filters=off
-TrendRiderV2             NIFTY                   2  -   day_filters=off
-TrendRiderV2BE           NIFTY                   2  -   day_filters=off
-TrendRiderV2OB           NIFTY                   2  -   day_filters=off
-GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m
+TrendRider               NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
+TrendRiderV2             NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
+TrendRiderV2BE           NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
+TrendRiderV2OB           NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
+GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m    day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
 
 #
 # 2026-11-25 evening, on the owner's word: from 26 Nov the four TrendRider runs
@@ -73,6 +73,12 @@ GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m
 #
 # A line's key=value fields are the run's own strategy settings (the start's
 # "parameters"); the catalog defaults and every backtest are unchanged.
+#
+# Same evening, the owner's daily risk for every script, each on its own: the run
+# ends for the day at -Rs 4,000 (day_stop=4000); once its day's P&L reaches
+# Rs 5,000 it keeps Rs 3,000, at Rs 10,000 keeps Rs 7,000, at Rs 20,000 keeps
+# Rs 15,000 (day_lock). Net of charges, as every overall rule is. day_stop and
+# day_lock go into the run's risk rules, not its strategy settings.
 # GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 # GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
 # TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
