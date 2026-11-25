@@ -91,7 +91,10 @@ public class RiskRulesDto
             Target = rules?.Overall?.Target,
             TrailStopLoss = rules?.Overall?.TrailStopLoss,
             TrailTrigger = rules?.Overall?.TrailTrigger,
-            Scope = RiskScopes.Normalize(rules?.Overall?.Scope)
+            Scope = RiskScopes.Normalize(rules?.Overall?.Scope),
+            LockSteps = rules?.Overall?.LockSteps?
+                .Select(step => new ProfitLockStepDto { At = step.At, Keep = step.Keep })
+                .ToList()
         },
         Group = new GroupRiskDto
         {
@@ -118,7 +121,8 @@ public class RiskRulesDto
     /// change to any of them re-arms the peaks the guard is tracking).
     /// </summary>
     public static bool SameTrailing(RiskRulesDto? a, RiskRulesDto? b)
-        => a?.Overall?.TrailStopLoss == b?.Overall?.TrailStopLoss
+        => SameLock(a?.Overall?.LockSteps, b?.Overall?.LockSteps)
+        && a?.Overall?.TrailStopLoss == b?.Overall?.TrailStopLoss
         && a?.Overall?.TrailTrigger == b?.Overall?.TrailTrigger
         && a?.Group?.TrailStopLoss == b?.Group?.TrailStopLoss
         && a?.Group?.TrailTrigger == b?.Group?.TrailTrigger
@@ -127,9 +131,14 @@ public class RiskRulesDto
         && a?.Leg?.TrailTriggerPoints == b?.Leg?.TrailTriggerPoints
         && a?.Leg?.TrailTriggerPercent == b?.Leg?.TrailTriggerPercent;
 
+    private static bool SameLock(List<ProfitLockStepDto>? a, List<ProfitLockStepDto>? b)
+        => (a ?? new()).Select(s => (s.At, s.Keep)).SequenceEqual((b ?? new()).Select(s => (s.At, s.Keep)));
+
     /// <summary>
     /// Every set value must be greater than zero. Returns false with a message
     /// naming the offending field; a null rule set is valid (nothing enforced).
+    /// Profit-lock steps rise: each <c>At</c> above the last, each <c>Keep</c> at
+    /// least the last and below its own <c>At</c>.
     /// </summary>
     public static bool TryValidate(RiskRulesDto? rules, out string? error)
     {
@@ -165,6 +174,23 @@ public class RiskRulesDto
             }
         }
 
+        var steps = rules.Overall?.LockSteps ?? new List<ProfitLockStepDto>();
+        for (int i = 0; i < steps.Count; i++)
+        {
+            var step = steps[i];
+            if (step is null || step.At <= 0 || step.Keep < 0 || step.Keep >= step.At)
+            {
+                error = $"overall.lockSteps[{i}] must keep zero or more and less than the amount that sets it.";
+                return false;
+            }
+
+            if (i > 0 && (step.At <= steps[i - 1].At || step.Keep < steps[i - 1].Keep))
+            {
+                error = $"overall.lockSteps[{i}] must come after the step before it: a higher amount, and keep at least as much.";
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -186,6 +212,10 @@ public class RiskRulesDto
         Add(parts, "leg SL", Join(Points(Leg?.StopLossPoints), Percent(Leg?.StopLossPercent)));
         Add(parts, "leg target", Join(Points(Leg?.TargetPoints), Percent(Leg?.TargetPercent)));
         Add(parts, "overall trail", Trail(Money(Overall?.TrailStopLoss), Money(Overall?.TrailTrigger)));
+        if (Overall?.HasLockSteps == true)
+        {
+            parts.Add("overall lock " + string.Join(" / ", Overall.LockSteps!.Select(s => $"{Money(s.At)} keeps {Money(s.Keep)}")));
+        }
         Add(parts, "group trail", Trail(Money(Group?.TrailStopLoss), Money(Group?.TrailTrigger)));
         Add(parts, "leg trail", Trail(
             Join(Points(Leg?.TrailStopLossPoints), Percent(Leg?.TrailStopLossPercent)),
@@ -293,16 +323,45 @@ public class OverallRiskDto
     /// </remarks>
     public string? Scope { get; set; }
 
+    /// <summary>
+    /// Profit locks, lowest first. Once the run's total P&amp;L has reached a step's <c>At</c>, the run is
+    /// ended if it falls back to that step's <c>Keep</c>; the highest step reached is the one that holds, so the
+    /// floor only ever rises. The owner's ladder of 25 Nov 2026: ₹5,000 keeps ₹3,000, ₹10,000 keeps ₹7,000,
+    /// ₹20,000 keeps ₹15,000. Live runs only: the backtest engine does not read it yet.
+    /// </summary>
+    public List<ProfitLockStepDto>? LockSteps { get; set; }
+
+    /// <summary>True when at least one profit-lock step is set.</summary>
+    [JsonIgnore]
+    public bool HasLockSteps => LockSteps is { Count: > 0 };
+
+    /// <summary>
+    /// The step that holds for a run whose best total P&amp;L so far is <paramref name="best"/>: the highest
+    /// one it has reached. Null below the first step or with no steps.
+    /// </summary>
+    public ProfitLockStepDto? LockFor(decimal best)
+        => LockSteps?.Where(step => best >= step.At).OrderByDescending(step => step.At).FirstOrDefault();
+
     /// <summary>True when this rule is measured per trading day.</summary>
     [JsonIgnore]
     public bool PerDay => !string.Equals(Scope, RiskScopes.Run, StringComparison.OrdinalIgnoreCase);
 
     [JsonIgnore]
-    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue || HasTrailingRule;
+    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue || HasTrailingRule || HasLockSteps;
 
     /// <summary>True when a trail distance is set (a trigger alone trails nothing).</summary>
     [JsonIgnore]
     public bool HasTrailingRule => TrailStopLoss.HasValue;
+}
+
+/// <summary>One step of an overall profit lock: once total P&amp;L reaches <see cref="At"/>, keep <see cref="Keep"/>.</summary>
+public class ProfitLockStepDto
+{
+    /// <summary>Total P&amp;L (₹) that sets this step.</summary>
+    public decimal At { get; set; }
+
+    /// <summary>Total P&amp;L (₹) the run is ended at once the step is set; below <see cref="At"/>, zero or more.</summary>
+    public decimal Keep { get; set; }
 }
 
 /// <summary>Rupee thresholds per group (realized of the group + unrealized of its open legs). Trips close that group only.</summary>

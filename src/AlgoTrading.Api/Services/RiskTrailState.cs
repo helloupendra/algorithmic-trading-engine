@@ -29,6 +29,7 @@ public sealed class RiskTrailState
     private readonly Dictionary<string, TrailTrack> _groups = new(StringComparer.Ordinal);
     private readonly Dictionary<long, LegTrailTracks> _legs = new();
     private TrailTrack _overall = TrailTrack.Idle;
+    private decimal? _overallBest;
 
     /// <summary>
     /// Records the run's total P&amp;L and returns the resulting track. Arms when
@@ -41,6 +42,19 @@ public sealed class RiskTrailState
         {
             _overall = Advance(_overall, pnl, trigger);
             return _overall;
+        }
+    }
+
+    /// <summary>
+    /// Records the run's total P&amp;L for its profit lock and returns the best seen so far (this sweep's value
+    /// the first time). Unlike a trail it needs no trigger: the lock's steps say what the best sets.
+    /// </summary>
+    public decimal ObserveOverallBest(decimal pnl)
+    {
+        lock (_lock)
+        {
+            _overallBest = _overallBest is { } best && best >= pnl ? best : pnl;
+            return _overallBest.Value;
         }
     }
 
@@ -114,6 +128,7 @@ public sealed class RiskTrailState
         lock (_lock)
         {
             _overall = TrailTrack.Idle;
+            _overallBest = null;
             _groups.Clear();
             _legs.Clear();
         }

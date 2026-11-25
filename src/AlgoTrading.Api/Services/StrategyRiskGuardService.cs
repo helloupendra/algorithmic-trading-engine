@@ -510,14 +510,16 @@ public sealed class StrategyRiskGuardService : BackgroundService
 
     /// <summary>
     /// Overall rule on the run's net P&amp;L (<see cref="OverallNet"/>), in the
-    /// fixed → trailing → target order. A trip flattens the run. Null when
-    /// nothing trips.
+    /// fixed → trailing → profit lock → target order. A trip flattens the run.
+    /// Null when nothing trips.
     /// </summary>
     internal static string? EvaluateOverall(decimal totalPnl, OverallRiskDto overall, RiskTrailState trail)
     {
         var track = overall.HasTrailingRule
             ? trail.ObserveOverall(totalPnl, overall.TrailTrigger)
             : TrailTrack.Idle;
+        // The best is recorded on every sweep, before any rule can return, so a stop-loss sweep cannot skip it.
+        decimal? best = overall.HasLockSteps ? trail.ObserveOverallBest(totalPnl) : null;
 
         if (overall.StopLoss.HasValue && totalPnl <= -overall.StopLoss.Value)
         {
@@ -528,6 +530,12 @@ public sealed class StrategyRiskGuardService : BackgroundService
         {
             return $"Trailing stop hit: P&L {Rupees(totalPnl)} fell {Rupees(track.Peak - totalPnl)} "
                  + $"from peak {Rupees(track.Peak)} (trail {Rupees(trailStop)})";
+        }
+
+        if (best is { } bestPnl && overall.LockFor(bestPnl) is { } step && totalPnl <= step.Keep)
+        {
+            return $"Profit lock hit: P&L {Rupees(totalPnl)} fell to the {Rupees(step.Keep)} kept once it reached "
+                 + $"{Rupees(step.At)} (best {Rupees(bestPnl)})";
         }
 
         if (overall.Target.HasValue && totalPnl >= overall.Target.Value)

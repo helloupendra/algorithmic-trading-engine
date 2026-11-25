@@ -13,7 +13,7 @@
  */
 
 import { formatInrWhole } from './format'
-import type { GroupRisk, LegRisk, LiveActivity, OverallRisk, RiskRules, RiskScope } from './types'
+import type { GroupRisk, LegRisk, LiveActivity, OverallRisk, ProfitLockStep, RiskRules, RiskScope } from './types'
 
 /* -------------------------------------------------------------------- draft */
 
@@ -40,10 +40,15 @@ export interface RiskDraft {
    * run. Not a number, so it is never a parse failure — see RiskScope.
    */
   overallScope: RiskScope
+  /**
+   * The profit-lock ladder, carried through an edit unchanged: the form has no fields for it yet, and a save
+   * from the form must not drop the ladder the morning plan set.
+   */
+  overallLockSteps?: ProfitLockStep[]
 }
 
 /** The numeric fields: the only ones a parse can reject. */
-export type RiskDraftField = Exclude<keyof RiskDraft, 'overallScope'>
+export type RiskDraftField = Exclude<keyof RiskDraft, 'overallScope' | 'overallLockSteps'>
 
 export const EMPTY_RISK_DRAFT: RiskDraft = {
   overallScope: 'day',
@@ -73,6 +78,7 @@ function text(v: number | null | undefined): string {
 export function riskDraftFrom(rules: RiskRules | null | undefined): RiskDraft {
   return {
     overallScope: rules?.overall?.scope === 'run' ? 'run' : 'day',
+    ...(rules?.overall?.lockSteps?.length ? { overallLockSteps: rules.overall.lockSteps } : {}),
     overallStopLoss: text(rules?.overall?.stopLoss),
     overallTarget: text(rules?.overall?.target),
     overallTrailStopLoss: text(rules?.overall?.trailStopLoss),
@@ -119,6 +125,19 @@ function positive(v: number | null | undefined): number | null {
   return v != null && Number.isFinite(v) && v > 0 ? v : null
 }
 
+/** The ladder's usable steps, in order: each sets above zero and keeps zero or more, below what sets it. */
+function lockSteps(steps: ReadonlyArray<ProfitLockStep> | null | undefined): ProfitLockStep[] {
+  return (steps ?? [])
+    .filter((s) => s && Number.isFinite(s.at) && Number.isFinite(s.keep) && s.at > 0 && s.keep >= 0 && s.keep < s.at)
+    .map((s) => ({ at: s.at, keep: s.keep }))
+}
+
+/** "₹5,000 keeps ₹3,000 / ₹10,000 keeps ₹7,000", or null without a ladder. */
+function lockPhrase(steps: ReadonlyArray<ProfitLockStep> | null | undefined): string | null {
+  const list = lockSteps(steps)
+  return list.length ? list.map((s) => `${formatInrWhole(s.at)} keeps ${formatInrWhole(s.keep)}`).join(' / ') : null
+}
+
 /** Drops unset / non-positive values so "nothing set" is `{}` at every level. */
 export function normalizeRisk(rules: RiskRules | null | undefined): RiskRules {
   const out: RiskRules = {}
@@ -132,6 +151,8 @@ export function normalizeRisk(rules: RiskRules | null | undefined): RiskRules {
   if (overallTg != null) overall.target = overallTg
   if (overallTrail != null) overall.trailStopLoss = overallTrail
   if (overallTrigger != null) overall.trailTrigger = overallTrigger
+  const steps = lockSteps(rules?.overall?.lockSteps)
+  if (steps.length > 0) overall.lockSteps = steps
   if (Object.keys(overall).length > 0) {
     // Carried only alongside a rule it can scope. On its own it would make an
     // otherwise empty overall block look set, and every run would claim to
@@ -286,6 +307,7 @@ export function parseRiskDraft(draft: RiskDraft): RiskDraftResult {
   const rules = normalizeRisk({
     overall: {
       scope: draft.overallScope === 'run' ? 'run' : 'day',
+      lockSteps: draft.overallLockSteps,
       stopLoss: values.overallStopLoss,
       target: values.overallTarget,
       trailStopLoss: values.overallTrailStopLoss,
@@ -372,9 +394,10 @@ export function riskChips(rules: RiskRules | null | undefined): RiskChip[] {
     const sl = r.overall.stopLoss != null ? formatInrWhole(r.overall.stopLoss) : '—'
     const tg = r.overall.target != null ? formatInrWhole(r.overall.target) : '—'
     const trail = trailPhrase(r.overall.trailStopLoss, r.overall.trailTrigger)
+    const lock = lockPhrase(r.overall.lockSteps)
     chips.push({
       level: 'overall',
-      label: `Overall SL ${sl} · target ${tg}${trail ? ` · trail ${trail}` : ''}`,
+      label: `Overall SL ${sl} · target ${tg}${trail ? ` · trail ${trail}` : ''}${lock ? ` · lock ${lock}` : ''}`,
     })
   }
   if (r.group) {
@@ -416,6 +439,8 @@ export function describeRiskRules(rules: RiskRules | null | undefined): string {
   // The trails come after every fixed rule, as RiskRulesDto.Describe() writes them.
   const overallTrail = trailPhrase(r.overall?.trailStopLoss, r.overall?.trailTrigger)
   if (overallTrail) parts.push(`overall trail ${overallTrail}`)
+  const overallLock = lockPhrase(r.overall?.lockSteps)
+  if (overallLock) parts.push(`overall lock ${overallLock}`)
   const groupTrail = trailPhrase(r.group?.trailStopLoss, r.group?.trailTrigger)
   if (groupTrail) parts.push(`group trail ${groupTrail}`)
   const legTrail = legTrailPhrase(r.leg)
