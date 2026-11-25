@@ -249,7 +249,8 @@ public sealed class AiTraderRules
         ["TrendRiderV2OB"] = "V2 Breakeven with the NIFTY stop at the last order block; the best of the family over six years (2020-2026)",
         ["TrendRiderV2BE"] = "V2 plus a breakeven step once NIFTY moves 0.25 x ADR its way; held over six years",
         ["TrendRiderV2"] = "buys the 1-strike ITM option when a 5-minute candle closes past yesterday's high or low and the day's open, from 09:20; NIFTY stop 0.5 x ADR and a trail; held over six years",
-        ["TrendRider"] = "Version 1: buys when a 5-minute candle breaks the 09:15-09:45 range on the open's side; held over six years, about a third of V2's profit",
+        ["TrendRider"] = "Version 1: buys when a 5-minute candle breaks the 09:15-09:45 range on the open's side; held over six years, about a third of V2's profit. "
+                         + "From 26 Nov 2026 every TrendRider version runs with its day rules off (after a wide day, a gap against, a narrow yesterday): it buys every break at its level, whatever yesterday was",
         ["SmcStructureBreak"] = "buys the ATM option on a break of market structure (BOS/CHoCH); lost in 2024-2026",
         ["GhostTangentCrossings"] = "many small ATM buys on short pivot crossings; lost on two years of real premiums",
         ["GhostTangentCrossingsV2"] = "Ghost's second version (office review); lost less than Ghost, still lost",
