@@ -4,11 +4,13 @@
 #
 # accounts: platform user names that get the plan
 # then one line per strategy:
-#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]  [key=value ...]
 #
 # "-" means no leg target; leaving it off takes the job's default (20 points,
 # written for Ghost). "@admin" limits a line to the accounts named; without it a
-# line runs in every account above. Runners started = the sum over lines of
+# line runs in every account above. A key=value field is one of the run's own
+# strategy settings, sent as the start's "parameters" (timeframe=60m,
+# day_filters=off). Runners started = the sum over lines of
 # (its accounts x its underlyings).
 #
 # 2026-09-27: Fulcrum runs in admin only. After charges and spread it lost about
@@ -53,11 +55,24 @@
 
 accounts: admin
 
-TrendRider               NIFTY                   2  -
-TrendRiderV2             NIFTY                   2  -
-TrendRiderV2BE           NIFTY                   2  -
-TrendRiderV2OB           NIFTY                   2  -
+TrendRider               NIFTY                   2  -   day_filters=off
+TrendRiderV2             NIFTY                   2  -   day_filters=off
+TrendRiderV2BE           NIFTY                   2  -   day_filters=off
+TrendRiderV2OB           NIFTY                   2  -   day_filters=off
+GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m
 
+#
+# 2026-11-25 evening, on the owner's word: from 26 Nov the four TrendRider runs
+# trade every break at their own level ("jo level btaye vaha trade le"): their day
+# rules (after a wide day, the gap against, yesterday not narrow, today's range
+# still small) are off with day_filters=off, and each entry names the rule that
+# would have skipped it. On 25 Nov those rules kept all four out of a day whose
+# 10:20 opening-range call ran +Rs 15,788 at its best. Ghost V2 runs on NIFTY
+# every day on 1-hour candles (timeframe=60m), 2 lots, a 50-point target per leg,
+# re-entering on each new signal: 5 runs.
+#
+# A line's key=value fields are the run's own strategy settings (the start's
+# "parameters"); the catalog defaults and every backtest are unchanged.
 # GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 # GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
 # TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -

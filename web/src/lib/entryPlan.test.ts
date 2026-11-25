@@ -77,10 +77,28 @@ describe('entryPlan', () => {
     expect(plan.headline).toMatch(/^No entry today: yesterday \(23 Nov\) moved 647\.7 points/)
     expect(plan.headline).toContain('wider than 1.3 ×')
     // The levels are still stated, so the trader sees what it would have needed.
-    expect(plan.call).toEqual({ level: 25_991.95, from: "yesterday's high", off: null })
+    expect(plan.call).toEqual({ level: 25_991.95, from: "yesterday's high", off: null, ruledOut: null })
     expect(plan.put.level).toBe(25_344.3)
     expect(plan.put.off).toMatch(/opened 1\.12% up/)
     expect(entryPlan(V1, hist, t, '2026-11-25', ist('2026-11-25', '10:00')).status).toBe('day_blocked')
+  })
+
+  it('trades through the day rules when they are off, and says which one it passed (26 Nov on)', () => {
+    const off = trendRiderRules('TrendRiderV2BE', { levels: 'prev_day', first_entry: 'auto', last_entry: 'auto', day_filters: 'off' })!
+    expect(off.dayFilters).toBe(false)
+    const hist = history(session('2026-11-23', 25_936.95, 25_991.95, 25_344.3, 25_366.4))
+    const t = today('2026-11-25', [[25_651.6, 25_700, 25_619, 25_690]])
+    const plan = entryPlan(off, hist, t, '2026-11-25', ist('2026-11-25', '10:00'))
+    expect(plan.status).toBe('watching')
+    expect(plan.dayOff).toBeNull()
+    expect(plan.ruledOut).toMatch(/^yesterday \(23 Nov\) moved 647\.7 points/)
+    expect(plan.call).toEqual({ level: 25_991.95, from: "yesterday's high", off: null, ruledOut: null })
+    expect(plan.put.off).toBeNull()
+    expect(plan.put.ruledOut).toMatch(/opened 1\.12% up/)
+    expect(plan.headline).toBe('Buys on a 5-minute close: call above 25,992.0 or put below 25,344.3 (until 14:35); day rules off.')
+    // TrendRider's own range rule is a day rule too: off, it does not wait for the range.
+    const v1off = trendRiderRules('TrendRider', { first_entry: '09:45', min_range_frac: 0.4, max_prev_range: 0.7, day_filters: false })!
+    expect(entryPlan(v1off, hist, t, '2026-11-25', ist('2026-11-25', '10:00')).rangeNeeded).toBeNull()
   })
 
   it('watches yesterday\'s high and low from 09:20 on an ordinary day (V2 BE)', () => {
@@ -92,8 +110,8 @@ describe('entryPlan', () => {
     expect(early.lastChance).toBe('14:35')
     const plan = entryPlan(V2BE, hist, t, '2026-11-25', ist('2026-11-25', '09:31'))
     expect(plan.status).toBe('watching')
-    expect(plan.call).toEqual({ level: 25_350, from: "yesterday's high", off: null })
-    expect(plan.put).toEqual({ level: 25_100, from: "yesterday's low", off: null })
+    expect(plan.call).toEqual({ level: 25_350, from: "yesterday's high", off: null, ruledOut: null })
+    expect(plan.put).toEqual({ level: 25_100, from: "yesterday's low", off: null, ruledOut: null })
     expect(plan.headline).toBe('Buys on a 5-minute close: call above 25,350.0 or put below 25,100.0 (until 14:35).')
     expect(entryPlan(V2BE, hist, t, '2026-11-25', ist('2026-11-25', '14:36')).status).toBe('window_closed')
     expect(entryPlan(V2BE, hist, t, '2026-11-25', ist('2026-11-25', '11:00'), 3).status).toBe('max_entries')
@@ -104,7 +122,7 @@ describe('entryPlan', () => {
     // Opened 0.6% up, above yesterday's high: the call needs a close above the open; the put is off.
     const t = today('2026-11-25', [[25_400, 25_420, 25_380, 25_410]])
     const plan = entryPlan(V2BE, hist, t, '2026-11-25', ist('2026-11-25', '09:40'))
-    expect(plan.call).toEqual({ level: 25_400, from: "the day's open", off: null })
+    expect(plan.call).toEqual({ level: 25_400, from: "the day's open", off: null, ruledOut: null })
     expect(plan.put.off).toMatch(/more than 0\.2% against this side/)
     expect(plan.headline).toBe('Buys on a 5-minute close: call above 25,400.0 (until 14:35).')
   })

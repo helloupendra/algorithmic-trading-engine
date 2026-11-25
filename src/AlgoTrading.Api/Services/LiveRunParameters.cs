@@ -24,6 +24,38 @@ public sealed record LiveRunParameters(int? Lots, string? Underlying, RiskRulesD
 
     public static LiveRunParameters Empty => new(null, null, RiskRulesDto.Empty());
 
+    /// <summary>Keys of a run's parametersJson the live view shows in fields of their own.</summary>
+    private static readonly HashSet<string> RunLevelKeys = new(StringComparer.Ordinal)
+    {
+        "risk", "lots", "underlying", "stop_loss", "target",
+    };
+
+    /// <summary>
+    /// The strategy settings a run was started with: its parametersJson (the catalog defaults merged with the
+    /// start's own parameters, see <see cref="Merge"/>) without the run-level keys. Null when there is nothing
+    /// readable. The page states a run's entry plan from these, so a run started with day_filters=off is not
+    /// shown as blocked by the catalog's default.
+    /// </summary>
+    public static Dictionary<string, JsonElement>? StrategySettings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            var settings = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (!RunLevelKeys.Contains(property.Name)) settings[property.Name] = property.Value.Clone();
+            }
+            return settings;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static LiveRunParameters Parse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return Empty;

@@ -110,17 +110,20 @@ DAY_STOP_LOSS="${MARKET_OPEN_DAY_STOP_LOSS:-}"
 
 # >>> plan-line (also loaded by scripts/tests/market-open-plan.test.sh and market-open-gates.test.sh)
 # One plan line, read for one account:
-#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
-# Prints "NAME SYMBOLS LOTS TARGET" when the line applies to the account, and
-# nothing when it does not (a comment, a blank, or an @-list without it).
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]  [key=value ...]
+# Prints "NAME SYMBOLS LOTS TARGET SETTINGS" when the line applies to the account,
+# and nothing when it does not (a comment, a blank, or an @-list without it).
+# SETTINGS is the line's key=value fields joined by ";" ("-" for none): the
+# strategy's own parameters for this run (timeframe=60m, day_filters=off).
 parse_plan_line() {  # line account default_lots default_target
-  local name symbols lots rest field target="" only=""
+  local name symbols lots rest field target="" only="" settings=""
   read -r name symbols lots rest <<<"$1"
   [ -n "${name:-}" ] || return 0
   case "$name" in \#*) return 0 ;; esac
   for field in ${rest:-}; do
     case "$field" in
       @*) only="${field#@}" ;;
+      *=*) settings="${settings:+$settings;}$field" ;;
       *) target="$field" ;;
     esac
   done
@@ -128,11 +131,11 @@ parse_plan_line() {  # line account default_lots default_target
       | grep -qF ",$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'),"; then
     return 0
   fi
-  echo "$name ${symbols:-} ${lots:-$3} ${target:-$4}"
+  echo "$name ${symbols:-} ${lots:-$3} ${target:-$4} ${settings:--}"
 }
 
 # Every planned run, in the order the job starts them, one per line:
-#   account|strategy|underlying|lots|target
+#   account|strategy|underlying|lots|target|settings
 # Interleaved: each strategy on each underlying is started for every account
 # before the next one. Account after account, the second account's copy of a
 # run started 30-40 s after the first's (27 Sep audit): one signal, two books,
@@ -148,8 +151,8 @@ plan_runs() {  # accounts default_lots default_target, the plan's lines on stdin
     [ -n "$rows" ] || continue
     read -r _ name symbols _ <<<"$rows"
     for u in $(printf '%s' "$symbols" | tr ',' ' '); do
-      printf '%s' "$rows" | while read -r account name _ lots target; do
-        [ -n "$account" ] && echo "$account|$name|$u|$lots|$target"
+      printf '%s' "$rows" | while read -r account name _ lots target settings; do
+        [ -n "$account" ] && echo "$account|$name|$u|$lots|$target|${settings:--}"
       done
     done
   done
@@ -988,6 +991,32 @@ sys.exit(1)
 # The rules as the API's RiskRulesDto (camelCase; leg rules in premium points,
 # day rules in rupees with scope "day"). Built per plan line, because the leg
 # target is the one rule a strategy may want its own.
+# >>> settings-json (also loaded by scripts/tests/market-open-plan.test.sh)
+# A plan line's settings ("timeframe=60m;day_filters=off", "-" for none) as the
+# start's "parameters" object: numbers and true/false typed, anything else a string.
+settings_json() {  # settings -> JSON object on stdout
+  PLAN_SETTINGS="$1" python3 - <<'PYEOF'
+import json, os, re
+raw = os.environ.get("PLAN_SETTINGS", "-").strip()
+out = {}
+for pair in ([] if raw in ("", "-") else raw.split(";")):
+    key, _, value = pair.partition("=")
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", key):
+        continue
+    low = value.lower()
+    if low in ("true", "false"):
+        out[key] = low == "true"
+    elif re.fullmatch(r"-?\d+", value):
+        out[key] = int(value)
+    elif re.fullmatch(r"-?\d*\.\d+", value):
+        out[key] = float(value)
+    else:
+        out[key] = value
+print(json.dumps(out))
+PYEOF
+}
+# <<< settings-json
+
 risk_json() {  # legTargetPoints -> the run's RiskRulesDto on stdout
   LEG_TARGET_PTS="$1" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
 import json, os
@@ -1032,7 +1061,7 @@ owner_id() {  # account -> its user id
 GROUP=""
 SID=""
 plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
-  | while IFS='|' read -r ACCOUNT NAME U PLAN_LOTS PLAN_TARGET; do
+  | while IFS='|' read -r ACCOUNT NAME U PLAN_LOTS PLAN_TARGET PLAN_SETTINGS; do
   if [ "$NAME|$U" != "$GROUP" ]; then
     GROUP="$NAME|$U"
     say "--- $NAME on $U ---"
@@ -1046,6 +1075,8 @@ plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
   OWNER_ID="$(owner_id "$ACCOUNT")"
   RISK_JSON="$(risk_json "$PLAN_TARGET")"
   RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
+  PARAMS_JSON="$(settings_json "${PLAN_SETTINGS:--}")"
+  [ "${PLAN_SETTINGS:--}" = "-" ] || RISK_TEXT="$RISK_TEXT, settings ${PLAN_SETTINGS//;/ }"
 
   if already_running "$NAME" "$U" "$OWNER_ID"; then
     say "  $NAME on $U — already running for $ACCOUNT, left alone"
@@ -1059,7 +1090,7 @@ plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
 
   say "  deploying $NAME (id $SID) on $U, $PLAN_LOTS lot(s), $RISK_TEXT — paper, for $ACCOUNT"
   RUN="$(api_post "/api/Strategy/$SID/start" \
-    "{\"underlying\":\"$U\",\"lots\":$PLAN_LOTS,\"ownerUserId\":$OWNER_ID,\"risk\":$RISK_JSON}" || true)"
+    "{\"underlying\":\"$U\",\"lots\":$PLAN_LOTS,\"ownerUserId\":$OWNER_ID,\"risk\":$RISK_JSON,\"parameters\":$PARAMS_JSON}" || true)"
   say "    $(printf '%s' "$RUN" | head -c 200)"
   sleep "$START_GAP"
 done

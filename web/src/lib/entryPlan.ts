@@ -37,6 +37,12 @@ export interface TrendRiderRules {
   /** 0 = off. */
   minRangeFrac: number
   maxGapAgainstPct: number
+  /**
+   * The four day rules (after a wide day, yesterday not narrow, today's range still small, a gap against).
+   * False: every break is traded at its level, and the entry's reason names the rule it passed (day_filters=off,
+   * the desk's paper runs from 26 Nov 2026).
+   */
+  dayFilters: boolean
 }
 
 const BAR_MINUTES = 5
@@ -46,6 +52,15 @@ const FULL_SESSION_BARS = 60
 function num(v: unknown, fallback: number): number {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
   return Number.isFinite(n) ? n : fallback
+}
+
+/** A yes/no setting as trend_rider.py `_switch` reads it: true/false, on/off, yes/no, 1/0. */
+function onOff(v: unknown, fallback: boolean): boolean {
+  if (typeof v === 'boolean') return v
+  const s = String(v ?? '').trim().toLowerCase()
+  if (['true', 'on', 'yes', '1'].includes(s)) return true
+  if (['false', 'off', 'no', '0'].includes(s)) return false
+  return fallback
 }
 
 function hm(v: unknown, auto: string): string | null {
@@ -83,6 +98,7 @@ export function trendRiderRules(
     maxPrevRange: num(params.max_prev_range, 0),
     minRangeFrac: num(params.min_range_frac, 0),
     maxGapAgainstPct: num(params.max_gap_against_pct, 0.2),
+    dayFilters: onOff(params.day_filters, true),
   }
 }
 
@@ -120,6 +136,8 @@ export interface EntrySide {
   from: string
   /** Why this side cannot buy today, when a rule says so. */
   off: string | null
+  /** With the day rules off: the gap rule that would have turned this side off. */
+  ruledOut: string | null
 }
 
 export interface EntryPlan {
@@ -129,6 +147,8 @@ export interface EntryPlan {
   headline: string
   /** Why no entry can come today (status day_blocked / no_history). */
   dayOff: string | null
+  /** With the day rules off: the day rule that would have kept it out today, which it now trades through. */
+  ruledOut: string | null
   call: EntrySide
   put: EntrySide
   dayOpen: number | null
@@ -192,7 +212,7 @@ export function entryPlan(
   const orHigh = orDone ? Math.max(...todays.slice(0, orBars).map((b) => b.h)) : null
   const orLow = orDone ? Math.min(...todays.slice(0, orBars).map((b) => b.l)) : null
   const rangeNow = todays.length ? Math.max(...todays.map((b) => b.h)) - Math.min(...todays.map((b) => b.l)) : null
-  const rangeNeeded = rules.minRangeFrac > 0 && adr ? rules.minRangeFrac * adr : null
+  const rangeNeeded = rules.dayFilters && rules.minRangeFrac > 0 && adr ? rules.minRangeFrac * adr : null
 
   // The first chance: the close of the first candle at or after first_entry; the opening range
   // must have closed first (len(day) > or_bars: the candle after the range's last one).
@@ -201,19 +221,22 @@ export function entryPlan(
   const firstChance = addMinutes(firstStart, BAR_MINUTES)
   const lastChance = addMinutes(rules.lastEntry, BAR_MINUTES)
 
-  // The day rules, in the strategy's order.
-  let dayOff: string | null = null
-  if (!adr || !prev) {
-    dayOff = `fewer than ${rules.adrDays} complete sessions are stored before today, so it has no average range to read`
+  // The day rules, in the strategy's order. Too little history stops it whatever the rules say.
+  let dayRule: string | null = null
+  const noHistory = !adr || !prev
+  if (noHistory) {
+    dayRule = `fewer than ${rules.adrDays} complete sessions are stored before today, so it has no average range to read`
   } else if (prevRangeAdr != null && prevRangeAdr > rules.skipAfterWide) {
-    dayOff =
+    dayRule =
       `yesterday (${shortDay(istDay(prev.t))}) moved ${f1(prev.h - prev.l)} points, ${f2(prevRangeAdr)} × the average range of ` +
       `${f1(adr)}; it does not trade the day after one wider than ${rules.skipAfterWide} ×`
   } else if (rules.maxPrevRange > 0 && prevRangeAdr != null && prevRangeAdr >= rules.maxPrevRange) {
-    dayOff =
+    dayRule =
       `yesterday (${shortDay(istDay(prev.t))}) moved ${f1(prev.h - prev.l)} points, ${f2(prevRangeAdr)} × the average range of ` +
       `${f1(adr)}; it trades only after a day narrower than ${rules.maxPrevRange} ×`
   }
+  const dayOff = noHistory || rules.dayFilters ? dayRule : null
+  const ruledOut = !noHistory && !rules.dayFilters ? dayRule : null
 
   const gapOff = (side: 'call' | 'put'): string | null => {
     if (gapPct == null) return null
@@ -227,14 +250,16 @@ export function entryPlan(
   const highName = rules.levels === 'prev_day' ? "yesterday's high" : 'the opening range high'
   const lowName = rules.levels === 'prev_day' ? "yesterday's low" : 'the opening range low'
   // The close must clear both the level and the day's open: whichever is further.
+  const gate = (side: 'call' | 'put') =>
+    rules.dayFilters ? { off: gapOff(side), ruledOut: null } : { off: null, ruledOut: gapOff(side) }
   const call: EntrySide =
     levelHigh != null && dayOpen != null
-      ? { level: Math.max(levelHigh, dayOpen), from: dayOpen > levelHigh ? "the day's open" : highName, off: gapOff('call') }
-      : { level: null, from: highName, off: gapOff('call') }
+      ? { level: Math.max(levelHigh, dayOpen), from: dayOpen > levelHigh ? "the day's open" : highName, ...gate('call') }
+      : { level: null, from: highName, ...gate('call') }
   const put: EntrySide =
     levelLow != null && dayOpen != null
-      ? { level: Math.min(levelLow, dayOpen), from: dayOpen < levelLow ? "the day's open" : lowName, off: gapOff('put') }
-      : { level: null, from: lowName, off: gapOff('put') }
+      ? { level: Math.min(levelLow, dayOpen), from: dayOpen < levelLow ? "the day's open" : lowName, ...gate('put') }
+      : { level: null, from: lowName, ...gate('put') }
 
   const now = istHm(nowMs)
   const isToday = istDay(nowMs) === day
@@ -264,9 +289,9 @@ export function entryPlan(
       case 'before_window':
         return rules.levels === 'opening_range' && !orDone
           ? `Opening range forming until ${orEnd}; from ${firstChance}, a 5-minute close beyond it and the day's open buys.`
-          : `From ${firstChance}: a 5-minute close, ${sides()}.`
+          : `From ${firstChance}: a 5-minute close, ${sides()}${rules.dayFilters ? '' : '; day rules off'}.`
       case 'watching':
-        return `Buys on a 5-minute close: ${sides()} (until ${lastChance}).`
+        return `Buys on a 5-minute close: ${sides()} (until ${lastChance})${rules.dayFilters ? '' : '; day rules off'}.`
       case 'window_closed':
         return `No new entries after ${lastChance}.`
       case 'past_day':
@@ -279,6 +304,7 @@ export function entryPlan(
     status,
     headline,
     dayOff,
+    ruledOut,
     call,
     put,
     dayOpen,

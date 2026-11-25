@@ -19,6 +19,13 @@ public class StrategyLiveViewResponse
     public DateTime? SpotUpdatedUtc { get; set; }
 
     public int? Lots { get; set; }
+
+    /// <summary>
+    /// The strategy settings the run was started with: the catalog's defaults merged with the start's own
+    /// parameters (the morning plan's <c>day_filters=off</c>, a <c>timeframe</c>). Lots, the underlying and
+    /// the risk rules have fields of their own and are left out. Null when the run stored none.
+    /// </summary>
+    public Dictionary<string, System.Text.Json.JsonElement>? Parameters { get; set; }
     public int? LotSize { get; set; }
     public string? LotSizeSource { get; set; }
     /// <summary>Overall rupee stop-loss (the legacy shorthand for <see cref="Risk"/>.overall.stopLoss).</summary>

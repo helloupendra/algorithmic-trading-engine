@@ -115,6 +115,28 @@ class TrendRiderTest(unittest.TestCase):
         state = loose.initialize_state()
         self.assertTrue(self.run_day(loose, state, normal, self.trend_day(up=True)))
 
+    def test_day_rules_off_trades_the_break_and_names_the_rule_it_passed(self):
+        # The desk's paper runs from 26 Nov 2026: the day after a wide one is traded at the strategy's own level.
+        strategy = TrendRiderStrategy({"day_filters": "off"})
+        state = strategy.initialize_state()
+        fired = self.run_day(strategy, state, self.history(last_range=160), self.trend_day(up=True))
+        at, sig = fired[0]
+        self.assertEqual(sig[0].signal_type, "OPEN_GROUP")
+        self.assertEqual(at, "09:50", "the first close above the opening range: no range-too-small wait either")
+        self.assertIn("day rules off; they would have skipped it: after_wide_day", sig[0].reason)
+        ctx = sig[0].metadata["trend_rider"]
+        self.assertFalse(ctx["day_filters"])
+        self.assertTrue(ctx["ruled_out"].startswith("after_wide_day"))
+        self.assertEqual(state["skipped"], {})
+        self.assertEqual(state["ruled_out"], {"after_wide_day": 1})
+
+    def test_day_rules_switch_reads_on_and_off_and_refuses_anything_else(self):
+        self.assertTrue(TrendRiderStrategy().day_filters)
+        self.assertFalse(TrendRiderStrategy({"day_filters": False}).day_filters)
+        self.assertTrue(TrendRiderStrategy({"day_filters": "on"}).day_filters)
+        with self.assertRaises(ValueError):
+            TrendRiderStrategy({"day_filters": "sometimes"})
+
     def test_buys_one_strike_in_the_money_by_default(self):
         reqs = {r.key: r for r in TrendRiderStrategy.get_contract_requirements({})}
         self.assertEqual(set(reqs), {"buy_ce", "buy_pe"})

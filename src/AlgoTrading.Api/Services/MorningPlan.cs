@@ -17,14 +17,16 @@ namespace AlgoTrading.Api.Services;
 /// </para>
 /// <code>
 /// accounts: admin coderforchange
-/// Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
+/// Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]  [key=value ...]
 /// </code>
 /// <para>
 /// A <c>#</c> starts a comment, to the end of the line. Lots left off (or not
 /// a whole number) are the job's default, 2. The leg target is a number of
 /// premium points, <c>-</c> for none, or left off for the job's default. An
 /// <c>@</c> list limits the line to the accounts it names, any case; without
-/// one the line runs in every account. Where the two scripts would read a
+/// one the line runs in every account. A <c>key=value</c> field is one of the
+/// run's own strategy settings (<c>timeframe=60m</c>, <c>day_filters=off</c>),
+/// sent as the start's parameters. Where the two scripts would read a
 /// line differently, or the deploy would refuse it, the line is still read as
 /// Sentinel reads it and a warning says why.
 /// </para>
@@ -56,6 +58,9 @@ public sealed record MorningPlan(
         decimal? LegTargetPoints,
         IReadOnlyList<string> OnlyAccounts)
     {
+        /// <summary>The line's key=value fields, in order: the run's own strategy settings.</summary>
+        public IReadOnlyList<KeyValuePair<string, string>> Settings { get; init; } = Array.Empty<KeyValuePair<string, string>>();
+
         public bool AppliesTo(string account)
             => OnlyAccounts.Count == 0 || OnlyAccounts.Contains(account, StringComparer.OrdinalIgnoreCase);
     }
@@ -149,9 +154,15 @@ public sealed record MorningPlan(
             string legTarget = LegTargetDefault;
             decimal? legTargetPoints = null;
             IReadOnlyList<string> only = Array.Empty<string>();
+            var settings = new List<KeyValuePair<string, string>>();
             foreach (var field in parts.Skip(3))
             {
-                if (field.StartsWith('@'))
+                var eq = field.IndexOf('=');
+                if (eq > 0)
+                {
+                    settings.Add(new KeyValuePair<string, string>(field[..eq], field[(eq + 1)..]));
+                }
+                else if (field.StartsWith('@'))
                 {
                     only = field[1..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 }
@@ -169,7 +180,7 @@ public sealed record MorningPlan(
                 }
             }
 
-            lines.Add(new Line(number, line, parts[0], underlyings, lots, legTarget, legTargetPoints, only));
+            lines.Add(new Line(number, line, parts[0], underlyings, lots, legTarget, legTargetPoints, only) { Settings = settings });
         }
 
         if (!haveAccounts || accounts.Count == 0)

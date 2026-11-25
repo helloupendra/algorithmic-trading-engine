@@ -154,12 +154,23 @@ public sealed class AiTraderRuns(
         var entry = await catalog.FindByNameAsync(strategy, cancellationToken);
         if (entry is null) return new AiTraderRunStart(false, null, $"{strategy} is not in the strategy catalog.");
 
-        var outcome = await starts.StartAsync(entry.Id, new StartStrategyRequest { Underlying = underlying, Lots = lots },
+        var request = new StartStrategyRequest { Underlying = underlying, Lots = lots, Parameters = SettingsFor(entry.Name) };
+        var outcome = await starts.StartAsync(entry.Id, request,
             new StrategyStarter(account.Id, account.UserName, IsAdmin: false), limits, derivatives, memory, sessions, cancellationToken);
         return outcome.Started
             ? new AiTraderRunStart(true, outcome.RunId, outcome.Message)
             : new AiTraderRunStart(false, outcome.RunId, outcome.Message);
     }
+
+    /// <summary>
+    /// The settings its starts carry. A TrendRider-family script trades with its day rules off, as the desk's own
+    /// TrendRider runs do from 26 Nov 2026 (the owner, 25 Nov: "ai trader ke runs bhi day rules off kar do"). On
+    /// 25 Nov the rules kept the V2 BE run it started at 11:30 out of the whole day.
+    /// </summary>
+    internal static Dictionary<string, JsonElement>? SettingsFor(string strategy)
+        => strategy.StartsWith("TrendRider", StringComparison.OrdinalIgnoreCase)
+            ? new Dictionary<string, JsonElement> { ["day_filters"] = JsonSerializer.SerializeToElement("off") }
+            : null;
 
     public async Task<AiTraderRunStop> StopAsync(AppUser account, long runId, string reason, CancellationToken cancellationToken)
     {

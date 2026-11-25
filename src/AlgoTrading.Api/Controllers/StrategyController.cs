@@ -1184,6 +1184,7 @@ public class StrategyController : ControllerBase
                           ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
         view.SpotSymbol = running?.SpotSymbol ?? lastExit?.SpotSymbol ?? run.Symbol;
         view.Lots = running?.Lots ?? lastExit?.Lots ?? p.Lots;
+        view.Parameters = LiveRunParameters.StrategySettings(run.ParametersJson);
         if (RecapClock.IsRecap(run.ParametersJson))
         {
             view.Session = RecapClock.RecapSession;

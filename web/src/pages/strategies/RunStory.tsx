@@ -502,6 +502,15 @@ function EntryBox({ plan }: { plan: EntryPlan }) {
               </td>
             </tr>
           )}
+          {plan.ruledOut && (
+            <tr>
+              <th>Day rules</th>
+              <td className="num">
+                off
+                <span className="story__why">on, they would have kept it out today: {plan.ruledOut}</span>
+              </td>
+            </tr>
+          )}
           {plan.gapPct != null && (
             <tr>
               <th>Gap at the open</th>
@@ -524,8 +533,8 @@ function EntryBox({ plan }: { plan: EntryPlan }) {
         </tbody>
       </table>
       <p className="small-note faint">
-        Worked out here from the stored candles and the strategy's default settings, by the rules in its code; its own
-        signal is the final word.
+        Worked out here from the stored candles and the run's settings, by the rules in its code; its own signal is
+        the final word.
       </p>
     </div>
   )
@@ -538,7 +547,9 @@ function SideRow({ label, word, side }: { label: string; word: 'above' | 'below'
       <td className="num">
         {side.level != null ? `${word} ${p1(side.level)}` : '—'}
         <span className={`story__why${side.off ? ' story__why--off' : ''}`}>
-          {side.off ? `off today: ${side.off}` : side.level != null ? side.from : `${side.from}: not formed yet`}
+          {side.off
+            ? `off today: ${side.off}`
+            : `${side.level != null ? side.from : `${side.from}: not formed yet`}${side.ruledOut ? ` · day rules off (on, it would be off: ${side.ruledOut})` : ''}`}
         </span>
       </td>
     </tr>

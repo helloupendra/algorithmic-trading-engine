@@ -30,6 +30,16 @@ public class AiTraderRunsTests
         Assert.Equal((run.Id, account.Id, account.Id, AiTraderAccount.UserName, "TrendRiderV2BE", "Running"),
             (started.RunId!.Value, run.UserId, run.StartedByUserId!.Value, run.StartedByName, run.StrategyName, run.Status));
         Assert.Equal(account.Id, desk.Registry.Get(run.Id)!.UserId);
+        // Its TrendRider runs trade with their day rules off, like the desk's (owner, 25 Nov 2026).
+        Assert.Contains("\"day_filters\":\"off\"", run.ParametersJson);
+    }
+
+    [Fact]
+    public void Only_trendrider_scripts_are_started_with_their_day_rules_off()
+    {
+        Assert.Equal("off", AiTraderRuns.SettingsFor("TrendRiderV2OB")!["day_filters"].GetString());
+        Assert.Equal("off", AiTraderRuns.SettingsFor("TrendRider")!["day_filters"].GetString());
+        Assert.Null(AiTraderRuns.SettingsFor("GhostTangentCrossingsV2"));
     }
 
     [Fact]
