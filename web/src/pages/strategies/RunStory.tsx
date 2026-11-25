@@ -34,6 +34,8 @@ import { useClosePositions, useRunDayBars, useStoredCandles } from '../../lib/qu
 import { formatInrSigned, formatInrWhole, formatPercent, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, InlineError, Panel, StatTile } from '../../components/ui'
 import type { StrategyLiveView } from '../../lib/types'
+import { shortDay, type EntryPlan, type EntrySide } from '../../lib/entryPlan'
+import { useEntryPlan } from './useEntryPlan'
 import {
   adrFrom,
   armEvent,
@@ -48,11 +50,13 @@ import {
   mergeLevels,
   previousClose,
   sessionsFrom,
+  shiftDay,
   tradeAt,
   tradeMarks,
   trendRiderEntries,
   v2Check,
   type Bar,
+  type EngineState,
   type ExitPlan,
   type Level,
   type TradeMark,
@@ -117,6 +121,8 @@ function lineStyleOf(kind: Level['kind']): { color: string; style: LineStyle; wi
       return { color: cssVar('--pos'), style: LineStyle.Dotted, width: 1 }
     case 'check':
       return { color: cssVar('--warn'), style: LineStyle.LargeDashed, width: 1 }
+    case 'trigger':
+      return { color: cssVar('--accent'), style: LineStyle.Dashed, width: 1 }
   }
 }
 
@@ -398,12 +404,6 @@ function StoryChart({
 
 /* ------------------------------------------------------------------ helpers */
 
-function shiftDay(day: string, days: number): string {
-  const d = new Date(`${day}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
-}
-
 const p1 = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en-IN', { maximumFractionDigits: 1, minimumFractionDigits: 1 }))
 const pts = (v: number | null | undefined) => (v == null ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(0)} pts`)
 
@@ -425,6 +425,124 @@ interface OpenPlan {
   trade: TradeMark
   entry: TrendRiderEntry
   plan: ExitPlan
+}
+
+/**
+ * "Waiting for signal" says too little on a day a rule keeps the strategy out, before its first
+ * chance or after its last: the entry plan says which. A position it holds speaks for itself.
+ */
+function withPlan(engine: EngineState, plan: EntryPlan | null, ownOpen: number): EngineState {
+  if (!plan || ownOpen > 0 || engine.label === 'Stopped') return engine
+  switch (plan.status) {
+    case 'day_blocked':
+      return {
+        label: 'No entry today',
+        tone: 'warn',
+        detail: plan.prevRangeAdr != null ? `yesterday ${plan.prevRangeAdr.toFixed(2)} × ADR` : null,
+      }
+    case 'no_history':
+      return { label: 'No entry today', tone: 'warn', detail: 'too few stored sessions' }
+    case 'max_entries':
+      return { label: 'No more entries today', tone: 'neutral', detail: `${plan.rules.maxEntries} made` }
+    case 'before_window':
+      return { label: 'Waiting for signal', tone: 'live', detail: `first check ${plan.firstChance} IST` }
+    case 'window_closed':
+      return { label: 'No new entries today', tone: 'neutral', detail: `after ${plan.lastChance} IST` }
+    default:
+      return engine
+  }
+}
+
+const ENTRY_BADGE: Record<EntryPlan['status'], { text: string; tone: 'pos' | 'warn' | 'neutral' | 'live' }> = {
+  watching: { text: 'Watching', tone: 'live' },
+  before_window: { text: 'Not yet', tone: 'neutral' },
+  day_blocked: { text: 'No entry today', tone: 'warn' },
+  no_history: { text: 'No entry today', tone: 'warn' },
+  max_entries: { text: 'Done for today', tone: 'neutral' },
+  window_closed: { text: 'Window closed', tone: 'neutral' },
+  past_day: { text: 'That day', tone: 'neutral' },
+}
+
+/** The entry plan as a trader reads it: the verdict first, then each side's level and the day rules' numbers. */
+function EntryBox({ plan }: { plan: EntryPlan }) {
+  const badge = ENTRY_BADGE[plan.status]
+  const off = plan.status === 'day_blocked' || plan.status === 'no_history'
+  const { rules } = plan
+  const wide = plan.prevRangeAdr != null && (plan.prevRangeAdr > rules.skipAfterWide || (rules.maxPrevRange > 0 && plan.prevRangeAdr >= rules.maxPrevRange))
+  return (
+    <div className={`story__entry${off ? ' story__entry--off' : ''}`} role="note" aria-label="Entry plan">
+      <h3>Entry {plan.status === 'past_day' ? 'that day' : 'today'}</h3>
+      <p className="story__entry-head">
+        <Badge tone={badge.tone}>{badge.text}</Badge>
+        {/* The badge already says "No entry today": the sentence gives the reason. */}
+        {off && plan.dayOff ? `${plan.dayOff.charAt(0).toUpperCase()}${plan.dayOff.slice(1)}.` : plan.headline}
+      </p>
+      <table className="story__kv">
+        <tbody>
+          <SideRow label="Call (CE)" word="above" side={plan.call} />
+          <SideRow label="Put (PE)" word="below" side={plan.put} />
+          <tr>
+            <th>When</th>
+            <td className="num">
+              {plan.firstChance}–{plan.lastChance} IST
+              <span className="story__why">on 5-minute closes, up to {rules.maxEntries} entries a day</span>
+            </td>
+          </tr>
+          {plan.prev && plan.adr != null && plan.prevRangeAdr != null && plan.prevDay && (
+            <tr className={wide ? 'warn' : ''}>
+              <th>Yesterday ({shortDay(plan.prevDay)})</th>
+              <td className="num">
+                {p1(plan.prev.h - plan.prev.l)} pts = {plan.prevRangeAdr.toFixed(2)} × ADR
+                <span className="story__why">
+                  {rules.maxPrevRange > 0
+                    ? `trades only after a day under ${rules.maxPrevRange} ×`
+                    : `no trade after a day over ${rules.skipAfterWide} ×`}{' '}
+                  · ADR {p1(plan.adr)} pts
+                </span>
+              </td>
+            </tr>
+          )}
+          {plan.gapPct != null && (
+            <tr>
+              <th>Gap at the open</th>
+              <td className="num">
+                {plan.gapPct >= 0 ? '+' : '−'}
+                {Math.abs(plan.gapPct).toFixed(2)}%
+                <span className="story__why">a side is off when the gap is over {rules.maxGapAgainstPct}% against it</span>
+              </td>
+            </tr>
+          )}
+          {plan.rangeNeeded != null && (
+            <tr className={plan.rangeNow != null && plan.rangeNow < plan.rangeNeeded ? 'warn' : ''}>
+              <th>Today's range</th>
+              <td className="num">
+                {p1(plan.rangeNow)} pts
+                <span className="story__why">needs {p1(plan.rangeNeeded)} ({rules.minRangeFrac} × ADR) before it buys</span>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="small-note faint">
+        Worked out here from the stored candles and the strategy's default settings, by the rules in its code; its own
+        signal is the final word.
+      </p>
+    </div>
+  )
+}
+
+function SideRow({ label, word, side }: { label: string; word: 'above' | 'below'; side: EntrySide }) {
+  return (
+    <tr>
+      <th>{label}</th>
+      <td className="num">
+        {side.level != null ? `${word} ${p1(side.level)}` : '—'}
+        <span className={`story__why${side.off ? ' story__why--off' : ''}`}>
+          {side.off ? `off today: ${side.off}` : side.level != null ? side.from : `${side.from}: not formed yet`}
+        </span>
+      </td>
+    </tr>
+  )
 }
 
 export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; runId: number; canControl: boolean }) {
@@ -517,6 +635,8 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
   // Now: the positions table and the numbers on top. At the cursor: the chart and the rules panel.
   const plans = useMemo(() => plansOf(trades, bars1, spot), [plansOf, trades, bars1, spot])
   const plansAt = useMemo(() => (cursorMs == null ? plans : plansOf(tradesAt, bars1At, spotAt)), [cursorMs, plans, plansOf, tradesAt, bars1At, spotAt])
+  // Where and when it buys today, or why it will not (lib/entryPlan.ts); at the cursor in a replay.
+  const entry = useEntryPlan(view, cursorMs ?? Date.now())
 
   // The day's levels: from the strategy's own signal when it has entered, else from the stored candles.
   const latest = entries.at(-1) ?? null
@@ -539,13 +659,17 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
   const change = spot != null && prevClose ? (spot / prevClose - 1) * 100 : null
   const openTrades = trades.filter((t) => t.open)
   // The strategy is "in a trade" only with a position it manages; one booked by hand is not its own.
-  const engine = engineStatus(
-    view.isActive,
-    plans.map((p) => p.plan),
+  const engine = withPlan(
+    engineStatus(
+      view.isActive,
+      plans.map((p) => p.plan),
+      openTrades.filter((t) => !t.manual).length,
+      Date.now(),
+      '14:30',
+      openTrades.filter((t) => t.manual).length,
+    ),
+    entry,
     openTrades.filter((t) => !t.manual).length,
-    Date.now(),
-    '14:30',
-    openTrades.filter((t) => t.manual).length,
   )
   // The last closed candle at the strategy's 5-minute grid (live hands a forming one too), at the cursor in a replay.
   const lastClosed = (() => {
@@ -554,22 +678,50 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
     const done = live || cursorMs != null ? five.filter((c) => c.t + 5 * 60_000 <= now) : five
     return done.at(-1) ?? null
   })()
-  const check = v2Check(levels, lastClosed?.c ?? null)
+  // TrendRider reads the opening range, the V2 family yesterday's high and low.
+  const byRange = (entry?.rules.levels ?? latest?.levelsKind) === 'opening_range'
+  const check = v2Check(
+    byRange ? { ...levels, prevHigh: entry?.orHigh ?? null, prevLow: entry?.orLow ?? null } : levels,
+    lastClosed?.c ?? null,
+  )
+  const highName = byRange ? 'the opening range high' : "yesterday's high"
+  const lowName = byRange ? 'the opening range low' : "yesterday's low"
   // What the strategy was doing at the replay's clock.
   const engineAt =
     cursorMs == null
       ? null
-      : engineStatus(
-          true,
-          plansAt.map((p) => p.plan),
+      : withPlan(
+          engineStatus(
+            true,
+            plansAt.map((p) => p.plan),
+            tradesAt.filter((t) => t.open && !t.manual).length,
+            cursorMs,
+            '14:30',
+            tradesAt.filter((t) => t.open && t.manual).length,
+          ),
+          entry,
           tradesAt.filter((t) => t.open && !t.manual).length,
-          cursorMs,
-          '14:30',
-          tradesAt.filter((t) => t.open && t.manual).length,
         )
 
+  // The plan's lines, as plain values so the chart is not redrawn on every poll.
+  const planKind = entry?.rules.levels ?? null
+  const orHigh = entry?.orHigh ?? null
+  const orLow = entry?.orLow ?? null
+  const canBuy = entry != null && (entry.status === 'watching' || entry.status === 'before_window')
+  const callAt = canBuy && !entry.call.off ? entry.call.level : null
+  const putAt = canBuy && !entry.put.off ? entry.put.level : null
   const chartLevels: Level[] = useMemo(() => {
+    // Before an entry: where a 5-minute close buys. First, so a level it shares with yesterday's
+    // high or the open takes its colour.
     const out: Level[] = []
+    if (plansAt.length === 0) {
+      if (callAt != null) out.push({ price: callAt, title: 'Call above', short: 'Call', kind: 'trigger' })
+      if (putAt != null) out.push({ price: putAt, title: 'Put below', short: 'Put', kind: 'trigger' })
+    }
+    if (planKind === 'opening_range') {
+      if (orHigh != null) out.push({ price: orHigh, title: 'OR high', kind: 'prev' })
+      if (orLow != null) out.push({ price: orLow, title: 'OR low', kind: 'prev' })
+    }
     if (levels.prevHigh != null) out.push({ price: levels.prevHigh, title: 'Yday high', short: 'Y-high', kind: 'prev' })
     if (levels.prevLow != null) out.push({ price: levels.prevLow, title: 'Yday low', short: 'Y-low', kind: 'prev' })
     if (highOff && fullHigh != null) out.push({ price: fullHigh, title: 'Full-day high', short: 'Full hi', kind: 'check' })
@@ -584,7 +736,7 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
       if (plan.armed) out.push({ price: plan.bestLevel, title: 'Best', kind: 'best' })
     }
     return out
-  }, [levels.prevHigh, levels.prevLow, levels.dayOpen, plansAt, highOff, lowOff, fullHigh, fullLow])
+  }, [levels.prevHigh, levels.prevLow, levels.dayOpen, plansAt, highOff, lowOff, fullHigh, fullLow, callAt, putAt, planKind, orHigh, orLow])
 
   const indexMarks: Mark[] = useMemo(() => {
     const out: Mark[] = []
@@ -763,9 +915,10 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
             }
           />
           <ul className="story__legend">
-            <li><i className="lg lg--prev" /> Yesterday's high / low (as the strategy read them)</li>
+            <li><i className="lg lg--prev" /> Yesterday's high / low (as the strategy read them){planKind === 'opening_range' ? '; opening range (OR)' : ''}</li>
             {(highOff || lowOff) && <li><i className="lg lg--check" /> Yesterday from the full day's candles</li>}
             <li><i className="lg lg--open" /> Day open</li>
+            {(callAt != null || putAt != null) && <li><i className="lg lg--trigger" /> Buys on a 5-minute close beyond this</li>}
             <li><i className="lg lg--entry" /> Entry</li>
             <li><i className="lg lg--stop" /> Stop</li>
             <li><i className="lg lg--arm" /> Trail arms here (stays once armed)</li>
@@ -794,9 +947,11 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
           <div className="story__rules">
             {isTrendRider ? (
               <>
+                {entry && <EntryBox plan={entry} />}
                 <p className="small-note">
-                  From {latest?.levelsKind === 'opening_range' ? '09:45, a 5-minute close beyond the first 30 minutes\' range' : "09:15, a 5-minute close above yesterday's high and today's open"} buys a call one strike in the money; below
-                  yesterday's low and the open, the put.{' '}
+                  {byRange
+                    ? "After the first 30 minutes (09:15–09:45), a 5-minute close above that range's high and today's open buys a call one strike in the money; below its low and the open, the put."
+                    : "From 09:15, a 5-minute close above yesterday's high and today's open buys a call one strike in the money; below yesterday's low and the open, the put."}{' '}
                   {latest
                     ? `It sells when the index goes ${latest.stopAdr} × ADR against the entry, or — once it is ${latest.armAdr} × ADR in favour — gives back ${latest.giveAdr} × ADR from its best, or when a candle closes back across the day's open.`
                     : 'It sells on its index stop, its trail, or a candle closing back across the day\'s open.'}{' '}
@@ -826,13 +981,13 @@ export function RunStory({ view, runId, canControl }: { view: StrategyLiveView; 
                   </p>
                 )}
                 <ul className="story__checks">
-                  <li className={check.aboveHigh ? 'ok' : ''}>{check.aboveHigh ? '✓' : '·'} Close above yesterday's high</li>
+                  <li className={check.aboveHigh ? 'ok' : ''}>{check.aboveHigh ? '✓' : '·'} Close above {highName}</li>
                   <li className={check.aboveOpen ? 'ok' : ''}>{check.aboveOpen ? '✓' : '·'} Close above the day's open</li>
-                  <li className={check.belowLow ? 'ok' : ''}>{check.belowLow ? '✓' : '·'} Close below yesterday's low</li>
+                  <li className={check.belowLow ? 'ok' : ''}>{check.belowLow ? '✓' : '·'} Close below {lowName}</li>
                   <li className={check.belowOpen ? 'ok' : ''}>{check.belowOpen ? '✓' : '·'} Close below the day's open</li>
                 </ul>
                 <p className="story__side">
-                  {check.side === 'BUY' ? <Badge tone="pos">Call side is live</Badge> : check.side === 'SELL' ? <Badge tone="neg">Put side is live</Badge> : <Badge>No side yet</Badge>}
+                  {entry && entry.status !== 'watching' ? null : check.side === 'BUY' ? <Badge tone="pos">Call side is live</Badge> : check.side === 'SELL' ? <Badge tone="neg">Put side is live</Badge> : <Badge>No side yet</Badge>}
                 </p>
                 {plansAt.map(({ trade, plan }) => (
                   <div key={trade.groupId} className="story__plan">

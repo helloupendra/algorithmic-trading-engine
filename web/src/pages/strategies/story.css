@@ -218,6 +218,9 @@
 .story-rung--check { border-left: 3px dashed var(--warn); }
 .story-rung--check .story-rung__name,
 .story-rung--check .story-rung__short { color: var(--warn); }
+.story-rung--trigger { border-left: 3px dashed var(--accent); }
+.story-rung--trigger .story-rung__name,
+.story-rung--trigger .story-rung__short { color: var(--accent); }
 
 @media (max-width: 640px) {
   .story-chart__body {
@@ -275,6 +278,7 @@
 .lg--trail { border-color: var(--warn); }
 .lg--best { border-top-style: dotted; border-color: var(--pos); }
 .lg--check { border-top-style: dashed; border-color: var(--warn); }
+.lg--trigger { border-top-style: dashed; border-color: var(--accent); }
 
 /* --- the rules panel ----------------------------------------------------- */
 
@@ -320,6 +324,26 @@
 .story__checks li.ok { color: var(--pos); font-weight: 550; }
 
 .story__side { margin: 0; }
+
+/* The entry plan: where and when it buys today, or why it will not. */
+.story__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+}
+.story__entry--off { border-left-color: var(--warn); }
+.story__entry h3 { margin: 0; font-size: 13.5px; }
+.story__entry-head { margin: 0; font-size: 13.5px; line-height: 1.45; }
+.story__entry-head .badge { margin-right: 6px; vertical-align: 1px; }
+.story__entry .story__kv th { white-space: nowrap; padding-right: 12px; vertical-align: top; }
+.story__entry .story__kv td { text-align: right; }
+.story__why { display: block; font-size: 12px; color: var(--text-3); font-variant-numeric: normal; }
+.story__why--off { color: var(--warn); }
 
 .story__plan {
   border-top: 1px solid var(--line);
