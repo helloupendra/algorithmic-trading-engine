@@ -103,7 +103,7 @@ Fulcrum NIFTY 2 - @admin
 Crude  CRUDEOIL  1  -'
 ORDER="$(plan_runs "admin coderforchange" 2 20 <<<"$PLAN_FIXTURE" | tr '\n' ' ')"
 same "interleaved per strategy and underlying, accounts inner" \
-  "admin|Ghost|BANKNIFTY|2|20 coderforchange|Ghost|BANKNIFTY|2|20 admin|Ghost|NIFTY|2|20 coderforchange|Ghost|NIFTY|2|20 admin|Fulcrum|NIFTY|2|- admin|Crude|CRUDEOIL|1|- coderforchange|Crude|CRUDEOIL|1|- " \
+  "admin|Ghost|BANKNIFTY|2|20|- coderforchange|Ghost|BANKNIFTY|2|20|- admin|Ghost|NIFTY|2|20|- coderforchange|Ghost|NIFTY|2|20|- admin|Fulcrum|NIFTY|2|-|- admin|Crude|CRUDEOIL|1|-|- coderforchange|Crude|CRUDEOIL|1|-|- " \
   "$ORDER"
 REAL="$(grep -v '^[[:space:]]*#' config/morning-plan.txt | grep -v '^[[:space:]]*$' | grep -vi '^[[:space:]]*accounts:')"
 FIRST_TWO="$(plan_runs "admin coderforchange" 2 20 <<<"$REAL" | head -2 | cut -d'|' -f1-3 | tr '\n' ' ')"

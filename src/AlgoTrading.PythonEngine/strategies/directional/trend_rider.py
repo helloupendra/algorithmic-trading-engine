@@ -68,6 +68,18 @@ def _compact(stamp: Any) -> str:
     return str(stamp).replace(":", "").replace("-", "")[:15]
 
 
+def _switch(value: Any, name: str) -> bool:
+    """A yes/no parameter as the plan or a JSON body writes it: true/false, on/off, 1/0."""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "on", "yes", "1"):
+        return True
+    if text in ("false", "off", "no", "0"):
+        return False
+    raise ValueError(f"{name} must be on or off, got {value!r}")
+
+
 class TrendRiderStrategy(BaseStrategy):
     """Buys the trend day's option on an opening-range break, holds while the day's open holds."""
 
@@ -101,6 +113,11 @@ class TrendRiderStrategy(BaseStrategy):
         "max_gap_against_pct": 0.2,
         # Only trade after a session narrower than this fraction of the average range; 0 turns it off.
         "max_prev_range": 0.7,
+        # The four day rules above (after a wide day, yesterday not narrow, today's range still small, a gap against
+        # the trade). False ("off") trades every break at its level; the entry's reason then names the rule that
+        # would have skipped it. Off on the desk's paper runs from 26 Nov 2026, on the owner's word ("jo level btaye
+        # vaha trade le"), to see in the live market what the rules keep out.
+        "day_filters": True,
         # The candle the rules read: 1m, 2m, 3m, 5m, 10m or 15m.
         "timeframe": "5m",
         # Exits on the index (strategies/index_exits.py). Since 17 Nov 2026, on the owner's word: sell when the index
@@ -139,6 +156,7 @@ class TrendRiderStrategy(BaseStrategy):
         except (TypeError, ValueError) as exc:
             raise ValueError(f"TrendRider parameters: {exc}") from exc
         self.first_entry, self.last_entry = str(p["first_entry"]), str(p["last_entry"])
+        self.day_filters = _switch(p.get("day_filters", True), "day_filters")
         if self.or_bars < 1 or self.max_entries < 1 or self.adr_days < 1:
             raise ValueError("or_minutes must be at least 5, max_entries and adr_days at least 1")
         if not 0 <= self.itm_steps <= 5:
@@ -217,6 +235,32 @@ class TrendRiderStrategy(BaseStrategy):
 
     def _skip(self, state: Dict[str, Any], why: str) -> None:
         state["skipped"][why] = state["skipped"].get(why, 0) + 1
+
+    def _day_rule(self, prev_range: float, range_now: float, gap: float) -> Optional[Tuple[str, str]]:
+        """The first day rule that keeps this break out, as (key, words), or None. All in multiples of the ADR."""
+        if prev_range > self.skip_after_wide:
+            return "after_wide_day", f"yesterday {prev_range:.2f} x ADR, above {self.skip_after_wide:g}"
+        if self.max_prev_range and prev_range >= self.max_prev_range:
+            return "yesterday_not_narrow", f"yesterday {prev_range:.2f} x ADR, not under {self.max_prev_range:g}"
+        if range_now < self.min_range_frac:
+            return "range_too_small", f"today's range {range_now:.2f} x ADR, under {self.min_range_frac:g}"
+        if gap < -self.max_gap_against_pct:
+            return "gap_against", f"a {abs(gap):.2f}% gap against it, over {self.max_gap_against_pct:g}%"
+        return None
+
+    def _day_rules(self, state: Dict[str, Any], prev_range: float, range_now: float, gap: float
+                   ) -> Tuple[bool, Optional[str]]:
+        """(enter, note): with the rules on a blocked break is skipped and counted; with them off it goes ahead and
+        the note says which rule would have kept it out, for its reason."""
+        rule = self._day_rule(prev_range, range_now, gap)
+        if rule is None:
+            return True, None
+        if self.day_filters:
+            self._skip(state, rule[0])
+            return False, None
+        state.setdefault("ruled_out", {})
+        state["ruled_out"][rule[0]] = state["ruled_out"].get(rule[0], 0) + 1
+        return True, f"{rule[0]}: {rule[1]}"
 
     # ------------------------------------------------------------------ run ---
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
@@ -321,17 +365,8 @@ class TrendRiderStrategy(BaseStrategy):
             return []
         prev_range = (prev[1] - prev[2]) / adr
         gap = (day_open - prev[3]) / prev[3] * 100 * (1 if buy else -1)
-        if prev_range > self.skip_after_wide:
-            self._skip(state, "after_wide_day")
-            return []
-        if self.max_prev_range and prev_range >= self.max_prev_range:
-            self._skip(state, "yesterday_not_narrow")
-            return []
-        if (day_hi - day_lo) / adr < self.min_range_frac:
-            self._skip(state, "range_too_small")
-            return []
-        if gap < -self.max_gap_against_pct:
-            self._skip(state, "gap_against")
+        go, ruled_out = self._day_rules(state, prev_range, (day_hi - day_lo) / adr, gap)
+        if not go:
             return []
 
         contract = (inp.contracts or {}).get("buy_ce" if buy else "buy_pe")
@@ -348,13 +383,15 @@ class TrendRiderStrategy(BaseStrategy):
         state["extreme"] = hi_lo
         context = {"or_high": or_hi, "or_low": or_lo, "day_open": day_open, "adr": round(adr, 2),
                    "prev_range_adr": round(prev_range, 3), "range_adr": round((day_hi - day_lo) / adr, 3),
-                   "gap_pct": round(gap, 3), "entry_of_day": state["count"]}
+                   "gap_pct": round(gap, 3), "entry_of_day": state["count"], "day_filters": self.day_filters,
+                   "ruled_out": ruled_out}
         return [StrategySignal(
             strategy_name=self.name,
             signal_type="OPEN_GROUP",
             timestamp_utc=inp.timestamp_utc,
             reason=(f"Trend Rider: NIFTY {bar.close:g} closed {'above' if buy else 'below'} the opening range "
-                    f"({or_hi:g}/{or_lo:g}) and the day's open {day_open:g}; buying the {'call' if buy else 'put'}"),
+                    f"({or_hi:g}/{or_lo:g}) and the day's open {day_open:g}; buying the {'call' if buy else 'put'}"
+                    + (f" (day rules off; they would have skipped it: {ruled_out})" if ruled_out else "")),
             legs=[{"symbol": contract.symbol, "side": "BUY", "quantity": self.lots}],
             metadata={"group_id": group_id, "direction": side, "trend_rider": context},
         )]

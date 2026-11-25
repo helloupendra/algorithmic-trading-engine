@@ -168,17 +168,8 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
             return []
         prev_range = (prev[1] - prev[2]) / adr
         gap = (day_open - prev[3]) / prev[3] * 100 * (1 if buy else -1)
-        if prev_range > self.skip_after_wide:
-            self._skip(state, "after_wide_day")
-            return []
-        if self.max_prev_range and prev_range >= self.max_prev_range:
-            self._skip(state, "yesterday_not_narrow")
-            return []
-        if (day_hi - day_lo) / adr < self.min_range_frac:
-            self._skip(state, "range_too_small")
-            return []
-        if gap < -self.max_gap_against_pct:
-            self._skip(state, "gap_against")
+        go, ruled_out = self._day_rules(state, prev_range, (day_hi - day_lo) / adr, gap)
+        if not go:
             return []
         contract = (inp.contracts or {}).get("buy_ce" if buy else "buy_pe")
         if (contract is None or not contract.symbol or contract.option_type.upper() != ("CE" if buy else "PE")
@@ -194,14 +185,16 @@ class TrendRiderV2Strategy(TrendRiderStrategy):
         name = inp.underlying or "the index"
         context = {"levels": "prev_day", "prev_high": lvl_hi, "prev_low": lvl_lo, "day_open": day_open, "adr": round(adr, 2),
                    "prev_range_adr": round(prev_range, 3), "range_adr": round((day_hi - day_lo) / adr, 3),
-                   "gap_pct": round(gap, 3), "entry_of_day": state["count"]}
+                   "gap_pct": round(gap, 3), "entry_of_day": state["count"], "day_filters": self.day_filters,
+                   "ruled_out": ruled_out}
         level = "yesterday's high" if buy else "yesterday's low"
         return [StrategySignal(
             strategy_name=self.name,
             signal_type="OPEN_GROUP",
             timestamp_utc=inp.timestamp_utc,
             reason=(f"Trend Rider V2: {name} {bar.close:g} closed {'above' if buy else 'below'} {level} "
-                    f"({lvl_hi if buy else lvl_lo:g}) and the day's open {day_open:g}; buying the {'call' if buy else 'put'}"),
+                    f"({lvl_hi if buy else lvl_lo:g}) and the day's open {day_open:g}; buying the {'call' if buy else 'put'}"
+                    + (f" (day rules off; they would have skipped it: {ruled_out})" if ruled_out else "")),
             legs=[{"symbol": contract.symbol, "side": "BUY", "quantity": self.lots}],
             metadata={"group_id": group_id, "direction": side, "trend_rider": context},
         )]

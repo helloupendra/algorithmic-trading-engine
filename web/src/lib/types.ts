@@ -552,6 +552,11 @@ export interface StrategyLiveView {
   spotLtp: number | null
   spotUpdatedUtc: string | null
   lots: number | null
+  /**
+   * The strategy settings the run was started with (catalog defaults merged with the start's own, e.g. the
+   * morning plan's day_filters=off). Absent on an API older than 26 Nov 2026: read the catalog's defaults then.
+   */
+  parameters?: Record<string, unknown> | null
   lotSize: number | null
   lotSizeSource: 'master' | 'configured' | 'unknown' | null
   /** Overall stop-loss shorthand (= risk.overall.stopLoss). */

@@ -88,6 +88,7 @@ TrendRider's parameters all apply (see its table); V2 changes `first_entry` and 
 | `first_entry` | `"09:15"` | Earliest candle (by its start) that may enter | Later entries | — |
 | `min_range_frac` | 0 | TrendRider's "today's range so far" filter; off in V2 | Waits for a wider day before entering | — |
 | `max_prev_range` | 0 | TrendRider's "yesterday must have been narrow" filter (filter D); off in V2 since 17 Nov 2026 | Trades only after quiet days, and misses trending stretches | — |
+| `day_filters` | `true` | TrendRider's day rules (after a wide day, the gap against, and the two above when set). `false` (or `off`) trades every break of yesterday's high or low, and the entry's reason names the rule that would have skipped it. Off on the desk's paper runs of V2, V2 BE and V2 OB from 26 Nov 2026, on the owner's word | — | — |
 | `index_stop_adr` | 0.5 | Index move against the entry, × ADR, that sells; 0 turns it off | Fewer stops, bigger losses | Tighter; more whipsaw exits |
 | `trail_arm_adr` | 0.5 | Move in favour, × ADR, after which the trail is live; 0 turns it off | Protects only bigger runs | Protects smaller runs, sells more trends early |
 | `trail_giveback_adr` | 0.35 | Give-back from the best, × ADR, that sells once armed | Holds through deeper pullbacks | Sells sooner |

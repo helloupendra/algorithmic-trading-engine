@@ -1,6 +1,7 @@
 """TrendRider V2: the entry on yesterday's high/low from 09:15, the index stop and the index trailing exit."""
 
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from strategies.base_strategy import OptionContract, StrategyInput
@@ -133,6 +134,25 @@ class TrendRiderV2Test(unittest.TestCase):
         with self.assertRaises(AssertionError):           # until_entry fails: no entry all day
             self.until_entry(strategy, state)
         self.assertIn("yesterday_not_narrow", state["skipped"])
+
+    def test_gap_against_keeps_the_call_out_while_the_day_rules_are_on(self):
+        # Yesterday closed at 20100, today opens at 20000: a 0.5% gap against the call.
+        self.bars[-1] = replace(self.bars[-1], open=20100, high=20100, low=20100, close=20100)
+        strategy = TrendRiderV2Strategy()
+        state = strategy.initialize_state()
+        with self.assertRaises(AssertionError):           # until_entry fails: no entry all day
+            self.until_entry(strategy, state)
+        self.assertIn("gap_against", state["skipped"])
+
+    def test_day_rules_off_names_the_rule_in_the_reason(self):
+        self.wide_history()
+        strategy = TrendRiderV2Strategy({"day_filters": "off", "skip_after_wide": 0.5})
+        state = strategy.initialize_state()
+        _, sig, _ = self.until_entry(strategy, state)
+        self.assertEqual(sig[0].signal_type, "OPEN_GROUP")
+        self.assertIn("they would have skipped it: after_wide_day", sig[0].reason)
+        self.assertFalse(sig[0].metadata["trend_rider"]["day_filters"])
+        self.assertEqual(state["skipped"], {})
 
     def test_bad_parameters_are_refused(self):
         for bad in ({"levels": "weekly"}, {"index_stop_adr": -1}, {"trail_arm_adr": 0.5, "trail_giveback_adr": 0},

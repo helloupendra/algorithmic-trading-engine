@@ -86,6 +86,21 @@ public class DeskPlanTests : IDisposable
     }
 
     [Fact]
+    public void Key_value_fields_are_the_runs_settings_not_its_leg_target()
+    {
+        var plan = MorningPlan.Parse("accounts: admin\nTrendRiderV2 NIFTY 2 - day_filters=off\nGhostTangentCrossingsV2 NIFTY 2 50 timeframe=60m @admin\n");
+
+        Assert.Empty(plan.Warnings);
+        var v2 = plan.Lines[0];
+        Assert.Equal(MorningPlan.LegTargetNone, v2.LegTarget);
+        Assert.Equal(new[] { new KeyValuePair<string, string>("day_filters", "off") }, v2.Settings);
+        var ghost = plan.Lines[1];
+        Assert.Equal((MorningPlan.LegTargetPoints, (decimal?)50m), (ghost.LegTarget, ghost.LegTargetPoints));
+        Assert.Equal(new[] { new KeyValuePair<string, string>("timeframe", "60m") }, ghost.Settings);
+        Assert.Equal(new[] { "admin" }, ghost.OnlyAccounts);
+    }
+
+    [Fact]
     public void An_at_list_limits_a_line_to_the_accounts_it_names()
     {
         var runs = MorningPlan.Parse(Fixture).ExpectedRuns();

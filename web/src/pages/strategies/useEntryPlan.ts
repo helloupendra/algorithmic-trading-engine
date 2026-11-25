@@ -20,10 +20,14 @@ export function useEntryPlan(view: StrategyLiveView | null | undefined, nowMs: n
   const name = view?.name ?? ''
   const family = /^TrendRider/i.test(name) && !view?.isManualBook
   const strategies = useStrategies({ enabled: family })
-  const params = useMemo(
-    () => (family ? parseParams(strategies.data?.find((s) => s.name === name)?.defaultParametersJson) : null),
-    [family, strategies.data, name],
-  )
+  // The run's own settings win (the morning plan starts the TrendRiders with day_filters=off); the catalog's
+  // defaults fill anything an older API does not send.
+  const runParams = view?.parameters ?? null
+  const params = useMemo(() => {
+    if (!family) return null
+    const defaults = parseParams(strategies.data?.find((s) => s.name === name)?.defaultParametersJson)
+    return defaults || runParams ? { ...(defaults ?? {}), ...(runParams ?? {}) } : null
+  }, [family, strategies.data, name, runParams])
   const mcx = MCX.test(view?.underlying ?? '') || /^MCX:/i.test(view?.spotSymbol ?? '')
   const rules = useMemo(() => (family ? trendRiderRules(name, params, { mcx }) : null), [family, name, params, mcx])
 

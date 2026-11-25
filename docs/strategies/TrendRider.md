@@ -180,6 +180,7 @@ In order of precedence, the first that fires wins:
 | `min_range_frac` | 0.40 | Today's range so far must be at least this × the average | Fewer, later entries | Takes breaks of a still-quiet day |
 | `max_gap_against_pct` | 0.2 | Largest gap against the trade, in % | Fights bigger gaps | Refuses smaller ones |
 | `max_prev_range` | 0.7 | Trade only after a session narrower than this × the average; 0 turns the rule off | Trades more days (see Limitations: worse) | Fewer days |
+| `day_filters` | `true` | The four day rules above (`skip_after_wide`, `max_prev_range`, `min_range_frac`, `max_gap_against_pct`). `false` (or `off`) trades every break at its level, and the entry's reason names the rule that would have skipped it. The desk's paper runs use `off` from 26 Nov 2026, on the owner's word, to watch what the rules keep out | — | — |
 | `timeframe` | `"5m"` | The candle every rule reads: `1m`, `2m`, `3m`, `5m`, `10m` or `15m`. `or_minutes` must be a whole number of candles; live, the API builds any of them from 1-minute bars | Fewer, slower signals | More, noisier signals |
 | `index_exits` | stop 0.5, trail 0.5 / 0.35 | Exits on the index, from `strategies/index_exits.py`: `stop_adr`, `trail_arm_adr` + `trail_giveback_adr`, `supertrend`, `ema_close`, `psar`, `chandelier`, `exit_after_ist`. Stop, trail and time act on every tick; the candle rules on closed candles | — | — |
 | `lots` | 1 (`default_lots`) | Lots per leg | — | — |
