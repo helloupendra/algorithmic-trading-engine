@@ -44,6 +44,7 @@ import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } 
 import { carriedNote, carryControl, carryHint, positionCountsNote, stopCarryWarning } from '../../lib/carry'
 import type { CarryContext } from '../../lib/carry'
 import { liveNet } from '../../lib/strategyList'
+import { useEntryPlan } from './useEntryPlan'
 import { answerAsOf } from '../../lib/asOf'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { Badge, FlashPrice, InlineError, Loading } from '../../components/ui'
@@ -749,6 +750,8 @@ export function RunCard({
   // The page totals above the cards re-price the same way
   // (useStrategyLivesRepriced), so a total is always the sum of its cards.
   const view = useRepricedRunView(live.data, answerAsOf(live))
+  // A TrendRider-family run says where and when it buys, or why not today.
+  const entry = useEntryPlan(view, Date.now())
   // What the card knows: the run's view, or the list row or exit it came
   // from. With none of them (a first load) it says so, rather than reading
   // as a stopped run that started at "—".
@@ -986,10 +989,10 @@ export function RunCard({
               )}
             </>
           ) : isActive ? (
-            <div className="waiting" role="status">
+            <div className={`waiting${entry && entry.status !== 'watching' && entry.status !== 'before_window' ? ' waiting--off' : ''}`} role="status">
               <span className="pulse-dot" aria-hidden="true" />
               <span>
-                Waiting for entry conditions
+                {entry ? entry.headline : 'Waiting for entry conditions'}
                 {view.underlying ? (
                   <>
                     {' '}

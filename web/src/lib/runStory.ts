@@ -29,6 +29,13 @@ export function istDay(ms: number): string {
   return new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10)
 }
 
+/** A calendar day `days` after (or before) a "yyyy-MM-dd" day. */
+export function shiftDay(day: string, days: number): string {
+  const d = new Date(`${day}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
 /** Minutes after IST midnight. */
 export function istMinute(ms: number): number {
   const d = new Date(ms + IST_OFFSET_MS)
@@ -428,8 +435,11 @@ export interface Level {
   title: string
   /** The name on a phone's narrow ladder ("Y-High" for "Yday high"); the title when absent. */
   short?: string
-  /** `check`: a level the strategy did not use, shown because it differs from one it did. */
-  kind: 'prev' | 'open' | 'entry' | 'stop' | 'trail' | 'arm' | 'best' | 'check'
+  /**
+   * `check`: a level the strategy did not use, shown because it differs from one it did.
+   * `trigger`: where a 5-minute close would buy (the entry plan), before any entry.
+   */
+  kind: 'prev' | 'open' | 'entry' | 'stop' | 'trail' | 'arm' | 'best' | 'check' | 'trigger'
 }
 
 /**

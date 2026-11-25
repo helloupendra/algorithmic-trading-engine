@@ -1915,6 +1915,13 @@ a.pill:hover { border-color: var(--line-strong); }
   animation: pill-pulse 2.4s infinite;
 }
 
+/* A run that will not buy now (a day rule, the window closed): a still, muted dot. */
+.waiting--off .pulse-dot {
+  background: var(--text-3);
+  box-shadow: none;
+  animation: none;
+}
+
 /* Activity list (signals of the run, newest first). */
 .activity {
   list-style: none;
