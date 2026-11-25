@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   EMPTY_RISK_DRAFT,
+  describeRiskRules,
+  isRiskEmpty,
   normalizeRisk,
   parseRiskDraft,
+  riskChips,
   riskDraftFrom,
 } from './risk'
 import type { RiskRules } from './types'
@@ -118,3 +121,40 @@ describe('riskDraftFrom', () => {
     expect(again.rules).toEqual(normalizeRisk(rules))
   })
 })
+
+describe('the profit lock (owner, 25 Nov 2026)', () => {
+  const ladder = {
+    overall: {
+      stopLoss: 4000,
+      scope: 'day' as const,
+      lockSteps: [
+        { at: 5000, keep: 3000 },
+        { at: 10000, keep: 7000 },
+        { at: 20000, keep: 15000 },
+      ],
+    },
+  }
+
+  it('is shown on the overall chip and in the sentence', () => {
+    expect(riskChips(ladder)[0].label).toBe(
+      'Overall SL ₹4,000 · target — · lock ₹5,000 keeps ₹3,000 / ₹10,000 keeps ₹7,000 / ₹20,000 keeps ₹15,000',
+    )
+    expect(describeRiskRules(ladder)).toBe(
+      'overall SL ₹4,000, overall lock ₹5,000 keeps ₹3,000 / ₹10,000 keeps ₹7,000 / ₹20,000 keeps ₹15,000',
+    )
+  })
+
+  it('survives an edit from the form, which has no fields for it', () => {
+    const draft = riskDraftFrom(ladder)
+    const saved = parseRiskDraft({ ...draft, overallStopLoss: '3500' })
+    expect(saved.error).toBeNull()
+    expect(saved.rules?.overall?.stopLoss).toBe(3500)
+    expect(saved.rules?.overall?.lockSteps).toEqual(ladder.overall.lockSteps)
+  })
+
+  it('alone is still a rule, and a step that keeps what sets it is dropped', () => {
+    expect(isRiskEmpty({ overall: { lockSteps: [{ at: 5000, keep: 3000 }] } })).toBe(false)
+    expect(normalizeRisk({ overall: { lockSteps: [{ at: 5000, keep: 5000 }] } })).toEqual({})
+  })
+})
+

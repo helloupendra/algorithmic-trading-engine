@@ -202,6 +202,18 @@ export interface OverallRisk {
   trailStopLoss?: number | null
   trailTrigger?: number | null
   scope?: RiskScope | null
+  /**
+   * Profit locks, lowest first: once the run's P&L reaches `at`, it is ended if it falls back to `keep`; the
+   * highest step reached holds (25 Nov 2026: 5,000 keeps 3,000, 10,000 keeps 7,000, 20,000 keeps 15,000).
+   * Live runs only. Absent on an API older than 26 Nov 2026.
+   */
+  lockSteps?: ProfitLockStep[] | null
+}
+
+/** One profit-lock step of the overall rule (₹). */
+export interface ProfitLockStep {
+  at: number
+  keep: number
 }
 
 /**

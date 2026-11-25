@@ -1001,7 +1001,8 @@ raw = os.environ.get("PLAN_SETTINGS", "-").strip()
 out = {}
 for pair in ([] if raw in ("", "-") else raw.split(";")):
     key, _, value = pair.partition("=")
-    if not re.fullmatch(r"[a-z_][a-z0-9_]*", key):
+    # day_stop / day_lock are the run's risk rules (risk_json), not the strategy's settings.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", key) or key in ("day_stop", "day_lock"):
         continue
     low = value.lower()
     if low in ("true", "false"):
@@ -1017,20 +1018,34 @@ PYEOF
 }
 # <<< settings-json
 
-risk_json() {  # legTargetPoints -> the run's RiskRulesDto on stdout
-  LEG_TARGET_PTS="$1" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
+# >>> risk-json (also loaded by scripts/tests/market-open-plan.test.sh)
+# The run's RiskRulesDto. A plan line's day_stop=4000 (rupees) and
+# day_lock=5000:3000,10000:7000,20000:15000 (once the day's P&L reaches the first
+# number, keep the second) are the run's overall day rules; they win over the
+# job-wide MARKET_OPEN_DAY_STOP_LOSS.
+risk_json() {  # legTargetPoints [settings] -> the run's RiskRulesDto on stdout
+  LEG_TARGET_PTS="$1" PLAN_SETTINGS="${2:--}" LEG_STOP_PTS="${LEG_STOP_PTS:-}" DAY_TARGET="${DAY_TARGET:-}" \
+    DAY_STOP_LOSS="${DAY_STOP_LOSS:-}" python3 - <<'PYEOF'
 import json, os
 def num(k):
     v = os.environ.get(k, "").strip()
     return float(v) if v and v != "-" else None
+settings = dict(p.partition("=")[::2] for p in os.environ.get("PLAN_SETTINGS", "-").split(";") if "=" in p)
 leg = {k: v for k, v in {"targetPoints": num("LEG_TARGET_PTS"), "stopLossPoints": num("LEG_STOP_PTS")}.items() if v}
-day = {k: v for k, v in {"target": num("DAY_TARGET"), "stopLoss": num("DAY_STOP_LOSS")}.items() if v}
+stop = float(settings["day_stop"]) if settings.get("day_stop") else num("DAY_STOP_LOSS")
+day = {k: v for k, v in {"target": num("DAY_TARGET"), "stopLoss": stop}.items() if v}
+steps = []
+for pair in filter(None, settings.get("day_lock", "").split(",")):
+    at, _, keep = pair.partition(":")
+    steps.append({"at": float(at), "keep": float(keep)})
+if steps: day["lockSteps"] = steps
 risk = {}
 if leg: risk["leg"] = leg
 if day: risk["overall"] = {**day, "scope": "day"}
 print(json.dumps(risk))
 PYEOF
 }
+# <<< risk-json
 
 say "day rules for every run: ${DAY_TARGET:+target ₹$DAY_TARGET }${DAY_STOP_LOSS:+SL ₹$DAY_STOP_LOSS}${DAY_TARGET:-${DAY_STOP_LOSS:-none}}; leg target is per strategy, below"
 
@@ -1073,7 +1088,7 @@ plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
   # a person stopped stays stopped although the plan names it.
   only_selected "$ACCOUNT|$NAME|$U" || continue
   OWNER_ID="$(owner_id "$ACCOUNT")"
-  RISK_JSON="$(risk_json "$PLAN_TARGET")"
+  RISK_JSON="$(risk_json "$PLAN_TARGET" "${PLAN_SETTINGS:--}")"
   RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
   PARAMS_JSON="$(settings_json "${PLAN_SETTINGS:--}")"
   [ "${PLAN_SETTINGS:--}" = "-" ] || RISK_TEXT="$RISK_TEXT, settings ${PLAN_SETTINGS//;/ }"

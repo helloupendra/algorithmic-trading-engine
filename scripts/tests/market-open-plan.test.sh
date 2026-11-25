@@ -34,6 +34,16 @@ check "no settings: an empty object"                '{}'                        
 check "numbers, true/false and words are typed"     '{"timeframe": "60m", "day_filters": "off", "itm_steps": 1, "x": 0.5, "on": true}' \
   "$(settings_json 'timeframe=60m;day_filters=off;itm_steps=1;x=0.5;on=true')"
 check "a key that is not a plain name is dropped"   '{"ok": 1}'                             "$(settings_json 'Bad-Key=1;ok=1')"
+check "day_stop and day_lock are not settings"      '{"timeframe": "60m"}'                  "$(settings_json 'timeframe=60m;day_stop=4000;day_lock=5000:3000')"
+
+echo "the run's risk (risk_json): leg target, day stop and profit lock"
+eval "$(sed -n '/^# >>> risk-json/,/^# <<< risk-json/p' scripts/market-open.sh)"
+check "a leg target alone"                          '{"leg": {"targetPoints": 50.0}}'       "$(risk_json 50)"
+check "no target, no settings: no rules"            '{}'                                    "$(risk_json -)"
+check "day stop and the owner's ladder"             '{"overall": {"stopLoss": 4000.0, "lockSteps": [{"at": 5000.0, "keep": 3000.0}, {"at": 10000.0, "keep": 7000.0}, {"at": 20000.0, "keep": 15000.0}], "scope": "day"}}' \
+  "$(risk_json - 'day_filters=off;day_stop=4000;day_lock=5000:3000,10000:7000,20000:15000')"
+check "with a leg target beside them"               '{"leg": {"targetPoints": 50.0}, "overall": {"stopLoss": 4000.0, "scope": "day"}}' \
+  "$(risk_json 50 'timeframe=60m;day_stop=4000')"
 
 echo "the real plan file, per account"
 PLAN="$(grep -v '^[[:space:]]*#' config/morning-plan.txt | grep -v '^[[:space:]]*$' | grep -vi '^[[:space:]]*accounts:')"
@@ -70,9 +80,14 @@ check "TrendRiderV2 has no leg target"              "-" "$(parse_plan_line "$(gr
 check "TrendRiderV2BE has no leg target"            "-" "$(parse_plan_line "$(grep '^TrendRiderV2BE ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
 check "TrendRiderV2OB has no leg target"            "-" "$(parse_plan_line "$(grep '^TrendRiderV2OB ' config/morning-plan.txt)" admin 2 20 | awk '{print $4}')"
 for v in TrendRider TrendRiderV2 TrendRiderV2BE TrendRiderV2OB; do
-  check "$v trades with its day rules off"         "day_filters=off" "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{print $5}')"
+  check "$v trades with its day rules off"         "day_filters=off" "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{split($5, s, ";"); print s[1]}')"
 done
-check "Ghost V2: 1-hour candles, 50-point leg target" "2 50 timeframe=60m" "$(parse_plan_line "$(grep '^GhostTangentCrossingsV2 ' config/morning-plan.txt)" admin 2 20 | awk '{print $3, $4, $5}')"
+check "Ghost V2: 1-hour candles, 50-point leg target" "2 50 timeframe=60m" "$(parse_plan_line "$(grep '^GhostTangentCrossingsV2 ' config/morning-plan.txt)" admin 2 20 | awk '{split($5, s, ";"); print $3, $4, s[1]}')"
+# 25 Nov evening, the owner: every script ends its day at -4,000 and locks 5k->3k, 10k->7k, 20k->15k, each on its own.
+for v in TrendRider TrendRiderV2 TrendRiderV2BE TrendRiderV2OB GhostTangentCrossingsV2; do
+  check "$v: day stop 4,000 and the owner's ladder" "day_stop=4000;day_lock=5000:3000,10000:7000,20000:15000" \
+    "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{n = split($5, s, ";"); print s[n-1] ";" s[n]}')"
+done
 
 echo "a redeploy of some runs only (MARKET_OPEN_ONLY, as scripts/session-keeper.sh passes it)"
 selected() { only_selected "$1" && echo yes || echo no; }
