@@ -55,6 +55,7 @@ import requests
 from core.api_client import build_session, PlatformApiClient
 from core.feed_watchdog import assess_feed, session_market
 from core.tick_age import tick_age_seconds
+from core.bar_cache import LiveBarCache
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
 from core.warmup_source import live_warmup_count, load_warmup_bars, warmup_days_for
 from typing import Callable, List, Dict, Any, Optional, Tuple
@@ -794,6 +795,11 @@ if __name__ == "__main__":
     contract_cache = ExactContractCache(api, args.underlying, log=lambda line: print(line, flush=True),
                                         include_history=recap is not None)
     missing_contracts_logged: set = set()
+    # A live run's bars: the full window once a minute, the newest candles at
+    # most once a second (core/bar_cache.py). A recap run reads per tick, bounded
+    # by its tick's stamp, as before.
+    bar_cache = LiveBarCache(lambda symbol, resolution, take: api.get_recent_bars(
+        symbol, resolution=resolution, take=take))
     print(
         f"[CONFIG] contracts (strike step {format_strike(strike_step)}, expiry {expiry_date}): "
         + "; ".join(describe_requirement(req, strike_step, run_params) for req in contract_requirements),
@@ -1518,7 +1524,10 @@ if __name__ == "__main__":
                         symbol = bars_symbol_for(sym_type, contracts, args.spot_symbol)
                         if not symbol:
                             continue
-                        rows = recent_bars(api, symbol, res, recap, timestamp_utc)
+                        if recap is None:
+                            rows = bar_cache.get(symbol, res, timestamp_utc)
+                        else:
+                            rows = recent_bars(api, symbol, res, recap, timestamp_utc)
                         if rows:
                             bars_dict[res][sym_type] = bar_frames_from_rows(rows, symbol, res)
 
