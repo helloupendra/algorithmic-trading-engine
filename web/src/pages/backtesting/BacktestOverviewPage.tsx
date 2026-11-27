@@ -22,6 +22,7 @@ import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { IconArrowRight, IconChevronDown, IconChevronRight, IconDatabase, IconFlask, IconPlus } from '../../components/icons'
 import type { BacktestRunSummary, FnoUnderlying } from '../../lib/types'
 import { togglePick } from '../../lib/backtestCompare'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { PnlValue } from '../strategies/shared'
 import { BackfillDialog } from './BackfillDialog'
 import { estimateSessions, foldIndexCoverage, sessionsOnHand } from './readings'
@@ -194,7 +195,7 @@ function RecentRunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked
       <ComparePick runId={run.runId} picked={picked} onToggle={onPick} />
       <td>
         <Link to={`/research/backtests/runs/${run.runId}`}>
-          <b>{run.strategyName}</b>
+          <b title={hasOwnName(run.strategyName) ? run.strategyName : undefined}>{strategyName(run.strategyName)}</b>
         </Link>
         <span className="faint"> · #{run.runId}</span>
       </td>
@@ -274,7 +275,7 @@ export function BacktestOverviewPage() {
           tone={running.length > 0 ? 'accent' : undefined}
           sub={
             running.length > 0
-              ? running.map((r) => `${r.strategyName} ${Math.round(r.progressPercent)}%`).join(', ')
+              ? running.map((r) => `${strategyName(r.strategyName)} ${Math.round(r.progressPercent)}%`).join(', ')
               : 'nothing replaying'
           }
           to="/research/backtests/runs"
@@ -284,7 +285,7 @@ export function BacktestOverviewPage() {
           label="Best net P&L"
           value={best ? <PnlValue value={best.netPnl} /> : '—'}
           tone={best ? (best.netPnl > 0 ? 'pos' : best.netPnl < 0 ? 'neg' : undefined) : undefined}
-          sub={best ? `${best.strategyName} · ${best.underlying} · ${formatDayRange(best.fromDate, best.toDate)}` : 'no finished run with trades yet'}
+          sub={best ? `${strategyName(best.strategyName)} · ${best.underlying} · ${formatDayRange(best.fromDate, best.toDate)}` : 'no finished run with trades yet'}
           to={best ? `/research/backtests/runs/${best.runId}` : undefined}
           stale={runs.isRefetchError}
         />

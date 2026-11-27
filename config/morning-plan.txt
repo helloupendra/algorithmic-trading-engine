@@ -52,6 +52,10 @@
 # (Version 1) is back beside V2, V2 BE and V2 OB, 2 lots, no leg target: 4 runs.
 # Version 1 has no square_off_ist of its own, so live it holds to the platform's
 # close, not the backtests' 15:15.
+#
+# 2026-11-28: the owner's names for the trend family, shown on the console and in
+# Telegram: TrendRider = Opener, TrendRiderV2 = Breaker, TrendRiderV2BE = Guard,
+# TrendRiderV2OB = Sniper. The lines below keep the ids, which the job sends.
 
 accounts: admin
 

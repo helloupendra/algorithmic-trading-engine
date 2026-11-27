@@ -87,6 +87,7 @@ import { runStatusTone } from '../../lib/runHistory'
 import { formatDateTime, formatInrSigned, formatTime, pnlClass } from '../../lib/format'
 import { formatBytes } from '../../lib/system'
 import { prefersReducedMotion } from '../../lib/motion'
+import { strategyName } from '../../lib/strategyNames'
 import { Badge, InlineError, Loading, Panel } from '../../components/ui'
 import { IconCalendar, IconClock, IconPlay, IconPlus, IconStop, IconX } from '../../components/icons'
 import { ConsoleOutput, Disclosure } from '../strategies/shared'
@@ -176,7 +177,7 @@ function RunsTable({ session }: { session: ReplaySession }) {
                 <td>
                   <Link to={`/trade/runs/${r.runId}`}>#{r.runId}</Link>
                 </td>
-                <td>{r.strategy}</td>
+                <td>{strategyName(r.strategy)}</td>
                 <td className="mono">{r.underlying || '—'}</td>
                 <td>{r.account || '—'}</td>
                 <td>{r.status ? <Badge tone={runStatusTone(r.status)}>{r.status}</Badge> : <span className="faint">—</span>}</td>
@@ -204,7 +205,7 @@ function RunsTable({ session }: { session: ReplaySession }) {
           <li key={r.runId} className="rp-rl__row">
             <div className="rp-rl__head">
               <Link to={`/trade/runs/${r.runId}`}>#{r.runId}</Link>
-              <span className="rp-rl__name">{r.strategy}</span>
+              <span className="rp-rl__name">{strategyName(r.strategy)}</span>
               <span className={`rp-rl__net ${pnlClass(r.netPnl)}`}>{formatInrSigned(r.netPnl)}</span>
             </div>
             <div className="rp-rl__meta">

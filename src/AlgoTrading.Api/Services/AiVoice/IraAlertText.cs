@@ -214,8 +214,8 @@ public static partial class IraAlertText
         return text.ToString();
     }
 
-    /// <summary>"TrendRiderV2 · NIFTY", or "Manual book": the names the console shows, not the spoken ones.</summary>
-    private static string Label(IraRunNet r) => r.ManualBook ? "Manual book" : $"{r.Strategy} · {r.Underlying}";
+    /// <summary>"Breaker · NIFTY" (TrendRiderV2), "Ghost · NIFTY", or "Manual book": the names the console shows, not the spoken ones.</summary>
+    private static string Label(IraRunNet r) => r.ManualBook ? "Manual book" : $"{StrategyNames.Display(r.Strategy)} · {r.Underlying}";
 
     /// <summary>", all booked", ", all open", or " (booked ₹6,000 up, open ₹2,000 down)".</summary>
     private static string Split(decimal net, decimal open)
@@ -310,7 +310,7 @@ public static partial class IraAlertText
 
     private static string Run(IraRunNet r) => r.ManualBook
         ? $"the manual book for {r.Account}, {Signed(r.Net)}"
-        : $"{Name(r.Strategy)} on {r.Underlying} for {r.Account}, {Signed(r.Net)}";
+        : $"{StrategyNames.OwnName(r.Strategy) ?? Name(r.Strategy)} on {r.Underlying} for {r.Account}, {Signed(r.Net)}";
 
     private static string Trader(IraTraderDay? t)
     {

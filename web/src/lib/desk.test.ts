@@ -526,6 +526,13 @@ describe('strategyLabel', () => {
     expect(strategyLabel('Fulcrum')).toBe('Fulcrum')
     expect(strategyLabel('ATMStraddle')).toBe('ATM Straddle')
   })
+
+  it('uses the owner’s names for the trend family', () => {
+    expect(strategyLabel('TrendRider')).toBe('Opener')
+    expect(strategyLabel('TrendRiderV2')).toBe('Breaker')
+    expect(strategyLabel('TrendRiderV2BE')).toBe('Guard')
+    expect(strategyLabel('TrendRiderV2OB')).toBe('Sniper')
+  })
 })
 
 // ---------------------------------------------------------------- the grid

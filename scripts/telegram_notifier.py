@@ -189,6 +189,17 @@ def account_tag(run: dict) -> str:
     return f"[{name}] " if name else ""
 
 
+#: The owner's names for the trend family (28 Nov 2026). Ids stay as they are everywhere a machine reads them; only
+#: what a person reads changes. The same list is in web/src/lib/strategyNames.ts.
+STRATEGY_NAMES = {"TrendRider": "Opener", "TrendRiderV2": "Breaker", "TrendRiderV2BE": "Guard", "TrendRiderV2OB": "Sniper"}
+
+
+def strategy_label(run: dict) -> str:
+    """The run's strategy as a person reads it: "Sniper" for TrendRiderV2OB, the id for every other strategy."""
+    name = (run or {}).get("strategyName") or "?"
+    return STRATEGY_NAMES.get(name, name)
+
+
 def esc(value: Any) -> str:
     """Escape for Telegram parse_mode=HTML. Only these three matter."""
     return (
@@ -663,7 +674,7 @@ class Watcher:
         )
 
     def _alert_run_started(self, run: dict[str, Any]) -> None:
-        name = run.get("strategyName", "?")
+        name = strategy_label(run)
         underlying = run.get("underlying", "?")
         lines = [
             f"▶️ {esc(account_tag(run))}<b>Strategy started</b> — <b>{esc(name)}</b>",
@@ -690,7 +701,7 @@ class Watcher:
         )
 
     def _alert_run_stopped(self, run: dict[str, Any]) -> None:
-        name = run.get("strategyName", "?")
+        name = strategy_label(run)
         underlying = run.get("underlying", "?")
         net = float(run.get("netPnl") or 0)
         verdict = "profit" if net > 0 else ("loss" if net < 0 else "flat")
@@ -865,7 +876,7 @@ class Watcher:
         an open, and splitting it hides the very thing worth seeing - that the
         strategy rolled, and at what.
         """
-        name = run.get("strategyName", "?")
+        name = strategy_label(run)
         underlying = run.get("underlying", "?")
         pnl = live.get("pnl") or {}
         realized_now = sum(float(p.get("pnl") or 0) for p in closed)
@@ -1142,7 +1153,7 @@ def startup_summary(snapshot: dict[str, Any]) -> str:
 
     for run in snapshot.get("active_runs", []):
         lines.append(
-            f"  · #{run.get('runId')} {esc(run.get('strategyName'))} "
+            f"  · #{run.get('runId')} {esc(strategy_label(run))} "
             f"· {esc(run.get('underlying'))} · {esc(money(run.get('netPnl')))}"
         )
 

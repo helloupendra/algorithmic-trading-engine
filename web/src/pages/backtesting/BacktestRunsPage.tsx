@@ -13,6 +13,7 @@ import { InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { IconClock, IconPlus, IconStop, IconTrash } from '../../components/icons'
 import type { BacktestRunSummary } from '../../lib/types'
 import { togglePick } from '../../lib/backtestCompare'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { PnlValue } from '../strategies/shared'
 import { BacktestStatusBadge, CompareButton, ComparePick, formatDayRange, isActiveStatus } from './shared'
 
@@ -24,7 +25,7 @@ function RunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: read
   const active = isActiveStatus(run.status)
 
   function confirmStop() {
-    if (window.confirm(`Stop backtest #${run.runId} (${run.strategyName} on ${run.underlying})? Open positions are squared off at the last mark.`))
+    if (window.confirm(`Stop backtest #${run.runId} (${strategyName(run.strategyName)} on ${run.underlying})? Open positions are squared off at the last mark.`))
       stop.mutate(run.runId)
   }
   function confirmDelete() {
@@ -47,8 +48,9 @@ function RunRow({ run, picked, onPick }: { run: BacktestRunSummary; picked: read
         </td>
         <td className="bt-runs__name" title={run.strategyName}>
           <Link to={`/research/backtests/runs/${run.runId}`}>
-            <b>{run.strategyName}</b>
+            <b>{strategyName(run.strategyName)}</b>
           </Link>
+          {hasOwnName(run.strategyName) && <span className="cell-sub mono">{run.strategyName}</span>}
         </td>
         <td className="mono">{run.underlying}</td>
         <td className="muted">
@@ -154,7 +156,7 @@ export function BacktestRunsPage() {
               <option value="all">All strategies</option>
               {strategyNames.map((n) => (
                 <option key={n} value={n}>
-                  {n}
+                  {hasOwnName(n) ? `${strategyName(n)} (${n})` : n}
                 </option>
               ))}
             </select>

@@ -30,6 +30,7 @@ import { allows } from './modules'
 import { derivativesCloseIst, minutesOf } from './marketHours'
 import { runUserLabel, shortStopReason } from './runHistory'
 import { liveNet, realizedNet } from './strategyList'
+import { hasOwnName, strategyName } from './strategyNames'
 import type {
   DeployRecord,
   DeskPlanLine,
@@ -549,8 +550,9 @@ export function stopKind(run: Pick<LiveRunSummary, 'isActive' | 'stoppedBy' | 's
 
 // ---------------------------------------------------------------- the grid
 
-/** Names a person reads: "SmcStructureBreak" → "SMC Structure Break". */
+/** Names a person reads: "SmcStructureBreak" → "SMC Structure Break"; the owner's own names first ("TrendRiderV2OB" → "Sniper"). */
 export function strategyLabel(name: string): string {
+  if (hasOwnName(name)) return strategyName(name)
   const ACRONYMS: Record<string, string> = { Smc: 'SMC', Atm: 'ATM', Oi: 'OI', Vwap: 'VWAP', Ema: 'EMA', Iv: 'IV', Pcr: 'PCR' }
   return name
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')

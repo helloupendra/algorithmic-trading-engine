@@ -582,6 +582,14 @@ class RenderTests(unittest.TestCase):
         text = tn.render_for_telegram({"Title": "Kill switch engaged", "Message": "P&L <floor>", "Source": "risk"})
         self.assertIn("P&amp;L &lt;floor&gt;", text)
 
+    def test_the_trend_family_goes_by_the_owners_names(self):
+        self.assertEqual("Opener", tn.strategy_label({"strategyName": "TrendRider"}))
+        self.assertEqual("Breaker", tn.strategy_label({"strategyName": "TrendRiderV2"}))
+        self.assertEqual("Guard", tn.strategy_label({"strategyName": "TrendRiderV2BE"}))
+        self.assertEqual("Sniper", tn.strategy_label({"strategyName": "TrendRiderV2OB"}))
+        self.assertEqual("GhostTangentCrossingsV2", tn.strategy_label({"strategyName": "GhostTangentCrossingsV2"}))
+        self.assertEqual("?", tn.strategy_label({}))
+
 
 class PayloadShapeTests(unittest.TestCase):
     def test_published_keys_are_pascal_case(self):

@@ -34,6 +34,7 @@ import {
   writeSceneDraft,
 } from '../../lib/whiteboard'
 import type { SceneConflict, SceneDraft, WhiteboardDetail } from '../../lib/whiteboard'
+import { strategyName } from '../../lib/strategyNames'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
 import { ChunkErrorBoundary } from '../../components/ChunkErrorBoundary'
 import { Badge, InlineError, Loading } from '../../components/ui'
@@ -405,7 +406,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
     if (runNumber == null || runNumber <= 0) return
     onInsert({
       title: `Run #${runNumber}`,
-      subtitle: run ? `${run.strategyName} on ${run.underlying} · tap to open the run` : 'tap to open the run',
+      subtitle: run ? `${strategyName(run.strategyName)} on ${run.underlying} · tap to open the run` : 'tap to open the run',
       link: `/trade/runs/${runNumber}`,
       fill: FILL_RUN,
     })
@@ -466,7 +467,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
             <option value="">{recentRuns.isPending ? 'Loading…' : 'Recent runs'}</option>
             {(recentRuns.data ?? []).map((r) => (
               <option key={r.runId} value={r.runId}>
-                #{r.runId} · {r.strategyName} · {r.underlying}
+                #{r.runId} · {strategyName(r.strategyName)} · {r.underlying}
               </option>
             ))}
           </select>

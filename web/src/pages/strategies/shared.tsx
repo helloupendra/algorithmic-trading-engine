@@ -52,6 +52,7 @@ import {
   strikeValueInvalid,
 } from '../../lib/contracts'
 import { activeUnderlyings, blockedUnderlyings } from '../../lib/strategyList'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { Badge, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconArrowRight, IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
@@ -662,7 +663,7 @@ function PickerHelp({
   if (taken.size === 0) return null
   return (
     <span className={`field__help ${anyStartable ? '' : 'warn'}`}>
-      {strategy.name} is already running on {[...taken].join(', ')}
+      {strategyName(strategy.name)} is already running on {[...taken].join(', ')}
       {account ? ` in ${account}'s account` : ''}
       {anyStartable
         ? ' — those rows are greyed out; pick another underlying.'
@@ -757,8 +758,9 @@ export function StrategyAside({ strategy, titleId }: { strategy: StrategyListIte
     <aside className="modal__aside">
       <div>
         <h2 className="modal__title" id={titleId}>
-          {strategy.name}
+          {strategyName(strategy.name)}
         </h2>
+        {hasOwnName(strategy.name) && <div className="faint mono" style={{ fontSize: 12 }}>{strategy.name}</div>}
         <div className="chip-row" style={{ marginTop: 6 }}>
           <CategoryBadge category={strategy.category} />
           {strategy.instrumentKind && <Badge tone="neutral">{strategy.instrumentKind}</Badge>}
@@ -1005,7 +1007,7 @@ export function LaunchDialog({
     }
     if (chosenTaken) {
       setValidation(
-        `${strategy.name} is already running on ${chosen.underlying}${targetName ? ` in ${targetName}'s account` : ''}` +
+        `${strategyName(strategy.name)} is already running on ${chosen.underlying}${targetName ? ` in ${targetName}'s account` : ''}` +
           ' — stop that run or pick another underlying.',
       )
       return
@@ -1286,7 +1288,7 @@ export function LaunchDialog({
           {start.isError && <InlineError error={start.error} />}
           {strategy.backtestOnly && (
             <div className="alert alert--warn" role="status">
-              {strategy.name} runs in backtests only: the live runner cannot trade it. Try it on the New backtest page.
+              {strategyName(strategy.name)} runs in backtests only: the live runner cannot trade it. Try it on the New backtest page.
             </div>
           )}
 

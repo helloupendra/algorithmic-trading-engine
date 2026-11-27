@@ -30,6 +30,7 @@ import type { StrategyActiveRun, StrategyListItem, StrategyLiveView } from '../.
 import { CategoryBadge, LaunchDialog, PnlValue, StrategyCard } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
 import { liveNet, runningTileSub } from '../../lib/strategyList'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { todayIst } from '../backtesting/shared'
 
 interface RunRow {
@@ -187,7 +188,7 @@ function RecentRuns() {
                 <tr key={run.runId} className={run.isActive ? 'row--live' : ''}>
                   <td className="mono muted">#{run.runId}</td>
                   <td>
-                    <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
+                    <b title={hasOwnName(run.strategyName) ? run.strategyName : undefined}>{strategyName(run.strategyName)}</b> <CategoryBadge category={run.category} />
                   </td>
                   <td className="mono">{run.underlying}</td>
                   <td className="muted">{formatDateTime(run.startedUtc)}</td>

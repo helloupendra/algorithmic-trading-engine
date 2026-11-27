@@ -869,6 +869,21 @@ public sealed class IraAlertTests : IDisposable
     }
 
     [Fact]
+    public void The_close_calls_the_trend_family_by_the_owners_names()
+    {
+        var sniper = new IraRunNet(7, "TrendRiderV2OB", "NIFTY", "admin", 5000m);
+        var ghost = new IraRunNet(8, "GhostTangentCrossingsV2", "NIFTY", "admin", -1200m);
+        var close = new IraClose([new IraAccountNet("admin", 3800m)], sniper, ghost, 2, null) { All = [sniper, ghost] };
+
+        Assert.Contains("Sniper on NIFTY for admin", IraAlertText.Close(close));
+        Assert.Contains("• Sniper · NIFTY (admin)", IraAlertText.CloseDetail(close));
+        Assert.Contains("• GhostTangentCrossingsV2 · NIFTY (admin)", IraAlertText.CloseDetail(close));
+        Assert.Equal(("Opener", "Breaker", "Guard", "Sniper", "Ghost"),
+            (StrategyNames.Display("TrendRider"), StrategyNames.Display("TrendRiderV2"), StrategyNames.Display("TrendRiderV2BE"),
+             StrategyNames.Display("TrendRiderV2OB"), StrategyNames.Display("Ghost")));
+    }
+
+    [Fact]
     public async Task The_close_writes_every_run_and_speaks_only_the_short_day()
     {
         Link(Owner, "upendra");
