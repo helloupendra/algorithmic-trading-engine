@@ -83,10 +83,12 @@ for v in TrendRider TrendRiderV2 TrendRiderV2BE TrendRiderV2OB; do
   check "$v trades with its day rules off"         "day_filters=off" "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{split($5, s, ";"); print s[1]}')"
 done
 check "Ghost V2: 1-hour candles, 50-point leg target" "2 50 timeframe=60m" "$(parse_plan_line "$(grep '^GhostTangentCrossingsV2 ' config/morning-plan.txt)" admin 2 20 | awk '{split($5, s, ";"); print $3, $4, s[1]}')"
-# 25 Nov evening, the owner: every script ends its day at -4,000 and locks 5k->3k, 10k->7k, 20k->15k, each on its own.
+# 25 Nov evening, the owner: every script ends its day at -4,000, each on its own. 28 Nov: the profit lock is off.
 for v in TrendRider TrendRiderV2 TrendRiderV2BE TrendRiderV2OB GhostTangentCrossingsV2; do
-  check "$v: day stop 4,000 and the owner's ladder" "day_stop=4000;day_lock=5000:3000,10000:7000,20000:15000" \
-    "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{n = split($5, s, ";"); print s[n-1] ";" s[n]}')"
+  check "$v: day stop 4,000, no profit lock" "day_stop=4000" \
+    "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{n = split($5, s, ";"); print s[n]}')"
+  check "$v: the run's day rules" '{"overall": {"stopLoss": 4000.0, "scope": "day"}}' \
+    "$(risk_json - "$(parse_plan_line "$(grep "^$v " config/morning-plan.txt)" admin 2 20 | awk '{print $5}')")"
 done
 
 echo "a redeploy of some runs only (MARKET_OPEN_ONLY, as scripts/session-keeper.sh passes it)"

@@ -55,11 +55,11 @@
 
 accounts: admin
 
-TrendRider               NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
-TrendRiderV2             NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
-TrendRiderV2BE           NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
-TrendRiderV2OB           NIFTY                   2  -   day_filters=off  day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
-GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m    day_stop=4000 day_lock=5000:3000,10000:7000,20000:15000
+TrendRider               NIFTY                   2  -   day_filters=off  day_stop=4000
+TrendRiderV2             NIFTY                   2  -   day_filters=off  day_stop=4000
+TrendRiderV2BE           NIFTY                   2  -   day_filters=off  day_stop=4000
+TrendRiderV2OB           NIFTY                   2  -   day_filters=off  day_stop=4000
+GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m    day_stop=4000
 
 #
 # 2026-11-25 evening, on the owner's word: from 26 Nov the four TrendRider runs
@@ -79,6 +79,13 @@ GhostTangentCrossingsV2  NIFTY                   2  50  timeframe=60m    day_sto
 # Rs 5,000 it keeps Rs 3,000, at Rs 10,000 keeps Rs 7,000, at Rs 20,000 keeps
 # Rs 15,000 (day_lock). Net of charges, as every overall rule is. day_stop and
 # day_lock go into the run's risk rules, not its strategy settings.
+#
+# 2026-11-28, on the owner's word: the profit lock is off from 30 Nov; the
+# -Rs 4,000 day stop stays. Replayed on the desk's six years of backtest trades
+# (2020-26), the lock made Rs 8.95 lakh less than the stop alone across the four
+# TrendRiders (about Rs 3 lakh per V2 script, in both halves of the data), and
+# Rs 2.19 lakh less on 3 Aug - 27 Nov: it sells the trend days that carry the year.
+# day_lock still works on any line that names it.
 # GhostTangentCrossings    BANKNIFTY,NIFTY,SENSEX  2
 # GhostTangentCrossingsV2  BANKNIFTY,NIFTY,SENSEX  2
 # TrendRider               BANKNIFTY,NIFTY,SENSEX  2  -
