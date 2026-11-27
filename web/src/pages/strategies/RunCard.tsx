@@ -44,6 +44,7 @@ import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } 
 import { carriedNote, carryControl, carryHint, positionCountsNote, stopCarryWarning } from '../../lib/carry'
 import type { CarryContext } from '../../lib/carry'
 import { liveNet } from '../../lib/strategyList'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { useEntryPlan } from './useEntryPlan'
 import { answerAsOf } from '../../lib/asOf'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
@@ -796,7 +797,7 @@ export function RunCard({
     const where = underlying ? ` on ${underlying}` : ''
     const carryWarning = stopCarryWarning(positions)
     const msg =
-      `Square off ${openCount} open position${openCount === 1 ? '' : 's'} at the last price and stop ${strategy.name}${where}?` +
+      `Square off ${openCount} open position${openCount === 1 ? '' : 's'} at the last price and stop ${strategyName(strategy.name)}${where}?` +
       (carryWarning ? `\n\n${carryWarning}` : '')
     if (window.confirm(msg)) stop.mutate({ runId })
   }
@@ -805,11 +806,11 @@ export function RunCard({
     <section
       id={`run-${runId}`}
       className={`run-card ${!known ? '' : isActive ? 'run-card--live' : 'run-card--stopped'}`}
-      aria-label={`${strategy.name}${underlying ? ` on ${underlying}` : ''} run ${runId}`}
+      aria-label={`${strategyName(strategy.name)}${underlying ? ` on ${underlying}` : ''} run ${runId}`}
     >
       <header className="run-card__head">
-        <span className="run-card__name">
-          {strategy.name}
+        <span className="run-card__name" title={hasOwnName(strategy.name) ? strategy.name : undefined}>
+          {strategyName(strategy.name)}
           <CategoryBadge category={strategy.category} />
         </span>
         {underlying && (

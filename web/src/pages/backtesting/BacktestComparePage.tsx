@@ -27,6 +27,7 @@ import {
 import { monthLabel, type MonthRef } from '../../lib/backtestMonths'
 import { formatInrSigned, formatInrWhole, formatLots, formatNumber, formatPercent } from '../../lib/format'
 import { resolutionLabel } from '../../lib/symbols'
+import { strategyName } from '../../lib/strategyNames'
 import { InlineError, Loading, Panel } from '../../components/ui'
 import { IconActivity, IconArrowRight, IconLayers } from '../../components/icons'
 import type { BacktestRunView } from '../../lib/types'
@@ -37,7 +38,7 @@ import { BacktestStatusBadge, formatDayRange } from './shared'
 import './backtesting.css'
 
 function runLabel(r: { runId: number; strategyName: string; underlying: string }): string {
-  return `#${r.runId} ${r.strategyName} · ${r.underlying}`
+  return `#${r.runId} ${strategyName(r.strategyName)} · ${r.underlying}`
 }
 
 /** "+₹12,400 · Mar 2025", with its trades under it. */

@@ -16,6 +16,7 @@ import { useLiveRuns } from '../../lib/queries'
 import type { RunLegs } from '../../lib/liveMarks'
 import { runNetPnl } from '../../lib/runHistory'
 import { activeUnderlyings } from '../../lib/strategyList'
+import { familyName, hasOwnName, strategyName } from '../../lib/strategyNames'
 import {
   builtInExit,
   dataLabel,
@@ -151,8 +152,8 @@ function Actions({ s, onStart }: { s: StrategyListItem; onStart: (s: StrategyLis
         type="button"
         className="btn btn--sm"
         onClick={() => onStart(s)}
-        title={on.length > 0 ? `Already running on ${on.join(', ')} — start it on another underlying` : `Start ${s.name} on paper`}
-        aria-label={`Start ${s.name}`}
+        title={on.length > 0 ? `Already running on ${on.join(', ')} — start it on another underlying` : `Start ${strategyName(s.name)} on paper`}
+        aria-label={`Start ${strategyName(s.name)}`}
       >
         <IconPlay style={{ width: 12, height: 12 }} /> Start
       </button>
@@ -168,8 +169,8 @@ export function LibraryCard({ strategy: s, ctx }: { strategy: StrategyListItem; 
   return (
     <article className={`lib-card${on.length > 0 ? ' lib-card--running' : ''}`}>
       <div className="lib-card__head">
-        <Link className="lib-card__name" to={specHref(s)}>
-          {s.name}
+        <Link className="lib-card__name" to={specHref(s)} title={hasOwnName(s.name) ? s.name : undefined}>
+          {strategyName(s.name)}
         </Link>
         {s.category && <span className="lib-card__cat">{s.category}</span>}
       </div>
@@ -219,12 +220,12 @@ export function FamilyCard({
   return (
     <article className={`lib-card lib-card--family${runningMembers > 0 ? ' lib-card--running' : ''}${open ? ' is-open' : ''}`}>
       <div className="lib-card__head">
-        <span className="lib-card__name lib-card__name--plain">{root} variants</span>
+        <span className="lib-card__name lib-card__name--plain">{familyName(root)}</span>
         <span className="lib-card__count">{members.length}</span>
         {categories.length === 1 && <span className="lib-card__cat">{categories[0]}</span>}
       </div>
       <p className="lib-card__line" title={base.description || undefined}>
-        <span className="faint">{base.name}: </span>
+        <span className="faint">{strategyName(base.name)}: </span>
         {oneLiner(base.description, 100) || 'no description'}
       </p>
       <Chips s={base} facts={ctx.facts.get(base.id)} />
@@ -259,7 +260,8 @@ export function FamilyCard({
               <li key={m.id} className="lib-variant">
                 <div className="lib-variant__main">
                   <Link className="lib-variant__name" to={specHref(m)} title={m.description || undefined}>
-                    {m.name}
+                    {strategyName(m.name)}
+                    {hasOwnName(m.name) && <span className="faint mono" style={{ fontSize: 11, marginLeft: 6 }}>{m.name}</span>}
                   </Link>
                   <Chips s={m} facts={ctx.facts.get(m.id)} compact />
                 </div>

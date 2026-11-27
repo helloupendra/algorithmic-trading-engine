@@ -19,6 +19,7 @@ import {
 } from '../../lib/riskLimits'
 import type { LimitsDraft, LimitsField } from '../../lib/riskLimits'
 import { formatDateTime, formatInr, formatInrWhole } from '../../lib/format'
+import { strategyName } from '../../lib/strategyNames'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import './risk.css'
 
@@ -290,7 +291,7 @@ function ExposurePanel() {
                     {data.activeRuns.map((run) => (
                       <tr key={run.runId}>
                         <td className="mono">#{run.runId}</td>
-                        <td>{run.strategyName}</td>
+                        <td>{strategyName(run.strategyName)}</td>
                         <td>{run.underlying}</td>
                         <td className={`r ${run.unrealizedPnL >= 0 ? 'pos' : 'neg'}`}>
                           {formatInr(run.unrealizedPnL)}

@@ -29,6 +29,7 @@ import { riskChips } from '../../lib/risk'
 import { historyListPending, recapBadge, runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
 import { DateField } from '../../components/DateField'
 import { isoToDmy } from '../../lib/dates'
+import { hasOwnName, strategyName } from '../../lib/strategyNames'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconClock, IconPlay, IconUsers } from '../../components/icons'
 import type { LiveRunSummary, LiveRunUserSummary } from '../../lib/types'
@@ -232,7 +233,7 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, showUser, asOf,
       </td>
       {showUser && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
       <td>
-        <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
+        <b title={hasOwnName(run.strategyName) ? run.strategyName : undefined}>{strategyName(run.strategyName)}</b> <CategoryBadge category={run.category} />
         {recap && (
           <>
             {' '}
