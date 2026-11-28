@@ -103,6 +103,11 @@ export type SmcLayers = {
    * which needs an aggressor side this platform's feed does not carry.
    */
   orderFlow: boolean
+  /**
+   * Trading ranges: sideways boxes, green as accumulation after a fall and red
+   * as distribution after a rally, with springs and upthrusts marked.
+   */
+  ranges: boolean
 }
 
 export function SmcChart({
@@ -234,6 +239,11 @@ export function SmcChart({
       bullish: zoneInk('fvg-bull', 'rgba(49, 196, 141, 0.07)', 'rgba(49, 196, 141, 0.34)'),
       bearish: zoneInk('fvg-bear', 'rgba(244, 99, 94, 0.07)', 'rgba(244, 99, 94, 0.34)'),
     }
+    const rangeInk = {
+      accumulation: zoneInk('acc', 'rgba(49, 196, 141, 0.06)', 'rgba(49, 196, 141, 0.50)'),
+      distribution: zoneInk('dist', 'rgba(244, 99, 94, 0.06)', 'rgba(244, 99, 94, 0.50)'),
+      range: zoneInk('range', 'rgba(139, 143, 154, 0.07)', 'rgba(139, 143, 154, 0.50)'),
+    }
     const flowInk = {
       bullish: zoneInk('flow-bull', 'rgba(49, 196, 141, 0.20)', 'rgba(49, 196, 141, 0.60)'),
       bearish: zoneInk('flow-bear', 'rgba(244, 99, 94, 0.20)', 'rgba(244, 99, 94, 0.60)'),
@@ -319,6 +329,25 @@ export function SmcChart({
       }
     }
 
+    if (layers.ranges) {
+      // A spring is a wick under the floor that closed back inside — read as the
+      // last shake-out before an accumulation leaves upward; an upthrust is its
+      // mirror above the ceiling.
+      for (const range of data.ranges ?? []) {
+        for (const probe of range.probes) {
+          const spring = probe.kind === 'spring'
+          drawn.push({
+            time: ist(probe.timeUtc),
+            position: spring ? 'belowBar' : 'aboveBar',
+            shape: spring ? 'arrowUp' : 'arrowDown',
+            color: spring ? bull : bear,
+            text: spring ? 'Spring' : 'UT',
+            size: 0.6,
+          })
+        }
+      }
+    }
+
     markers.setMarkers(drawn.sort((a, b) => (a.time as number) - (b.time as number)))
 
     /**
@@ -367,6 +396,27 @@ export function SmcChart({
           // means this leg's inducement has not been swept yet, which is the
           // moment the break behind the run becomes something to act on.
           dashed: run.inducedTimeUtc === null,
+        })
+      }
+    }
+
+    // Behind the gaps and blocks: a range is wide and pale, and the smaller
+    // boxes that fall inside it should stay readable on top of it.
+    if (layers.ranges) {
+      for (const range of data.ranges ?? []) {
+        const span = indices(range.startTimeUtc, range.endTimeUtc)
+        if (!span) continue
+        const ink = rangeInk[range.kind]
+        // Like a gap, the box reaches back to the range's first candle once the
+        // range is long enough to be known. Dashed while it still stands.
+        boxes.push({
+          ...span,
+          top: range.top,
+          bottom: range.bottom,
+          fill: ink.fill,
+          edge: ink.edge,
+          dashed: range.endTimeUtc === null,
+          label: range.kind === 'accumulation' ? 'Accumulation' : range.kind === 'distribution' ? 'Distribution' : 'Range',
         })
       }
     }

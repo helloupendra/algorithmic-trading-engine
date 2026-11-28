@@ -2283,6 +2283,35 @@ export interface SmcOrderFlowRun {
   inducedTimeUtc: string | null
 }
 
+/** A wick that left a trading range and closed back inside it. */
+export interface SmcRangeProbe {
+  /** "spring" below the range, "upthrust" above it. */
+  kind: 'spring' | 'upthrust'
+  timeUtc: string
+  /** The wick's extreme. */
+  price: number
+}
+
+/**
+ * A trading range: candles that stayed sideways within a few average candles of
+ * height. Accumulation when it formed in a bearish structure, distribution in a
+ * bullish one, a plain range before any trend was known.
+ */
+export interface SmcRange {
+  kind: 'accumulation' | 'distribution' | 'range'
+  top: number
+  bottom: number
+  /** The range's first candle: where the box starts. */
+  startTimeUtc: string
+  /** The candle that made it long enough to count — the first that could know it. */
+  confirmedTimeUtc: string
+  /** The candle that closed outside it; null while it stands, so it draws to the right edge. */
+  endTimeUtc: string | null
+  /** Which way it was left; null while it stands. */
+  breakout: 'up' | 'down' | null
+  probes: SmcRangeProbe[]
+}
+
 /** One chart's candles plus the structure of the timeframes above it. */
 export interface SmcLadder {
   symbol: string
@@ -2314,6 +2343,11 @@ export interface SmcStructure {
   orderBlocks: SmcOrderBlock[]
   gaps: SmcFairValueGap[]
   orderFlowRuns: SmcOrderFlowRun[]
+  ranges: SmcRange[]
+  /** The fewest candles a range needs. */
+  rangeMinBars: number
+  /** How tall a range may be, in average candle heights. */
+  rangeWidth: number
   trend: 'none' | 'bullish' | 'bearish'
   protectedLevel: number | null
   breakLevel: number | null

@@ -75,6 +75,13 @@ export function StructureControls({ value, onChange }: { value: StructureSetting
         >
           Order flow
         </Toggle>
+        <Toggle
+          on={layers.ranges}
+          onClick={() => flip('ranges')}
+          title="Sideways ranges: accumulation after a fall, distribution after a rally, with springs and upthrusts marked"
+        >
+          Accumulation
+        </Toggle>
       </div>
       {/* Not a layer: it changes the request, so both zone kinds move together.
           It is dead only while neither zone layer is on. */}
@@ -268,6 +275,17 @@ export function StructureLegend() {
           <span>
             <b>Order flow</b> — a band under the candles covering the run from one break of structure to the next: which
             way the market was being delivered, and for how long it held. Dashed until that leg's inducement is swept.
+          </span>
+        </li>
+        <li>
+          <span className="smc__key smc__key--acc" />
+          <span>
+            <b>Accumulation / distribution</b> — a sideways range: at least 12 candles whose highest high and lowest low
+            stay within 2.5 average candle heights. Green "Accumulation" when it formed after a bearish break, red
+            "Distribution" after a bullish one, grey "Range" before any trend was known. It appears once it is 12 candles
+            long and reaches back to its first candle; dashed while it stands, ending at the candle that closed outside it.
+            A <b>Spring</b> is a wick below the range that closed back inside, an <b>UT</b> (upthrust) the same above.
+            The name says where the range formed, not which way it will leave: the breakout is drawn, not predicted.
           </span>
         </li>
       </ul>

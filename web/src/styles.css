@@ -92,6 +92,12 @@
   --zone-flow-bull-edge: rgba(60, 207, 149, 0.6);
   --zone-flow-bear: rgba(255, 107, 122, 0.2);
   --zone-flow-bear-edge: rgba(255, 107, 122, 0.6);
+  --zone-acc: rgba(60, 207, 149, 0.06);
+  --zone-acc-edge: rgba(60, 207, 149, 0.5);
+  --zone-dist: rgba(255, 107, 122, 0.06);
+  --zone-dist-edge: rgba(255, 107, 122, 0.5);
+  --zone-range: rgba(150, 156, 170, 0.07);
+  --zone-range-edge: rgba(150, 156, 170, 0.5);
 
   /* Cards with air between them, as in the sprout prototype. */
   --radius: 10px;
@@ -198,6 +204,12 @@
   --zone-flow-bull-edge: rgba(18, 122, 82, 0.6);
   --zone-flow-bear: rgba(191, 52, 70, 0.2);
   --zone-flow-bear-edge: rgba(191, 52, 70, 0.6);
+  --zone-acc: rgba(18, 122, 82, 0.06);
+  --zone-acc-edge: rgba(18, 122, 82, 0.5);
+  --zone-dist: rgba(191, 52, 70, 0.06);
+  --zone-dist-edge: rgba(191, 52, 70, 0.5);
+  --zone-range: rgba(90, 96, 112, 0.07);
+  --zone-range-edge: rgba(90, 96, 112, 0.5);
 
   /* Paper lifts its cards with the faintest shadow; dialogs a little more. */
   --shadow-1: 0 1px 2px rgb(30 34 60 / 0.04), 0 4px 14px rgb(30 34 60 / 0.03);

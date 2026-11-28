@@ -176,3 +176,12 @@
 .smc__rung-last {
   margin-left: auto;
 }
+
+/* A range is a wide, pale box: the key shows the accumulation colour, and the
+   legend names the other two in words. */
+.smc__key--acc {
+  margin-top: 4px;
+  height: 13px;
+  border: 1px dashed var(--zone-acc-edge);
+  background: var(--zone-acc);
+}
