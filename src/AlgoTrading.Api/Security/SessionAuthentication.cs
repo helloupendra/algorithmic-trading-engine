@@ -16,7 +16,21 @@ public static class SessionAuthentication
             return;
         }
         var validity = context.HttpContext.RequestServices.GetRequiredService<ITokenValidityService>();
-        if (!await validity.IsSessionAcceptableAsync(userId, sessionId, DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime, context.HttpContext.RequestAborted))
+        var aborted = context.HttpContext.RequestAborted;
+        bool acceptable;
+        try
+        {
+            acceptable = await validity.IsSessionAcceptableAsync(userId, sessionId, DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime, aborted);
+        }
+        catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+        {
+            // The caller hung up while its session was being looked up — a tab closed or a poll superseded.
+            // There is no one left to authenticate and nothing went wrong. Left to escape, JwtBearerHandler logs
+            // it as a failure and Sentinel's log watcher opens an incident for a database error that never was.
+            context.Fail("The request was aborted while its session was being checked.");
+            return;
+        }
+        if (!acceptable)
             context.Fail("This session has been ended. Sign in again.");
     }
 }
