@@ -37,3 +37,6 @@ fi
 # The owner wants both backups every day, together: the database follows the
 # market data. Its own log and alerts are in logs/db-backup-<date>.log.
 scripts/backup-db-to-drive.sh || true
+# Then the files a new server needs that live nowhere else (.env, tunnel token, units,
+# pager, broker), encrypted; see the script's header.
+scripts/backup-config-to-drive.sh || true

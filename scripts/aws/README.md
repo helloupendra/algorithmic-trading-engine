@@ -96,6 +96,54 @@ launchctl bootout gui/$(id -u)/com.algotrading.tunnel
 Cloudflare accepts two connectors on one tunnel, so there is no gap: the server
 starts serving before the Mac stops.
 
+## Moving to a new AWS account (from the Drive backups)
+
+If this account is suspended or closed, everything needed to start again is on
+Google Drive, outside AWS, refreshed every morning by `archive-to-drive.sh`:
+
+| What | On Drive | Kept |
+|---|---|---|
+| The database: every table but the raw ticks, with the data-protection keys (`backup-db-to-drive.sh`) | `openfno-new:OpenFNO/database/algotrading-<stamp>.tar` | newest 30 |
+| Raw ticks, chain snapshots and live bars, one folder per day (`archive_to_drive.py`) | `ARCHIVE_REMOTE/YYYY/MM/DD/` | all |
+| `.env`, `appsettings.Local.json`, `rclone.conf`, the tunnel token, the systemd units, the crontab, the pager, the broker's `.env` and database — encrypted (`backup-config-to-drive.sh`) | `openfno-new:OpenFNO/config/config-<stamp>.tar.enc` | newest 30 |
+| Code | GitHub: `algorithmic-trading-engine`, `openfno-broker` | — |
+
+The config bundle opens only with `CONFIG_BACKUP_KEY`. Keep that key off the
+server: on the Mac in `~/OpenFNO-server-backup/config-backup.key` (mode 600) and
+in a password manager.
+
+```bash
+# on the Mac: the newest bundle and dump, and open the bundle
+rclone lsf openfno-new:OpenFNO/config | sort | tail -1      # → config-<stamp>.tar.enc
+rclone copy openfno-new:OpenFNO/config/config-<stamp>.tar.enc .
+rclone copy openfno-new:OpenFNO/database/algotrading-<stamp>.tar .   # 5 GB
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
+  -in config-<stamp>.tar.enc -out config.tar -pass file:"$HOME/OpenFNO-server-backup/config-backup.key"
+tar -xf config.tar && cat config/MANIFEST.txt
+```
+
+Then, in the new account:
+
+1. Launch the instance as in section 1.
+2. Bootstrap as in section 2, with the old tunnel and `.env`:
+   `bash bootstrap.sh --tunnel-token "$(cat config/etc/cloudflared/token)" --env-file ~/.env`
+   (copy `config/engine/.env` up as `~/.env` first). It is the same Cloudflare
+   tunnel, so `openfno.com` follows the new server with no DNS change.
+3. Put back what bootstrap does not make: `config/engine/appsettings.Local.json` →
+   `src/AlgoTrading.Api/`, `config/home/rclone.conf` → `~/.config/rclone/`,
+   `crontab config/crontab.txt`, and the pager —
+   `tar -xf config/openfno-pager.tar -C ~`, then `sudo cp` its unit and
+   `algotrading-sentinel.service` from `config/etc/systemd/` to
+   `/etc/systemd/system/`, `sudo systemctl daemon-reload`, `enable --now` both.
+4. Restore the database as in section 3 and start the desk.
+5. The broker: `git clone` `openfno-broker`, copy `config/broker/.env` in, start
+   it as before (`docker compose`), then load its data:
+   `docker exec -i openfno-broker-postgres-1 pg_restore -U <user> -d <db> --clean < config/broker-db.dump`.
+6. What belongs to the old machine and must be redone by hand: the brokers'
+   static-IP whitelist (SEBI's 2026 rules — register the new Elastic IP with
+   FYERS and Angel One, and update `ANGEL_STATIC_IP` in `.env`), the SSH key pair,
+   and the security group.
+
 ## Day to day
 
 - `sudo systemctl status algotrading-desk`, `tail -f logs/desk.log`, `./scripts/status.sh` — the same log and status as on the Mac. Start and stop the desk with `sudo systemctl start|stop algotrading-desk`; here `scripts/desk.sh --stop` and `--headless` only print that command. Stopping it leaves the API running (`KillMode=process`).
