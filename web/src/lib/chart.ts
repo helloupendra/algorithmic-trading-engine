@@ -428,6 +428,7 @@ export const STRUCTURE_DEFAULTS: StructureSettings = {
     orderBlocks: true,
     fvg: true,
     orderFlow: false,
+    ranges: true,
   },
   breakOn: 'close',
   inducement: 'last',

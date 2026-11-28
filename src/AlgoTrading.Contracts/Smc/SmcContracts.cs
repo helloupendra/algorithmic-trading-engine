@@ -146,6 +146,52 @@ public sealed class SmcOrderFlowRunDto
     public DateTime? InducedTimeUtc { get; set; }
 }
 
+/// <summary>
+/// A trading range: a sideways box of candles that stayed within a few average
+/// candles of height, read as accumulation when it formed in a bearish structure
+/// and distribution in a bullish one.
+/// </summary>
+/// <remarks>
+/// A range is only known once it is long enough, so the box is drawn back to its
+/// first candle from <see cref="ConfirmedTimeUtc"/> on. Whether it broke the way
+/// its name expects is reported in <see cref="Breakout"/>, not assumed.
+/// </remarks>
+public sealed class SmcRangeDto
+{
+    /// <summary>"accumulation", "distribution" or "range" (no trend known when it began).</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    public decimal Top { get; set; }
+    public decimal Bottom { get; set; }
+
+    /// <summary>The range's first candle: where the box starts.</summary>
+    public DateTime StartTimeUtc { get; set; }
+
+    /// <summary>The candle that made it long enough to count — the first that could know it.</summary>
+    public DateTime ConfirmedTimeUtc { get; set; }
+
+    /// <summary>The candle that closed outside it, or null while it stands — draw it open to the right edge.</summary>
+    public DateTime? EndTimeUtc { get; set; }
+
+    /// <summary>"up", "down", or null while it stands.</summary>
+    public string? Breakout { get; set; }
+
+    /// <summary>Wicks that left the box and closed back inside it.</summary>
+    public List<SmcRangeProbeDto> Probes { get; set; } = [];
+}
+
+/// <summary>A spring (wick below the range, close back inside) or an upthrust (the mirror above).</summary>
+public sealed class SmcRangeProbeDto
+{
+    /// <summary>"spring" or "upthrust".</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    public DateTime TimeUtc { get; set; }
+
+    /// <summary>The wick's extreme.</summary>
+    public decimal Price { get; set; }
+}
+
 /// <summary>The marks for one symbol and timeframe, with the candles they were read from.</summary>
 public sealed class SmcStructureResponse
 {
@@ -178,6 +224,13 @@ public sealed class SmcStructureResponse
     public List<SmcOrderBlockDto> OrderBlocks { get; set; } = [];
     public List<SmcFairValueGapDto> Gaps { get; set; } = [];
     public List<SmcOrderFlowRunDto> OrderFlowRuns { get; set; } = [];
+    public List<SmcRangeDto> Ranges { get; set; } = [];
+
+    /// <summary>The fewest candles a range needs.</summary>
+    public int RangeMinBars { get; set; }
+
+    /// <summary>How tall a range may be, in average candle heights.</summary>
+    public decimal RangeWidth { get; set; }
 
     /// <summary>"none", "bullish" or "bearish" as at the last candle.</summary>
     public string Trend { get; set; } = string.Empty;

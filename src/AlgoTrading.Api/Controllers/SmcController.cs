@@ -49,6 +49,8 @@ public class SmcController : ControllerBase
     /// <param name="zones">When price coming back into an order block or a gap counts as having used it: "touch" (default), "midpoint" or "close".</param>
     /// <param name="fvgMinSize">Report only gaps at least this wide, in points. Zero, the default, applies no threshold — the teaching names no number.</param>
     /// <param name="standingZonesOnly">Report only the zones still standing at the last candle: unmitigated blocks and unfilled gaps. Off by default, so the history comes back whole.</param>
+    /// <param name="rangeMinBars">The fewest candles a trading range needs (default 12).</param>
+    /// <param name="rangeWidth">How tall a trading range may be, in average candle heights (default 2.5).</param>
     /// <param name="includeLive">Append today's live bars past the stored history.</param>
     [HttpGet("structure")]
     public async Task<ActionResult<SmcStructureResponse>> GetStructure(
@@ -63,6 +65,8 @@ public class SmcController : ControllerBase
         [FromQuery] string zones = "touch",
         [FromQuery] decimal fvgMinSize = 0m,
         [FromQuery] bool standingZonesOnly = false,
+        [FromQuery] int rangeMinBars = TradingRanges.DefaultMinBars,
+        [FromQuery] decimal rangeWidth = TradingRanges.DefaultWidth,
         [FromQuery] bool includeLive = true,
         CancellationToken cancellationToken = default)
     {
@@ -70,14 +74,15 @@ public class SmcController : ControllerBase
             return BadRequest(new { message = "symbol is required." });
 
         return Ok(await ReadAsync(symbol, ResolutionCodes.ToCandle(resolution), fromDate, toDate, method, strength,
-            breakOn, inducement, zones, fvgMinSize, standingZonesOnly, includeLive, cancellationToken));
+            breakOn, inducement, zones, fvgMinSize, standingZonesOnly, rangeMinBars, rangeWidth, includeLive,
+            cancellationToken));
     }
 
     /// <summary>One timeframe, read and shaped for the wire. Both endpoints go through here.</summary>
     private async Task<SmcStructureResponse> ReadAsync(
         string symbol, string candleCode, DateOnly? fromDate, DateOnly? toDate, string method, int strength,
         string breakOn, string inducement, string zones, decimal fvgMinSize, bool standingZonesOnly,
-        bool includeLive, CancellationToken cancellationToken)
+        int rangeMinBars, decimal rangeWidth, bool includeLive, CancellationToken cancellationToken)
     {
         var swingMethod = method.Equals("fractal", StringComparison.OrdinalIgnoreCase)
             ? SwingMethod.Fractal
@@ -139,9 +144,13 @@ public class SmcController : ControllerBase
         var barMinutes = ResolutionCodes.MinutesOf(candleCode);
         var barInterval = barMinutes is { } minutes ? TimeSpan.FromMinutes(minutes) : (TimeSpan?)null;
 
+        var bars = candles.Select(c => new StructureBar(c.TimestampUtc, c.Open, c.High, c.Low, c.Close)).ToList();
         var result = MarketStructure.Read(
-            candles.Select(c => new StructureBar(c.TimestampUtc, c.Open, c.High, c.Low, c.Close)).ToList(),
-            swingMethod, strength, trigger, inducementMode, zoneMitigation, barInterval, fvgMinSize);
+            bars, swingMethod, strength, trigger, inducementMode, zoneMitigation, barInterval, fvgMinSize);
+        // Clamped here as well as in the reader so the response echoes what was used.
+        rangeMinBars = Math.Clamp(rangeMinBars, TradingRanges.MinMinBars, TradingRanges.MaxMinBars);
+        rangeWidth = Math.Clamp(rangeWidth, TradingRanges.MinWidth, TradingRanges.MaxWidth);
+        var ranges = TradingRanges.Read(bars, result.Events, rangeMinBars, rangeWidth);
 
         return new SmcStructureResponse
         {
@@ -240,6 +249,36 @@ public class SmcController : ControllerBase
                 ToTimeUtc = r.ToTimeUtc,
                 InducedTimeUtc = r.InducedTimeUtc,
             }).ToList(),
+            // Ranges come back whole, like runs: a finished range is the context a
+            // breakout is read against, and a window holds a few dozen at most.
+            Ranges = ranges.Select(r => new SmcRangeDto
+            {
+                Kind = r.Kind switch
+                {
+                    RangeKind.Accumulation => "accumulation",
+                    RangeKind.Distribution => "distribution",
+                    _ => "range",
+                },
+                Top = r.Top,
+                Bottom = r.Bottom,
+                StartTimeUtc = r.StartTimeUtc,
+                ConfirmedTimeUtc = r.ConfirmedTimeUtc,
+                EndTimeUtc = r.EndTimeUtc,
+                Breakout = r.Breakout switch
+                {
+                    TrendDirection.Bullish => "up",
+                    TrendDirection.Bearish => "down",
+                    _ => null,
+                },
+                Probes = r.Probes.Select(p => new SmcRangeProbeDto
+                {
+                    Kind = p.Below ? "spring" : "upthrust",
+                    TimeUtc = p.TimeUtc,
+                    Price = p.Price,
+                }).ToList(),
+            }).ToList(),
+            RangeMinBars = rangeMinBars,
+            RangeWidth = rangeWidth,
             Trend = result.Trend switch
             {
                 TrendDirection.Bullish => "bullish",
@@ -285,6 +324,8 @@ public class SmcController : ControllerBase
         [FromQuery] string zones = "touch",
         [FromQuery] decimal fvgMinSize = 0m,
         [FromQuery] bool standingZonesOnly = false,
+        [FromQuery] int rangeMinBars = TradingRanges.DefaultMinBars,
+        [FromQuery] decimal rangeWidth = TradingRanges.DefaultWidth,
         [FromQuery] bool includeLive = true,
         CancellationToken cancellationToken = default)
     {
@@ -305,7 +346,7 @@ public class SmcController : ControllerBase
             // and only it reaches back over the whole range the user asked for.
             var isChart = code == wanted[^1];
             var read = await ReadAsync(symbol, code, fromDate, toDate, method, strength, breakOn, inducement,
-                zones, fvgMinSize, standingZonesOnly, includeLive, cancellationToken);
+                zones, fvgMinSize, standingZonesOnly, rangeMinBars, rangeWidth, includeLive, cancellationToken);
             if (isChart) response.Chart = read;
             else
             {
@@ -317,6 +358,7 @@ public class SmcController : ControllerBase
                 read.OrderBlocks = [];
                 read.Gaps = [];
                 read.OrderFlowRuns = [];
+                read.Ranges = [];
                 response.Higher.Add(read);
             }
         }

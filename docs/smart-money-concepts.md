@@ -100,6 +100,22 @@ draw a mark against a different series than it was computed on.
     measured. What is new is that the reading is drawn along time, so when the
     bias changed and how long it held are visible, instead of only its value at
     the last candle.
+11. **Accumulation and distribution** are read as trading ranges, the Wyckoff
+    way, by a second reader (`TradingRanges`) that runs over the same candles.
+    The yardstick is the average candle height (high minus low, so an overnight
+    gap does not inflate it) over the 14 candles before the range. A range is a
+    run of candles whose highest high and lowest low stay within `rangeWidth`
+    yardsticks (2.5 by default); it counts once it is `rangeMinBars` long (12),
+    and every later candle that still fits widens the box. A candle that would
+    stretch it past the band but closes back inside is a **spring** (wick below)
+    or an **upthrust** (wick above) and does not widen it; one that closes
+    outside ends it, and the breakout direction is stamped. The name comes from
+    the last BOS or CHoCH before the range began: bearish makes it
+    accumulation, bullish distribution, none a plain range. The name says where
+    the range formed, not which way it will leave. Ranges do not overlap, and an
+    intraday range may span the night. On NIFTY in 2026 these defaults found
+    about two ranges a day on 5-minute candles, one every day or so on
+    15-minute, and one in ten sessions on hourly.
 
 ## What is drawn
 
@@ -112,6 +128,7 @@ draw a mark against a different series than it was computed on.
 | Order block | A filled box in the break's colour, behind the candles | From the block's own candle to the candle that came back for it, or to the right edge while it still stands |
 | Fair-value gap | A lighter filled box in the move's colour | From the first of the three candles to the candle that filled it, or to the right edge while it stands open |
 | Order flow | A thin band along the foot of the pane, faint until the leg's inducement is swept and solid after | From the break that started the run to the break that ended it, or to the right edge while it runs |
+| Accumulation / distribution | A pale box, green for accumulation, red for distribution, grey for a plain range, labelled with its name; dashed while it stands. Springs and upthrusts are small arrows | From the range's first candle to the candle that closed outside it, or to the right edge while it stands |
 
 Only the swings the structure turned on are labelled; **Minor** adds the
 pullbacks. A pullback the market never came back for is not drawn: the chart
@@ -188,6 +205,8 @@ curl -s "$API/api/Smc/structure?symbol=NSE:NIFTYBANK-INDEX&resolution=15m&fromDa
 | `inducement` | `last` | or `first` |
 | `zones` | `touch` | When price coming back into a block or a gap counts as having used it: `touch`, `midpoint` or `close` |
 | `fvgMinSize` | `0` | Report only gaps at least this wide, in points. Zero applies no threshold, because the teaching names no number |
+| `rangeMinBars` | `12` | The fewest candles a trading range needs (3–200) |
+| `rangeWidth` | `2.5` | How tall a trading range may be, in average candle heights (0.5–10) |
 | `standingZonesOnly` | `false` | Report only the zones still standing at the last candle: unmitigated blocks and unfilled gaps. Off by default, so the history comes back whole. Runs are exempt — a finished run is not spent liquidity, it is the record of which way the market was being delivered, and one band alone gives nothing to read it against |
 | `includeLive` | `true` | Append today's live bars past the stored history (intraday only) |
 
