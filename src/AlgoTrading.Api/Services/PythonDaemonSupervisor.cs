@@ -696,6 +696,13 @@ public abstract class PythonDaemonSupervisor
             var store = scope.ServiceProvider.GetRequiredService<IProcessSettingsStore>();
             return await store.GetPidAsync(_daemon.PidSettingKey, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller gave up (usually a status request the browser abandoned). Nothing failed, so this is
+            // not a warning: logged as one, the log watcher reads it as a database fault.
+            _logger.LogDebug("Reading the stored {Daemon} pid was cancelled by its caller.", _daemon.Name);
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not read the stored {Daemon} pid.", _daemon.Name);
